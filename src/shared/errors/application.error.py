@@ -1,1 +1,0 @@
-"""Base ApplicationError class"""

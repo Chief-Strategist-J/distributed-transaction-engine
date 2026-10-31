@@ -3,3 +3,9 @@ __pycache__/
 node_modules/
 dist/
 .venv/
+
+# Build artifacts
+bin/
+cpp-modules/build/
+cpp-modules/engine_cpp
+target/

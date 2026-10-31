@@ -1,0 +1,11 @@
+server:
+  name: "distributed-transaction-engine"
+  bind_address: "0.0.0.0:8080"
+  admin_bind_address: "127.0.0.1:8081"
+  idle_timeout_seconds: 75
+  header_timeout_seconds: 15
+  drain_deadline_seconds: 15
+  propagation_wait_seconds: 5
+  shutdown_deadline_seconds: 30
+endpoints:
+  base_path: "/api/v1"
