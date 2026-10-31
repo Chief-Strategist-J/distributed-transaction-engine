@@ -1,0 +1,1 @@
+"""Runtime configuration schema definition"""

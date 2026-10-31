@@ -1,0 +1,2 @@
+feature: crash-recovery
+mode: stateless_hexagonal

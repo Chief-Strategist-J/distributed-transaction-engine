@@ -1,0 +1,5 @@
+# Base default Helm values
+replicaCount: 1
+image:
+  repository: ghcr.io/scaibu/distributed-transaction-engine
+  tag: latest

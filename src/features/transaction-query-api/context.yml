@@ -1,0 +1,2 @@
+feature: transaction-query-api
+mode: stateless_hexagonal

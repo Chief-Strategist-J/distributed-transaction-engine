@@ -1,0 +1,3 @@
+# Container registry endpoints and credentials
+registry:
+  url: "ghcr.io/scaibu"

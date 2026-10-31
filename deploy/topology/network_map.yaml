@@ -1,0 +1,8 @@
+# Declares hostnames, ports & protocols for sibling services
+services:
+  - name: py-service-1
+    port: 8001
+  - name: py-service-2
+    port: 8002
+  - name: node-service-1
+    port: 3000

@@ -1,0 +1,6 @@
+# AsyncAPI 2.6 Event Specification
+asyncapi: 2.6.0
+info:
+  title: distributed-transaction-engine Events
+  version: 1.0.0
+channels: {}

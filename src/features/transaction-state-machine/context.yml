@@ -1,0 +1,2 @@
+feature: transaction-state-machine
+mode: stateless_hexagonal

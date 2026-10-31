@@ -1,0 +1,2 @@
+feature: distributed-tracing
+mode: stateless_hexagonal

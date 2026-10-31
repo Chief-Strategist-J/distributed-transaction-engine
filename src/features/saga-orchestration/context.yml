@@ -1,0 +1,2 @@
+feature: saga-orchestration
+mode: stateless_hexagonal

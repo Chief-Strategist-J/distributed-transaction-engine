@@ -1,0 +1,2 @@
+feature: tenant-isolation
+mode: stateless_hexagonal

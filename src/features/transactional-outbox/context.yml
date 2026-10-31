@@ -1,0 +1,2 @@
+feature: transactional-outbox
+mode: stateless_hexagonal

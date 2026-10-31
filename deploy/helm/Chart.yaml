@@ -1,0 +1,5 @@
+apiVersion: v2
+name: distributed-transaction-engine
+description: Helm chart for distributed-transaction-engine
+version: 0.1.0
+appVersion: "1.0.0"

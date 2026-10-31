@@ -1,0 +1,5 @@
+# Kubernetes Service routing
+apiVersion: v1
+kind: Service
+metadata:
+  name: distributed-transaction-engine

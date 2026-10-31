@@ -1,0 +1,2 @@
+feature: reconciliation-engine
+mode: stateless_hexagonal

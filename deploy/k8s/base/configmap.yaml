@@ -1,0 +1,5 @@
+# Injected environment configurations
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: distributed-transaction-engine-config

@@ -1,0 +1,2 @@
+feature: scheduled-execution
+mode: stateless_hexagonal

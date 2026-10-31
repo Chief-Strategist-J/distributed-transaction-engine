@@ -1,0 +1,2 @@
+feature: retry-policies
+mode: stateless_hexagonal

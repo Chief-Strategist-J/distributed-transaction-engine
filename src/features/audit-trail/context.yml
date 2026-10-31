@@ -1,0 +1,2 @@
+feature: audit-trail
+mode: stateless_hexagonal

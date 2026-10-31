@@ -1,0 +1,2 @@
+# Local backing dependencies (Postgres, Redis, Kafka)
+version: '3.8'

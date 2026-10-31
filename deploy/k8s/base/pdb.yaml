@@ -1,0 +1,5 @@
+# Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: distributed-transaction-engine

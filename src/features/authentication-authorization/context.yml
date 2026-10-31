@@ -1,0 +1,2 @@
+feature: authentication-authorization
+mode: stateless_hexagonal
