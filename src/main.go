@@ -15,6 +15,7 @@ import (
 	"distributed-transaction-engine/src/api/rest/v1/routers"
 	sagaAdapters "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/adapters"
 	sagaService "distributed-transaction-engine/src/features/saga-orchestration/service"
+	transactionStateMachine "distributed-transaction-engine/src/features/transaction-state-machine"
 )
 
 type Config struct {
@@ -47,6 +48,11 @@ func main() {
 	sagaHandler := handlers.NewSagaHandler(sagaSvc)
 	sagaRouter := routers.NewSagaRouter(sagaHandler)
 
+	stateRepo := transactionStateMachine.NewMemoryAdapter()
+	stateSvc := transactionStateMachine.NewService(stateRepo)
+	stateHandler := handlers.NewTransactionStateMachineHandler(stateSvc)
+	stateRouter := routers.NewTransactionStateMachineRouter(stateHandler)
+
 	adminMux := http.NewServeMux()
 	adminMux.HandleFunc("/health/live", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -66,6 +72,7 @@ func main() {
 
 	publicMux := http.NewServeMux()
 	sagaRouter.RegisterRoutes(publicMux)
+	stateRouter.RegisterRoutes(publicMux)
 
 	publicServer := &http.Server{
 		Addr:         cfg.PublicAddr,

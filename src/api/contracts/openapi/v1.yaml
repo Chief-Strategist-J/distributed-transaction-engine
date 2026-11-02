@@ -1,6 +1,128 @@
-# OpenAPI 3.1 REST Specification
 openapi: 3.1.0
 info:
   title: distributed-transaction-engine API
   version: 1.0.0
-paths: {}
+paths:
+  /api/v1/sagas:
+    post:
+      summary: Initialize or create a new saga transaction
+      operationId: createSaga
+      parameters:
+        - name: traceparent
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-tenant-id
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - id
+                - publicId
+                - tenantId
+                - source
+                - externalId
+                - correlationId
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                publicId:
+                  type: string
+                  pattern: "^sag_[0-9a-zA-Z]{26}$"
+                tenantId:
+                  type: string
+                source:
+                  type: string
+                externalId:
+                  type: string
+                correlationId:
+                  type: string
+                  format: uuid
+      responses:
+        '201':
+          description: Saga created successfully
+        '400':
+          description: Validation error
+        '409':
+          description: Conflict (duplicate id/key)
+  /api/v1/sagas/transitions:
+    post:
+      summary: Transition transaction state via FSM event
+      operationId: transitionState
+      parameters:
+        - name: traceparent
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-tenant-id
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - tenantId
+                - sagaId
+                - event
+                - expectedVersion
+                - fencingToken
+                - reason
+              properties:
+                tenantId:
+                  type: string
+                sagaId:
+                  type: string
+                event:
+                  type: string
+                expectedVersion:
+                  type: integer
+                fencingToken:
+                  type: integer
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: State transition succeeded
+        '400':
+          description: Validation error
+        '404':
+          description: Saga not found
+        '409':
+          description: Optimistic concurrency or illegal state transition conflict

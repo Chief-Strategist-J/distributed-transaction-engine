@@ -37,3 +37,12 @@ func NewConflictError(message string) *ApplicationError {
 		Retryable:     false,
 	}
 }
+
+func NewInternalError(message string) *ApplicationError {
+	return &ApplicationError{
+		StatusCode:    500,
+		CanonicalCode: "INTERNAL_SERVER_ERROR",
+		Message:       message,
+		Retryable:     false,
+	}
+}

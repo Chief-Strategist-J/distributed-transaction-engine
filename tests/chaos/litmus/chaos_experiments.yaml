@@ -1,0 +1,45 @@
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: engine-pod-failure-chaos
+  namespace: default
+spec:
+  appinfo:
+    appns: default
+    applabel: "app.kubernetes.io/name=distributed-transaction-engine"
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-delete
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "60"
+            - name: CHAOS_INTERVAL
+              value: "10"
+            - name: FORCE
+              value: "false"
+---
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: engine-db-network-partition-chaos
+  namespace: default
+spec:
+  appinfo:
+    appns: default
+    applabel: "app.kubernetes.io/name=distributed-transaction-engine"
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+    - name: pod-network-partition
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "45"
+            - name: DESTINATION_IPS
+              value: "postgresql.default.svc.cluster.local"
+            - name: POLICY_TYPES
+              value: "Egress"

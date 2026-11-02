@@ -1,2 +1,64 @@
 feature: transaction-state-machine
 mode: stateless_hexagonal
+
+entity: saga_instance_states
+owner: distributed-transaction-core
+fields:
+  - name: id
+    type: uuid
+    null: no
+    default: uuidv7()
+    constraint: PK, UNIQUE(tenant_id, id), immutable
+  - name: public_id
+    type: text
+    null: no
+    default: generated
+    constraint: UNIQUE(tenant_id, public_id), immutable, format 'sag_' + 26 chars
+  - name: tenant_id
+    type: text
+    null: no
+    constraint: immutable, leads all indexes and unique constraints
+  - name: source
+    type: text
+    null: no
+    constraint: CHECK (source = btrim(source) AND source <> '')
+  - name: external_id
+    type: text
+    null: no
+    constraint: UNIQUE(tenant_id, source, external_id), CHECK (external_id = btrim(external_id) AND external_id <> '')
+  - name: correlation_id
+    type: uuid
+    null: no
+    constraint: immutable, no FK
+  - name: current_state
+    type: text
+    null: no
+    constraint: CHECK (current_state IN ('CREATED', 'RUNNING', 'WAITING', 'THROTTLED_WAIT', 'RECONCILING', 'COMPENSATING', 'STUCK', 'COMPLETED', 'CANCELLED', 'COMPENSATED', 'FAILED'))
+  - name: version
+    type: bigint
+    null: no
+    default: 1
+    constraint: CHECK (version >= 1)
+  - name: fencing_token
+    type: bigint
+    null: no
+    default: 0
+    constraint: CHECK (fencing_token >= 0)
+  - name: created_at
+    type: timestamptz
+    null: no
+    default: NOW()
+    constraint: immutable
+  - name: updated_at
+    type: timestamptz
+    null: no
+    default: NOW()
+
+invariants:
+  - current_state must match allowed 11 states defined in domain rules
+  - version strictly monotonically increments on every state transition
+  - terminal states cannot transition to any other state
+  - optimistic concurrency verification required on every transition
+  - transition table parity verified by contract test
+pii: [none]
+source_of_truth: db
