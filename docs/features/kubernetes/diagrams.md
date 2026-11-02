@@ -164,17 +164,17 @@ graph TB
         Client["Incoming Requests (1,000 RPS)"]
     end
 
-    subgraph Kubernetes Service & Routing (Before Scaling)
+    subgraph "Kubernetes Service & Routing (Before Scaling)"
         Svc["svc/distributed-transaction-engine (ClusterIP: 10.96.6.65)"]
         KubeProxy["kube-proxy iptables rules (2 Endpoints)"]
     end
 
-    subgraph Pod Workloads (2 Replicas)
+    subgraph "Pod Workloads (2 Replicas)"
         Pod1["Pod 1: engine-544d-1 (IP: 10.244.1.5) [50% Traffic]"]
         Pod2["Pod 2: engine-544d-2 (IP: 10.244.1.6) [50% Traffic]"]
     end
 
-    subgraph Datastore Connections (Steady State)
+    subgraph "Datastore Connections (Steady State)"
         PG[("PostgreSQL 18 (:5432)")]
         Kafka[("Apache Kafka 4.4 (:9092)")]
         Redis[("Redis 7.4 (:6379)")]
@@ -200,13 +200,13 @@ graph TB
         SurgeClient["High Surge Requests (15,000+ RPS)"]
     end
 
-    subgraph Kubernetes Service & Dynamic Load Distribution
+    subgraph "Kubernetes Service & Dynamic Load Distribution"
         Svc["svc/distributed-transaction-engine (ClusterIP: 10.96.6.65)"]
         EndpointsController["Endpoints Controller (Endpoints Slice Updated)"]
         IPTables["kube-proxy iptables chain (Randomized Round-Robin ~16.6%)"]
     end
 
-    subgraph Scaled Out Pod Replicas (6 Active Pods)
+    subgraph "Scaled Out Pod Replicas (6 Active Pods)"
         Pod1["Pod 1 (10.244.1.5) [~16.6%]"]
         Pod2["Pod 2 (10.244.1.6) [~16.6%]"]
         Pod3["Pod 3 (10.244.1.20) [~16.6%]"]
@@ -215,7 +215,7 @@ graph TB
         Pod6["Pod 6 (10.244.1.23) [~16.6%]"]
     end
 
-    subgraph Backend Coordination & Backpressure Control
+    subgraph "Backend Coordination & Backpressure Control"
         Redis[("Redis 7.4 (Distributed Idempotency Keys)")]
         PG[("PostgreSQL 18 (PgBouncer Pool / Max Conn Guard)")]
         Kafka[("Apache Kafka 4.4 (KRaft Hashed Partitions 0..5)")]
