@@ -1,5 +1,19 @@
-# Kubernetes Service routing
 apiVersion: v1
 kind: Service
 metadata:
   name: distributed-transaction-engine
+  labels:
+    app.kubernetes.io/name: distributed-transaction-engine
+spec:
+  type: ClusterIP
+  ports:
+    - name: http-public
+      port: 8080
+      targetPort: http-public
+      protocol: TCP
+    - name: http-admin
+      port: 8081
+      targetPort: http-admin
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: distributed-transaction-engine

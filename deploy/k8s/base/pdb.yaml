@@ -1,5 +1,11 @@
-# Pod Disruption Budget
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: distributed-transaction-engine
+  name: distributed-transaction-engine-pdb
+  labels:
+    app.kubernetes.io/name: distributed-transaction-engine
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: distributed-transaction-engine

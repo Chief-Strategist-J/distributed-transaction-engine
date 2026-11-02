@@ -1,2 +1,4 @@
-# Multi-package coordination runner (2 Python + 1 Node.js)
-version: '3.8'
+name: ${COMPOSE_PROJECT_NAME:-dist_tx}
+
+include:
+  - path: docker-compose.single.yml

@@ -2,3 +2,16 @@ apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: distributed-transaction-engine
+  namespace: argocd
+spec:
+  description: "Distributed Transaction Engine GitOps Project"
+  sourceRepos:
+    - "https://github.com/Chief-Strategist-J/System-Architect.git"
+  destinations:
+    - namespace: "dist-tx-*"
+      server: "https://kubernetes.default.svc"
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: "external-secrets.io"
+      kind: ClusterSecretStore

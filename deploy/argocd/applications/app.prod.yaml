@@ -2,3 +2,22 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: distributed-transaction-engine-prod
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: distributed-transaction-engine
+spec:
+  project: distributed-transaction-engine
+  source:
+    repoURL: "https://github.com/Chief-Strategist-J/System-Architect.git"
+    targetRevision: main
+    path: distributed-transaction-engine/deploy/k8s/base
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: dist-tx-prod
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true

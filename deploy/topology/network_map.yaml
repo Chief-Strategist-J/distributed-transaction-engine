@@ -1,8 +1,40 @@
-# Declares hostnames, ports & protocols for sibling services
-services:
-  - name: py-service-1
-    port: 8001
-  - name: py-service-2
-    port: 8002
-  - name: node-service-1
+version: 1
+service:
+  name: distributed-transaction-engine
+  internal_hostname: engine.internal
+  ingress_port: 8080
+  admin_port: 8081
+  protocol: HTTP/1.1
+dependencies:
+  database:
+    hostname: db
+    port: 5432
+    protocol: TCP/PostgreSQL
+  cache:
+    hostname: cache
+    port: 6379
+    protocol: TCP/Redis
+  messaging:
+    hostname: kafka
+    port: 9092
+    protocol: TCP/Kafka
+  telemetry:
+    hostname: otel-collector
+    port: 4317
+    protocol: gRPC/OTLP
+  tracing_backend:
+    hostname: tempo
+    port: 3200
+    protocol: HTTP
+  log_storage:
+    hostname: loki
+    port: 3100
+    protocol: HTTP
+  metrics:
+    hostname: prometheus
+    port: 9090
+    protocol: HTTP
+  dashboards:
+    hostname: grafana
     port: 3000
+    protocol: HTTP

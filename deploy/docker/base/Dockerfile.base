@@ -1,2 +1,21 @@
-# Shared multi-stage base runtime (Python/Node)
-FROM python:3.10-slim AS base
+# syntax=docker/dockerfile:1.7
+ARG RUNTIME_IMAGE=debian:bookworm-slim@sha256:49195b098197775ce087dd46c7bc3a670f5e1f0217ec5e1bce9f6b5791dfae40
+FROM ${RUNTIME_IMAGE} AS base
+
+ARG APP_UID=10001
+ARG APP_GID=10001
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates tzdata tini \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid ${APP_GID} app \
+ && useradd  --uid ${APP_UID} --gid ${APP_GID} --no-create-home --shell /usr/sbin/nologin app \
+ && mkdir -p /app && chown ${APP_UID}:${APP_GID} /app
+
+ENV LANG=C.UTF-8 TZ=UTC HOME=/tmp
+
+WORKDIR /app
+USER ${APP_UID}:${APP_GID}
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+STOPSIGNAL SIGTERM

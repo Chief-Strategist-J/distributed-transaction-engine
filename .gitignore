@@ -9,3 +9,12 @@ bin/
 cpp-modules/build/
 cpp-modules/engine_cpp
 target/
+
+# Terraform local cache
+**/.terraform/
+*.tfstate*
+
+# Local environment & secret files
+.env
+deploy/docker/compose/secrets/*
+!deploy/docker/compose/secrets/.gitkeep

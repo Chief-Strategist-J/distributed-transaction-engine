@@ -1,5 +1,67 @@
-# Standalone runner for this package
-version: '3.8'
+include:
+  - path: docker-compose.infra.yml
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  init: true
+  pids_limit: 256
+  restart: unless-stopped
+  logging: { driver: local, options: { max-size: "10m", max-file: "5" } }
+
 services:
   app:
-    build: ../service
+    <<: *hardening
+    image: ${REGISTRY:-gcr.io/dist-tx-engine}/distributed-transaction-engine@${APP_DIGEST:-sha256:d824d528994a5c92c813be5bfb3a58eeb06f190a07e868a83ee07ff5b3f11467}
+    depends_on:
+      db:    { condition: service_healthy, restart: true }
+      cache: { condition: service_healthy, restart: true }
+      kafka: { condition: service_healthy, restart: true }
+    networks: [frontend, backend]
+    expose: ["8080", "8081"]
+    environment:
+      DB_HOST: db
+      CACHE_HOST: cache
+      KAFKA_BROKERS: kafka:9092
+      DB_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    tmpfs: [/tmp]
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8081/health/live || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:       { cpus: "1.0", memory: 512M }
+        reservations: { memory: 128M }
+    ulimits:
+      nofile: { soft: 65535, hard: 65535 }
+
+  app-dev:
+    profiles: [dev]
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/service/Dockerfile.dev
+      args:
+        SERVICE_PATH: .
+    depends_on:
+      db:    { condition: service_healthy }
+      cache: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    networks: [backend]
+    ports: ["127.0.0.1:8080:8080", "127.0.0.1:8081:8081"]
+    environment:
+      DB_HOST: db
+      CACHE_HOST: cache
+      KAFKA_BROKERS: kafka:9092
+      DB_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    develop:
+      watch:
+        - { action: sync,         path: ../../../src,    target: /app/src }
+        - { action: sync+restart, path: ../../../config, target: /app/config }
+        - { action: rebuild,      path: ../../../go.mod }
