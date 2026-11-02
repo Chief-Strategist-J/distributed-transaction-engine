@@ -122,7 +122,7 @@ graph TD
 
     subgraph "Tier 3: Live Terraform Infrastructure Provisioning"
         SyncBackend --> RealInit["terraform init (GCS Remote State Backend)"]
-        RealInit --> RealPlan["terraform plan -out=tfplan (12 resources to create)"]
+        RealInit --> RealPlan["terraform plan -out=tfplan (19 resources to create)"]
         RealPlan --> ManualApproval{"Approve Plan?"}
         ManualApproval -->|Yes| Apply["terraform apply tfplan"]
         Apply --> Output["Generate Terraform Outputs (GKE endpoint, DB conn, Redis IP)"]
@@ -225,4 +225,114 @@ sequenceDiagram
     SRE->>CloudTrace: Click TraceID link to view complete distributed transaction flamegraph
     CloudTrace-->>SRE: Render waterfall showing exact latency breakdown (PostgreSQL, Redis, PubSub)
     SRE->>CloudMonitoring: View correlated dashboard showing CPU, Memory, and Node Autoscaling events
+```
+
+---
+
+## 6. Route Tables, Cloud NAT & Outbound Egress Architecture
+
+This diagram visualizes how private GKE worker nodes and pods with zero public IPs securely route outbound traffic through Cloud Router and Cloud NAT without allowing inbound connections.
+
+```mermaid
+graph TB
+    subgraph "Private GKE Worker Nodes & Workload Pods"
+        PodA["Pod A (10.20.1.15) [Pulls External SaaS API]"]
+        PodB["Pod B (10.20.2.30) [Pulls Container Registry]"]
+        NodeVM["GKE Node VM (10.10.0.5) [No Public External IP]"]
+    end
+
+    subgraph "VPC Routing Tier: ${environment}-dist-tx-vpc"
+        VpcRouteTable["VPC Routing Table (Default Route: 0.0.0.0/0 via Default Gateway)"]
+        SubnetFilter["Subnetwork Gateway (10.10.0.1)"]
+    end
+
+    subgraph "Google Cloud Managed NAT Gateway Tier"
+        CloudRouter["google_compute_router: ${environment}-dist-tx-router"]
+        CloudNAT["google_compute_router_nat: ${environment}-dist-tx-nat (AUTO_ONLY IPs)"]
+    end
+
+    subgraph "Public Internet"
+        ExternalAPIs["External SaaS & Payment Gateways"]
+        ArtifactRegistry["Google Artifact Registry / Docker Hub"]
+    end
+
+    PodA & PodB --> NodeVM
+    NodeVM --> SubnetFilter --> VpcRouteTable
+    VpcRouteTable --> CloudRouter --> CloudNAT
+    CloudNAT -->|Source NAT with Public Regional IP| ExternalAPIs & ArtifactRegistry
+```
+
+---
+
+## 7. Ingress Container-Native Load Balancing via Network Endpoint Groups (NEGs)
+
+This diagram contrasts legacy two-hop NodePort routing with Google Cloud container-native NEG direct-to-pod routing.
+
+```mermaid
+graph TB
+    subgraph "Client Ingress"
+        ClientReq["Client HTTP/REST Request (:443)"]
+        Gclb["Google Cloud External HTTP(S) Load Balancer (GLB)"]
+    end
+
+    subgraph "Legacy NodePort (2 Hops - Discarded Pattern)"
+        NodeVM1["Worker Node 1 (:30080)"]
+        KubeProxyIptables["kube-proxy (iptables / IPVS Rewrite + SNAT)"]
+        PodHop["Pod on Worker Node 2 (Extra Inter-Node Hop)"]
+    end
+
+    subgraph "Container-Native Load Balancing via NEGs (Active Architecture)"
+        Neg["Standalone Network Endpoint Group (NEG: gke-dist-tx-neg)"]
+        DirectPod1["Engine Pod 1 (10.20.1.10:8080) [Direct 1-Hop]"]
+        DirectPod2["Engine Pod 2 (10.20.1.11:8080) [Direct 1-Hop]"]
+        DirectPod3["Engine Pod 3 (10.20.2.14:8080) [Direct 1-Hop]"]
+    end
+
+    ClientReq --> Gclb
+    Gclb -.->|Avoided: 2-Hop Latency| NodeVM1 --> KubeProxyIptables --> PodHop
+
+    Gclb ==>|Direct Packet Delivery to Pod IP via NEG| Neg
+    Neg --> DirectPod1
+    Neg --> DirectPod2
+    Neg --> DirectPod3
+```
+
+---
+
+## 8. Firewall Security Hierarchy & Compute Engine IAP Bastion Host Access
+
+This diagram illustrates the multi-tier firewall rule hierarchy and how engineers connect to private Cloud SQL and Redis through the Identity-Aware Proxy (IAP) bastion host.
+
+```mermaid
+graph LR
+    subgraph "Authorized Engineer Workstation"
+        Dev["DevOps / SRE Engineer"]
+        PsqlClient["psql localhost:5433 (IAP Tunnel)"]
+    end
+
+    subgraph "Google Cloud Edge Security & IAM Gate"
+        IapGateway["Identity-Aware Proxy (IAP) TCP Tunnel (35.235.240.0/20)"]
+        IamAuthCheck{"Has roles/iap.tunnelResourceAccessor?"}
+    end
+
+    subgraph "Firewall Rules Engine: ${environment}-dist-tx-vpc"
+        FwIap["Rule: allow-iap-ssh (Target: 'bastion-host', Port: 22)"]
+        FwHealth["Rule: allow-gcp-health-checks (Target: 'gke-node', Ports: 8080, 13133)"]
+        FwInternal["Rule: allow-internal-traffic (Sources: 10.10.0.0/20, 10.20.0.0/16, 10.0.0.0/16)"]
+        FwDeny["Rule: default-deny-all-ingress (Priority: 65535)"]
+    end
+
+    subgraph "Customer Subnetwork: 10.10.0.0/20"
+        BastionVM["Compute Engine: dev-bastion-host (e2-micro, Zero Public IP)"]
+        GkeNodes["GKE Worker Nodes (gke-node)"]
+    end
+
+    subgraph "Private Services Peering: 10.0.0.0/16"
+        PrivatePG[("Cloud SQL PostgreSQL 17 (:5432)")]
+        PrivateRedis[("Memorystore Redis 7.2 (:6379)")]
+    end
+
+    Dev --> PsqlClient --> IapGateway --> IamAuthCheck
+    IamAuthCheck -->|Allowed| FwIap --> BastionVM
+    BastionVM -->|Internal VPC Query| FwInternal --> PrivatePG & PrivateRedis
 ```

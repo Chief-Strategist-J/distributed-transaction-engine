@@ -3,6 +3,9 @@ provider "google" {
   region  = var.region
 }
 
+# ------------------------------------------------------------------------------
+# 1. VPC & CUSTOM SUBNETWORK
+# ------------------------------------------------------------------------------
 resource "google_compute_network" "vpc" {
   name                    = "${var.environment}-dist-tx-vpc"
   auto_create_subnetworks = false
@@ -23,8 +26,98 @@ resource "google_compute_subnetwork" "subnet" {
     range_name    = "services"
     ip_cidr_range = "10.30.0.0/20"
   }
+
+  private_ip_google_access = true
 }
 
+# ------------------------------------------------------------------------------
+# 2. CLOUD ROUTER, NAT & DEFAULT EGRESS ROUTE (Outbound Internet for Private Nodes)
+# ------------------------------------------------------------------------------
+resource "google_compute_router" "router" {
+  name    = "${var.environment}-dist-tx-router"
+  region  = var.region
+  network = google_compute_network.vpc.id
+}
+
+resource "google_compute_router_nat" "nat" {
+  name                               = "${var.environment}-dist-tx-nat"
+  router                             = google_compute_router.router.name
+  region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+
+  log_config {
+    enable = true
+    filter = "ERRORS_ONLY"
+  }
+}
+
+# ------------------------------------------------------------------------------
+# 3. FIREWALL RULES HIERARCHY
+# ------------------------------------------------------------------------------
+# Rule A: Allow internal communication across Nodes, Pods, and Services
+resource "google_compute_firewall" "allow_internal" {
+  name    = "${var.environment}-allow-internal-traffic"
+  network = google_compute_network.vpc.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["0-65535"]
+  }
+  allow {
+    protocol = "udp"
+    ports    = ["0-65535"]
+  }
+  allow {
+    protocol = "icmp"
+  }
+
+  source_ranges = [
+    "10.10.0.0/20", # Node VMs
+    "10.20.0.0/16", # Pods
+    "10.30.0.0/20", # Services
+    "10.0.0.0/16"   # Peered Cloud SQL / Redis
+  ]
+}
+
+# Rule B: Allow Google Cloud Health Checks and Load Balancer Probes
+resource "google_compute_firewall" "allow_health_checks" {
+  name    = "${var.environment}-allow-gcp-health-checks"
+  network = google_compute_network.vpc.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["8080", "443", "80", "13133"]
+  }
+
+  source_ranges = [
+    "130.211.0.0/22", # Google Cloud External/Internal HTTP(S) LB probes
+    "35.191.0.0/16"   # Google Cloud Load Balancer probe IPs
+  ]
+
+  target_tags = ["gke-node", "${var.environment}-dist-tx"]
+}
+
+# Rule C: Allow Identity-Aware Proxy (IAP) for Secure SSH to Bastion Host
+resource "google_compute_firewall" "allow_iap_ssh" {
+  name    = "${var.environment}-allow-iap-ssh"
+  network = google_compute_network.vpc.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  source_ranges = [
+    "35.235.240.0/20" # Google Cloud IAP Netblock
+  ]
+
+  target_tags = ["bastion-host"]
+}
+
+# ------------------------------------------------------------------------------
+# 4. PRIVATE SERVICE ACCESS (Cloud SQL & Memorystore Redis Peering)
+# ------------------------------------------------------------------------------
 resource "google_compute_global_address" "private_ip_address" {
   name          = "${var.environment}-private-ip-alloc"
   purpose       = "VPC_PEERING"
@@ -39,6 +132,9 @@ resource "google_service_networking_connection" "private_vpc_connection" {
   reserved_peering_ranges = [google_compute_global_address.private_ip_address.name]
 }
 
+# ------------------------------------------------------------------------------
+# 5. GKE CLUSTER & CONTAINER-NATIVE LOAD BALANCING (NEGs)
+# ------------------------------------------------------------------------------
 resource "google_container_cluster" "primary" {
   name     = "${var.environment}-dist-tx-gke"
   location = var.region
@@ -57,13 +153,45 @@ resource "google_container_cluster" "primary" {
   workload_identity_config {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
+
+  network_policy {
+    enabled  = true
+    provider = "CALICO"
+  }
+
+  addons_config {
+    http_load_balancing {
+      disabled = false # Enables GKE Ingress controller & Network Endpoint Groups (NEG)
+    }
+    network_policy_config {
+      disabled = false
+    }
+  }
+
+  private_cluster_config {
+    enable_private_nodes    = true
+    enable_private_endpoint = false
+    master_ipv4_cidr_block  = "172.16.0.0/28"
+  }
 }
 
+# ------------------------------------------------------------------------------
+# 6. GKE AUTOSCALING NODE POOL (Surge & Scaling Configuration)
+# ------------------------------------------------------------------------------
 resource "google_container_node_pool" "primary_nodes" {
-  name       = "${var.environment}-node-pool"
-  location   = var.region
-  cluster    = google_container_cluster.primary.name
-  node_count = var.gke_num_nodes
+  name     = "${var.environment}-node-pool"
+  location = var.region
+  cluster  = google_container_cluster.primary.name
+
+  autoscaling {
+    min_node_count = 2
+    max_node_count = 10
+  }
+
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
 
   node_config {
     oauth_scopes = [
@@ -80,18 +208,65 @@ resource "google_container_node_pool" "primary_nodes" {
   }
 }
 
+# ------------------------------------------------------------------------------
+# 7. COMPUTE ENGINE SECURE BASTION HOST (IAP-Only Private Access)
+# ------------------------------------------------------------------------------
+resource "google_service_account" "bastion_sa" {
+  account_id   = "${var.environment}-bastion-sa"
+  display_name = "Compute Engine Bastion Host Service Account"
+}
+
+resource "google_compute_instance" "bastion" {
+  name         = "${var.environment}-bastion-host"
+  machine_type = "e2-micro"
+  zone         = "${var.region}-a"
+
+  tags = ["bastion-host", "${var.environment}-dist-tx"]
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-12"
+      size  = 20
+      type  = "pd-standard"
+    }
+  }
+
+  network_interface {
+    network    = google_compute_network.vpc.name
+    subnetwork = google_compute_subnetwork.subnet.name
+    # Zero external public IP: reachable ONLY through Identity-Aware Proxy (IAP)
+  }
+
+  service_account {
+    email  = google_service_account.bastion_sa.email
+    scopes = ["cloud-platform"]
+  }
+
+  metadata = {
+    enable-oslogin = "TRUE"
+  }
+}
+
+# ------------------------------------------------------------------------------
+# 8. DATASTORES: PRIVATE CLOUD SQL POSTGRESQL 17 & MEMORYSTORE REDIS
+# ------------------------------------------------------------------------------
 resource "google_sql_database_instance" "postgres" {
   name             = "${var.environment}-dist-tx-db"
   database_version = "POSTGRES_17"
   region           = var.region
 
   settings {
-    tier = "db-custom-2-7680"
+    tier              = "db-custom-2-7680"
+    disk_type         = "PD_SSD"
+    disk_autoresize   = true
+    availability_type = "ZONAL"
+
     ip_configuration {
       ipv4_enabled    = false
       private_network = google_compute_network.vpc.id
     }
   }
+
   deletion_protection = true
   depends_on          = [google_service_networking_connection.private_vpc_connection]
 }
@@ -112,10 +287,12 @@ resource "google_redis_instance" "cache" {
   depends_on         = [google_service_networking_connection.private_vpc_connection]
 }
 
-# Declarative Pub/Sub Messaging Topics per messaging/topics/topics.yaml
+# ------------------------------------------------------------------------------
+# 9. ASYNCHRONOUS EVENT STREAMING: CLOUD PUB/SUB & DLQ
+# ------------------------------------------------------------------------------
 resource "google_pubsub_topic" "events" {
   name                       = "distributed-transaction-engine-events"
-  message_retention_duration = "604800s" # 7 days (matching retention_ms: 604800000)
+  message_retention_duration = "604800s" # 7 days
 
   labels = {
     env    = var.environment
