@@ -10,47 +10,65 @@
 
 ---
 
-## 1. Context & Motivation
+## 1. Context & Architectural Rationale ("Why Every Component Exists")
 
-Deploying the high-throughput polyglot Distributed Transaction Engine onto Google Cloud Platform requires an immutable, declarative Infrastructure-as-Code (IaC) foundation. Unlike local development (Docker Compose / KinD), cloud production demands:
-1. **Zero Public IP Exposure**: Database instances (Cloud SQL PostgreSQL 17) and distributed caching (Memorystore Redis 7.2) must never expose public IPv4 endpoints; they must reside inside private RFC 1918 CIDR blocks peered with the VPC.
-2. **Workload Identity Federation**: Engine pods running in GKE must authenticate to Cloud SQL, Google Cloud Pub/Sub, Cloud Trace, and Cloud Logging using Kubernetes Service Account (KSA) to Google Service Account (GSA) bindings—completely eliminating static JSON service account keys.
-3. **Egress Internet via Cloud NAT**: Private GKE nodes without external IPs require an egress gateway (Cloud Router + Cloud NAT) to pull public container images and query external SaaS APIs without exposing ingress vulnerabilities.
-4. **Container-Native Ingress via NEGs**: Routing traffic through legacy NodePort proxies introduces an unnecessary extra network hop and uneven load distribution. Network Endpoint Groups (NEGs) allow Google Cloud Load Balancers to route directly to Pod IP addresses.
-5. **Secure Administrative Bastion**: To execute database migrations or troubleshoot private datastores without exposing ports to the public internet, a Compute Engine bastion host accessible strictly via Google Cloud Identity-Aware Proxy (IAP) is mandated.
+Deploying a mission-critical Distributed Transaction Engine onto Google Cloud Platform requires an immutable, declarative Infrastructure-as-Code (IaC) foundation. Unlike simple demo applications, a financial/transactional ledger cannot afford security oversights, unmetered network hops, or manual infrastructure drift.
+
+Every single infrastructure component chosen in [deploy/terraform/main.tf](file:///home/btpl-lap-22/live/System-Architect/distributed-transaction-engine/deploy/terraform/main.tf) is backed by an explicit architectural justification:
+
+### A. Why a Custom VPC (`auto_create_subnetworks = false`)?
+* **The Failure Mode of Default VPCs**: Google Cloud's default VPC automatically provisions subnets in every single worldwide region with default overlapping IP ranges and opens insecure default firewall rules (e.g. `default-allow-ssh` to `0.0.0.0/0`).
+* **Our Decision**: A custom VPC grants complete control over CIDR block allocation, preventing IP collisions and ensuring that zero firewall ports are opened unless explicitly declared.
+
+### B. Why Private Services Access Peering (`10.0.0.0/16`) for Cloud SQL & Redis?
+* **The Vulnerability**: Connecting to Cloud SQL or Redis across the public internet—even with IP allowlists—exposes database ports to public DNS scanners, brute-force attempts, and distributed denial-of-service (DDoS).
+* **Our Decision**: Peering reserves an RFC 1918 block (`10.0.0.0/16`) where Google provisions Cloud SQL and Memorystore Redis instances inside internal Google tenant VPCs. All database queries travel over private Google SDN fiber with zero internet routing and sub-millisecond round-trip latency.
+
+### C. Why Cloud Router + Cloud NAT (`AUTO_ONLY`) for Private Nodes?
+* **The Dilemma**: GKE worker nodes are provisioned with `enable_private_nodes = true` (they have zero external public IPs). However, the nodes must still pull container images from Docker Hub, query external payment gateway webhooks, and fetch Linux OS security patches.
+* **Our Decision**: Cloud NAT provides stateful outbound-only egress. External internet hosts cannot initiate any unsolicited inbound connection to the nodes, eliminating the attack surface while preserving outbound access.
+
+### D. Why Standalone Network Endpoint Groups (NEGs) instead of NodePort?
+* **The Legacy NodePort Flaw**: In standard Kubernetes ingress, an external load balancer hits a worker node VM. The node's `kube-proxy` must rewrite packets via `iptables` or IPVS, hopping across the internal network to a pod running on a *different* node. This incurs a **2-hop penalty**, obfuscates the original client IP via SNAT, and causes uneven traffic distribution.
+* **Our Decision**: With Container-Native Load Balancing via NEGs (`cloud.google.com/neg`), the Google Cloud HTTP(S) Load Balancer routes traffic directly to the individual Pod IP address (`10.20.x.x`). This yields true 1-hop latency, even pod traffic distribution, and preserves client source IPs.
+
+### E. Why a Zero-Public-IP Compute Engine Bastion with Identity-Aware Proxy (IAP)?
+* **The Operational Problem**: How do database administrators or CI/CD runners apply schema migrations (`psql`) or inspect Redis keys when both datastores reside inside a strictly private network with zero public IPs?
+* **The Insecure Approach**: Assigning a public IP to a jumpbox VM with an SSH key is vulnerable to zero-day OpenSSH exploits and internet port scans.
+* **Our Decision**: The bastion host (`e2-micro`) has no external IP address. Access is gated by Google Cloud Identity-Aware Proxy (IAP). Traffic is encrypted and tunneled through Google's edge proxies, requiring both IAM authentication (`roles/iap.tunnelResourceAccessor`) and multi-factor authentication (MFA).
+
+### F. Why Workload Identity Federation (Eliminating JSON Service Account Keys)?
+* **The Critical Risk of Static JSON Keys**: Long-lived service account keys stored in Kubernetes secrets or environment variables represent the #1 cause of cloud data breaches when accidentally leaked, checked into Git, or exfiltrated via SSRF attacks.
+* **Our Decision**: Workload Identity binds Kubernetes Service Accounts (KSA) directly to Google Service Accounts (GSA). The GKE metadata server mints short-lived (1-hour TTL) OAuth2 access tokens on the fly without any static keys residing on disk.
 
 ---
 
 ## 2. Enabled Google Cloud APIs & IAM Permission Matrix
 
 ### A. Mandatory Google Cloud APIs
-The infrastructure requires 14 core APIs enabled prior to running Terraform. The bootstrap script `scripts/run/deploy_cloud.sh` activates these APIs idempotently:
+The infrastructure requires 15 core APIs enabled prior to running Terraform. The bootstrap script `scripts/run/deploy_cloud.sh` activates these APIs idempotently:
 
-| API Identifier | Service Name | Justification & Architectural Responsibility |
+| API Identifier | Service Name | Why It Is Mandatory & Architectural Impact |
 |---|---|---|
-| `compute.googleapis.com` | Compute Engine API | Manages Custom VPC, Subnetworks, Cloud Router, Cloud NAT, Firewalls, and Bastion VM. |
-| `container.googleapis.com` | Kubernetes Engine (GKE) API | Manages GKE control plane, autoscaling node pools, NEGs, and Workload Identity. |
-| `sqladmin.googleapis.com` | Cloud SQL Admin API | Provisions and operates private Cloud SQL PostgreSQL 17 instances. |
-| `redis.googleapis.com` | Google Cloud Memorystore API | Provisions low-latency Redis 7.2 instances for distributed lock fencing. |
+| `compute.googleapis.com` | Compute Engine API | Provisions the Custom VPC, Subnetworks, Cloud Router, Cloud NAT, Firewall rules, and the IAP Bastion VM. |
+| `container.googleapis.com` | Kubernetes Engine (GKE) API | Manages the GKE control plane, autoscaling node pools, Network Endpoint Groups, and Workload Identity. |
+| `sqladmin.googleapis.com` | Cloud SQL Admin API | Provisions and operates private Cloud SQL PostgreSQL 17 instances and manages automated backups. |
+| `redis.googleapis.com` | Google Cloud Memorystore API | Provisions low-latency Redis 7.2 in-memory instances for distributed lock fencing. |
 | `servicenetworking.googleapis.com` | Service Networking API | Establishes VPC Network Peering for Private Services Access (Cloud SQL & Redis). |
-| `pubsub.googleapis.com` | Cloud Pub/Sub API | Provisions partitioned event topics and Dead Letter Queues (DLQ). |
+| `pubsub.googleapis.com` | Cloud Pub/Sub API | Provisions partitioned event topics and Dead Letter Queues (DLQ) for asynchronous saga events. |
 | `iam.googleapis.com` | Identity and Access Management API | Manages GSAs, IAM role bindings, and Workload Identity token minting. |
-| `cloudresourcemanager.googleapis.com` | Cloud Resource Manager API | Manages project-level IAM policies and metadata. |
-| `secretmanager.googleapis.com` | Secret Manager API | Stores database credentials and encryption keys retrieved by the engine. |
-| `cloudkms.googleapis.com` | Cloud Key Management Service (KMS) | Manages customer-managed encryption keys (CMEK) for disks and databases. |
+| `cloudresourcemanager.googleapis.com` | Cloud Resource Manager API | Manages project-level IAM policies, billing associations, and organizational metadata. |
+| `secretmanager.googleapis.com` | Secret Manager API | Stores database passwords and encryption secrets retrieved securely at application boot. |
+| `cloudkms.googleapis.com` | Cloud Key Management Service (KMS) | Manages customer-managed encryption keys (CMEK) for disks and database volumes. |
 | `storage.googleapis.com` | Cloud Storage API | Hosts remote Terraform state (`gs://<project>-dist-tx-tfstate`) with object versioning. |
-| `artifactregistry.googleapis.com` | Artifact Registry API | Private OCI container registry storing the distributed transaction engine images. |
+| `artifactregistry.googleapis.com` | Artifact Registry API | Private OCI container registry storing the distributed transaction engine container images. |
 | `cloudtrace.googleapis.com` | Cloud Trace API | Collects distributed trace spans forwarded by the cluster OpenTelemetry Collector. |
-| `logging.googleapis.com` | Cloud Logging API | High-throughput structured log ingestion for audit trails and crash diagnostics. |
+| `logging.googleapis.com` | Cloud Logging API | Ingests high-throughput structured JSON logs for audit trails and crash diagnostics. |
 | `monitoring.googleapis.com` | Cloud Monitoring API | Scrapes metrics from GKE node cAdvisor and the OpenTelemetry Collector. |
 
 ---
 
 ### B. IAM Roles & Workload Identity Permissions
-
-Static service account keys are strictly forbidden. The cluster uses GKE Workload Identity:
-- **Kubernetes Service Account (KSA)**: `dist-tx-engine-sa` in namespace `dist-tx-dev` (or `dist-tx-prod`).
-- **Google Service Account (GSA)**: `dist-tx-workload@<PROJECT_ID>.iam.gserviceaccount.com`.
 
 ```
 [KSA: dist-tx-engine-sa] ──(Workload Identity User)──▶ [GSA: dist-tx-workload]
@@ -61,17 +79,17 @@ Static service account keys are strictly forbidden. The cluster uses GKE Workloa
         (roles/cloudsql.client)                     (roles/pubsub.publisher)              (roles/cloudtrace.agent)
 ```
 
-| IAM Role | Granted To | Purpose |
+| IAM Role | Granted To | Why This Role Is Required |
 |---|---|---|
-| `roles/container.nodeServiceAccount` | GKE Node GSA | Minimum privilege for GKE worker nodes to pull images and write logs. |
-| `roles/iam.workloadIdentityUser` | GSA `dist-tx-workload` | Allows `dist-tx-engine-sa` to impersonate the GSA and receive GCP STS tokens. |
-| `roles/cloudsql.client` | GSA `dist-tx-workload` | Allows the in-pod Cloud SQL Auth Proxy sidecar to establish TLS tunnels to PostgreSQL. |
-| `roles/pubsub.publisher` | GSA `dist-tx-workload` | Allows the Transactional Outbox relay to publish transaction events to Pub/Sub. |
+| `roles/container.nodeServiceAccount` | GKE Node GSA | Minimum privilege for GKE worker nodes to register with the master, pull images, and stream system logs. |
+| `roles/iam.workloadIdentityUser` | GSA `dist-tx-workload` | Authorizes the Kubernetes Service Account (`dist-tx-engine-sa`) to impersonate the GSA and receive STS OAuth2 tokens. |
+| `roles/cloudsql.client` | GSA `dist-tx-workload` | Authorizes the in-pod Cloud SQL Auth Proxy sidecar to establish mutual-TLS database sessions with PostgreSQL. |
+| `roles/pubsub.publisher` | GSA `dist-tx-workload` | Allows the Transactional Outbox relay to publish transaction events to Google Cloud Pub/Sub. |
 | `roles/pubsub.subscriber` | GSA `dist-tx-workload` | Allows the Saga execution engine to consume incoming compensation and trigger events. |
-| `roles/cloudtrace.agent` | OTel Collector GSA | Allows OpenTelemetry Collector pods to push spans to Google Cloud Trace. |
+| `roles/cloudtrace.agent` | OTel Collector GSA | Allows OpenTelemetry Collector pods to push transaction trace spans to Google Cloud Trace. |
 | `roles/monitoring.metricWriter` | OTel Collector GSA | Allows OpenTelemetry Collector pods to export custom engine metrics to Cloud Monitoring. |
 | `roles/logging.logWriter` | OTel Collector GSA | Allows OpenTelemetry Collector pods to stream logs directly to Cloud Logging. |
-| `roles/iap.tunnelResourceAccessor` | DevOps Engineers | Allows developers to tunnel SSH through Cloud IAP to the bastion host without public IP. |
+| `roles/iap.tunnelResourceAccessor` | DevOps Engineers | Authorizes engineers to open an encrypted SSH tunnel through Cloud IAP to the bastion host. |
 
 ---
 
@@ -109,123 +127,279 @@ Custom VPCs drop all incoming traffic by default. The following rules enforce st
 
 ---
 
-## 4. Container-Native Load Balancing & Network Endpoint Groups (NEGs)
+## 4. Beginner's Comprehensive CLI Command Runbook (From Scratch)
 
-### Why Standalone NEGs Replace Legacy NodePort Routing
-In standard Kubernetes `NodePort` ingress, external load balancers target worker node VM IPs. The node's `kube-proxy` then rewrites packets via `iptables` or IPVS to forward traffic to the actual pod running on a different node. This results in:
-- **Two Network Hops**: Ingress -> Node VM -> Target Pod VM.
-- **SNAT Source IP Masking**: Client IP is obscured unless `externalTrafficPolicy: Local` is used (which creates traffic imbalance).
-- **Uneven Load Balancing**: Nodes with 1 pod receive equal traffic to nodes with 5 pods.
-
-**The Solution: Container-Native Load Balancing via NEGs (`cloud.google.com/neg`)**:
-1. GKE automatically registers individual pod IP addresses directly into a Google Cloud Network Endpoint Group (NEG).
-2. The Google Cloud Application Load Balancer directly terminates connections and routes packets straight to the Pod IP (`10.20.x.x`).
-3. Eliminates `kube-proxy` SNAT, achieves true 1-hop latency, and routes traffic evenly across all scaled pods.
+This section is designed for students and engineers learning Google Cloud and Terraform from the ground up. Every command is explained with its purpose, flags, and expected outputs.
 
 ---
 
-## 5. Compute Engine Bastion Host (IAP-Only Access)
+### Step 1: Initial Setup, Authentication & Project Configuration
 
-Because PostgreSQL 17 and Redis 7.2 have no public IP addresses and reject non-VPC traffic:
-1. A lightweight `e2-micro` Compute Engine instance (`${environment}-bastion-host`) is provisioned inside `${environment}-dist-tx-subnet`.
-2. The VM has **zero external IPv4 addresses** (`nat_ip` is omitted).
-3. Engineers and CI/CD migration runners connect using Google Cloud Identity-Aware Proxy (IAP) TCP tunneling:
-   ```bash
-   gcloud compute start-iap-tunnel dev-bastion-host 5432 --local-host-port=localhost:5432 --zone=us-central1-a
-   ```
-4. Access is strictly audited and governed by GCP IAM role `roles/iap.tunnelResourceAccessor`.
-
----
-
-## 6. Live Scaling & Resilience Architecture
-
-### A. Dynamic Scaling Tiers
-1. **GKE Cluster Autoscaler (`google_container_node_pool.primary_nodes`)**:
-   - `min_node_count = 2` (steady state: supports 1,000–5,000 RPS).
-   - `max_node_count = 10` (high surge: expands to 40 vCPUs, 160 GB RAM supporting 25,000+ RPS).
-   - Node pool management enables `auto_repair = true` and `auto_upgrade = true` for zero-touch kernel security updates.
-2. **Kubernetes Horizontal Pod Autoscaler (HPA)**:
-   - Target metrics: Average CPU utilization > 75% or Memory utilization > 80%.
-   - Scales engine pods from 2 replicas to 20 replicas.
-3. **Cloud SQL Storage Autoscaling**:
-   - `disk_autoresize = true` dynamically increases SSD storage in 5 GB increments when free space falls below 10%, preventing transaction lockups from outbox bloat.
-4. **Cloud Pub/Sub Scalability**:
-   - Partitioned message broker automatically scales throughput across Google global infrastructure without manual partition rebalancing.
-
----
-
-## 7. Comprehensive Command Runbook
-
-### A. One-Click Cloud Deployment
 ```bash
-# Execute end-to-end bootstrap: APIs, GCS state, Terraform apply, and K8s workload rollout
-./scripts/run/deploy_cloud.sh <PROJECT_ID> dev us-central1 [BILLING_ACCOUNT_ID]
+# 1.1 Verify Google Cloud CLI installation and version
+gcloud version
+
+# 1.2 Authenticate your personal identity with Google Cloud
+# This opens a web browser to log in with your Google account.
+gcloud auth login
+
+# 1.3 Authenticate Application Default Credentials (ADC)
+# This generates an authentication token (~/.config/gcloud/application_default_credentials.json)
+# that Terraform, Python SDK, and Go client libraries use to communicate with Google APIs.
+gcloud auth application-default login
+
+# 1.4 List all projects you have access to
+gcloud projects list
+
+# 1.5 Define your target project ID, region, and environment variables
+export PROJECT_ID="my-dist-tx-project"
+export REGION="us-central1"
+export ENVIRONMENT="dev"
+
+# 1.6 Set the active project for all subsequent gcloud commands
+gcloud config set project "${PROJECT_ID}"
+
+# 1.7 Confirm active configuration
+gcloud config list
 ```
 
-### B. Offline Terraform Verification & Dry-Run
+---
+
+### Step 2: Enable All Required Google Cloud APIs
+
+```bash
+# In Google Cloud, all API services are disabled by default to prevent unexpected billing.
+# We must explicitly enable the 15 services required by our Terraform configuration:
+gcloud services enable \
+    compute.googleapis.com \
+    container.googleapis.com \
+    sqladmin.googleapis.com \
+    redis.googleapis.com \
+    servicenetworking.googleapis.com \
+    pubsub.googleapis.com \
+    iam.googleapis.com \
+    cloudresourcemanager.googleapis.com \
+    secretmanager.googleapis.com \
+    cloudkms.googleapis.com \
+    storage.googleapis.com \
+    artifactregistry.googleapis.com \
+    cloudtrace.googleapis.com \
+    logging.googleapis.com \
+    monitoring.googleapis.com
+
+# Verify that all 15 APIs are currently enabled
+gcloud services list --enabled --filter="name:(compute OR container OR sqladmin OR redis OR pubsub)"
+```
+
+---
+
+### Step 3: Create the Terraform Remote State GCS Storage Bucket
+
+```bash
+# Terraform stores the mapping between your HCL code and real cloud resources in a "state file" (terraform.tfstate).
+# Storing this file locally is dangerous (risk of data loss, lack of team collaboration, lack of state locking).
+# We store it inside a Google Cloud Storage (GCS) bucket.
+
+export TF_STATE_BUCKET="${PROJECT_ID}-dist-tx-tfstate"
+
+# 3.1 Create the GCS bucket with uniform bucket-level access (disables legacy ACLs for security)
+gcloud storage buckets create "gs://${TF_STATE_BUCKET}" \
+    --project="${PROJECT_ID}" \
+    --location="${REGION}" \
+    --uniform-bucket-level-access
+
+# 3.2 Enable Object Versioning
+# If a Terraform operation ever corrupts the state, versioning allows you to roll back to any previous state version!
+gcloud storage buckets update "gs://${TF_STATE_BUCKET}" --versioning
+
+# 3.3 Verify bucket creation and properties
+gcloud storage buckets describe "gs://${TF_STATE_BUCKET}"
+```
+
+---
+
+### Step 4: Configure Workload Identity Federation (Zero-Key Security)
+
+```bash
+# 4.1 Create the Google Service Account (GSA)
+gcloud iam service-accounts create dist-tx-workload \
+    --description="Workload Identity service account for Distributed TX Engine pods" \
+    --display-name="Distributed TX Engine GSA"
+
+# 4.2 Grant Cloud SQL Client role to allow mutual-TLS database connectivity
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:dist-tx-workload@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --role="roles/cloudsql.client"
+
+# 4.3 Grant Pub/Sub Publisher role to allow Outbox event publishing
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:dist-tx-workload@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --role="roles/pubsub.publisher"
+
+# 4.4 Grant Pub/Sub Subscriber role to allow Saga event consumption
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:dist-tx-workload@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --role="roles/pubsub.subscriber"
+
+# 4.5 Grant Cloud Trace Agent role to allow telemetry span streaming
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:dist-tx-workload@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --role="roles/cloudtrace.agent"
+
+# 4.6 Bind the Kubernetes Service Account (KSA) to the GSA
+# This tells Google Cloud: "Allow pods running under KSA 'dist-tx-engine-sa' in namespace 'dist-tx-dev' to act as this GSA"
+gcloud iam service-accounts add-iam-policy-binding \
+    "dist-tx-workload@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --role="roles/iam.workloadIdentityUser" \
+    --member="serviceAccount:${PROJECT_ID}.svc.id.goog[dist-tx-dev/dist-tx-engine-sa]"
+```
+
+---
+
+### Step 5: Terraform Deep-Dive Operations & Inspection
+
+Navigate to the Terraform directory:
 ```bash
 cd deploy/terraform
+```
 
-# 1. Format code according to canonical HCL standards
-terraform fmt -check
+#### 5.1 Format Code According to Canonical Standards
+```bash
+# Re-aligns indentation, equals signs, and bracket formatting
+terraform fmt
 
-# 2. Initialize without backend connection for offline schema validation
+# Run in CI mode: checks formatting without modifying files (exits with code 3 if unformatted)
+terraform fmt -check -diff
+```
+
+#### 5.2 Initialize Terraform (Offline Validation Mode)
+```bash
+# Initializes provider plugins (google, kubernetes) without attempting to connect to the remote GCS backend.
+# Perfect for offline syntax checking and pre-commit hooks!
 terraform init -backend=false
 
-# 3. Validate syntax, resource types, and input parameters
+# Validates syntax, attribute names, and variable types against the provider schemas
 terraform validate
-
-# 4. Perform a 100% offline speculative plan (Expect: 19 to add)
-terraform plan -refresh=false -var="project_id=mock-project" -var="environment=dev" -var="region=us-central1"
 ```
 
-### C. Live Cloud Provisioning Commands
+#### 5.3 Offline Dry-Run Speculative Plan
 ```bash
-cd deploy/terraform
+# Generates a complete dependency graph and plans resource creation WITHOUT contacting GCP state APIs.
+# Expect output: "Plan: 19 to add, 0 to change, 0 to destroy."
+terraform plan \
+    -refresh=false \
+    -var="project_id=${PROJECT_ID}" \
+    -var="environment=dev" \
+    -var="region=us-central1"
+```
 
-# 1. Initialize with real GCS remote state bucket
+#### 5.4 Live Initialization with Remote GCS Backend
+```bash
+# Initializes Terraform and locks the state file in your Google Cloud Storage bucket
 terraform init
+```
 
-# 2. Generate and output binary plan
+#### 5.5 Generate and Save Binary Execution Plan
+```bash
+# Computes the delta between current GCP cloud state and your Terraform code, saving the execution plan to 'tfplan'.
+# Saving to a file guarantees that 'terraform apply' executes the exact inspected plan without race conditions.
 terraform plan \
     -var="project_id=${PROJECT_ID}" \
     -var="environment=dev" \
     -var="region=us-central1" \
     -out=tfplan
+```
 
-# 3. Apply the 19 planned resources
+#### 5.6 Inspect the Binary Plan in Human-Readable Text
+```bash
+# Read the binary plan file to verify the 19 planned resources before executing
+terraform show tfplan
+```
+
+#### 5.7 Apply the Infrastructure Plan
+```bash
+# Executes the plan against Google Cloud APIs to provision the VPC, Subnet, NAT, GKE, Cloud SQL, Redis, and Bastion!
 terraform apply tfplan
 
-# 4. View provisioned infrastructure outputs
+# Inspect Terraform outputs after completion
 terraform output
 ```
 
-### D. Secure Bastion & Database Access via Cloud IAP
+#### 5.8 Inspect and Query Terraform State
 ```bash
-# SSH into private bastion host with zero public IP
-gcloud compute ssh dev-bastion-host --zone=us-central1-a --tunnel-through-iap
+# List all 19 tracked cloud resources in state
+terraform state list
 
-# Port-forward Cloud SQL PostgreSQL port to local workstation
-gcloud compute start-iap-tunnel dev-bastion-host 5432 \
-    --local-host-port=localhost:5433 \
-    --zone=us-central1-a
+# Show detailed state attributes for a specific resource (e.g. Cloud SQL instance)
+terraform state show google_sql_database_instance.postgres
 
-# Connect via local psql through the secure encrypted IAP tunnel
-psql -h localhost -p 5433 -U postgres -d dist_tx_engine
+# View the full state file in JSON format
+terraform show -json | jq '.values.root_module.resources[].address'
 ```
 
-### E. GKE Cluster & NEG Inspection Commands
-```bash
-# Retrieve cluster credentials
-gcloud container clusters get-credentials dev-dist-tx-gke --region us-central1 --project "${PROJECT_ID}"
+---
 
-# Inspect GKE nodes and autoscaler status
+### Step 6: Connect Kubectl, Inspect GKE & Validate NEGs
+
+```bash
+# 6.1 Retrieve GKE cluster credentials into your local ~/.kube/config
+gcloud container clusters get-credentials dev-dist-tx-gke \
+    --region "${REGION}" \
+    --project "${PROJECT_ID}"
+
+# 6.2 Verify cluster connectivity and worker nodes
 kubectl get nodes -o wide
+
+# 6.3 Inspect GKE Cluster Autoscaler status
 kubectl describe configmap cluster-autoscaler-status -n kube-system
 
-# Inspect standalone Network Endpoint Groups (NEGs)
-gcloud compute network-endpoint-groups list --filter="zone:us-central1"
+# 6.4 List standalone Network Endpoint Groups (NEGs) provisioned in the region
+gcloud compute network-endpoint-groups list --filter="zone:${REGION}"
 
-# View Pod endpoints bound to the NEG
-gcloud compute network-endpoint-groups list-network-endpoints <NEG_NAME> --zone=us-central1-a
+# 6.5 Inspect the individual Pod IP endpoints registered in a NEG
+gcloud compute network-endpoint-groups list-network-endpoints <NEG_NAME> \
+    --zone="${REGION}-a"
+```
+
+---
+
+### Step 7: Accessing Private Cloud SQL & Redis via the IAP Bastion Host
+
+Because PostgreSQL 17 and Redis 7.2 have no public IP addresses, you connect securely through the Compute Engine bastion host using Google Cloud Identity-Aware Proxy (IAP) TCP tunneling:
+
+```bash
+# 7.1 SSH into the private bastion host (zero public IP, zero open inbound firewall ports)
+gcloud compute ssh dev-bastion-host \
+    --zone="${REGION}-a" \
+    --tunnel-through-iap
+
+# 7.2 Forward the remote Cloud SQL PostgreSQL port (5432) to your local machine (5433)
+# Leave this terminal running:
+gcloud compute start-iap-tunnel dev-bastion-host 5432 \
+    --local-host-port=localhost:5433 \
+    --zone="${REGION}-a"
+
+# 7.3 Connect using your local PostgreSQL client (psql) through the encrypted tunnel:
+psql -h localhost -p 5433 -U postgres -d dist_tx_engine -c "SELECT version();"
+
+# 7.4 Forward the remote Redis port (6379) to your local machine (6379)
+gcloud compute start-iap-tunnel dev-bastion-host 6379 \
+    --local-host-port=localhost:6379 \
+    --zone="${REGION}-a"
+
+# 7.5 Ping Redis through the secure IAP tunnel
+redis-cli -h localhost -p 6379 ping
+```
+
+---
+
+### Step 8: Destroying Infrastructure Cleanly (Tear-down)
+
+```bash
+# When testing is complete and you want to decommission all cloud resources to prevent ongoing billing:
+terraform plan -destroy -out=destroy-plan
+terraform apply destroy-plan
+
+# Finally, delete the remote state bucket if completely removing the project:
+# gcloud storage rm -r "gs://${TF_STATE_BUCKET}"
 ```
