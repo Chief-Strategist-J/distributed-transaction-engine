@@ -130,16 +130,16 @@ Custom VPCs drop all incoming traffic by default. The following rules enforce st
 
 ## 4. Failure-First Root Cause Analysis & Disaster Recovery Matrix
 
-In cloud infrastructure, misconfigurations do not cause graceful warnings—they cause catastrophic deployment deadlocks, silent packet dropping, and permanent state corruption.
+For comprehensive, in-depth root cause analyses, real-user disaster scenarios, emergency CLI recovery commands, and side-by-side Before-vs-After architecture diagrams for every failure mode, see:
+👉 **[Google Cloud & Terraform Failures & Real-User Resolution Deep-Dive Runbook](file:///home/btpl-lap-22/live/System-Architect/distributed-transaction-engine/docs/features/terraform/failures-and-resolutions.md)**
 
-| Failure Mode | Root Cause | Real-World Impact | Technical Resolution & Runbook Command |
-|---|---|---|---|
-| **Terraform GCS State Lock Deadlock (`Error acquiring the state lock`)** | A CI/CD runner crashed or was killed (SIGKILL / timeout) while executing `terraform apply`, leaving the lock object in `gs://${TF_STATE_BUCKET}` active. | All subsequent team PRs and deployment pipelines are completely blocked with `Lock Info: ID: 169829381`. | Run: `terraform force-unlock <LOCK_ID>`. Verify in CI/CD pipeline settings that pipeline timeouts send graceful SIGINT rather than SIGKILL. |
-| **GKE Private Cluster Admission Webhook Freeze** | The GKE master control plane runs in `172.16.0.0/28`. When pods use validating/mutating admission webhooks (e.g. Istio, Calico, OTel Operator) on ports 8443/9443, the custom VPC firewall blocks the master from reaching the worker node. | All `kubectl apply` commands hang indefinitely and time out with `Internal error occurred: failed calling webhook`. | Provisioned firewall rule `${env}-allow-gke-master-to-nodes` allowing TCP `443, 10250, 8443, 9443` from `172.16.0.0/28` to target tag `gke-node`. |
-| **Cloud NAT Port Allocation Exhaustion (`IP_OUT_OF_RESOURCES`)** | During a 15,000+ RPS surge, engine pods initiate hundreds of outbound HTTPS requests to external SaaS APIs. With default NAT port allocation (64 ports per VM), source ports are instantly exhausted. | Outbound payment API and webhook calls fail intermittently with `Connection timed out` or `Cannot assign requested address`. | Configured `enable_endpoint_independent_mapping = true` and increased `min_ports_per_vm = 64` with auto-scaling NAT IPs to allocate dynamic IP pools automatically. |
-| **Cloud SQL Deletion Protection vs Terraform Destroy Failure** | `google_sql_database_instance.postgres` sets `deletion_protection = true`. Running `terraform destroy` halts with `cannot delete instance with deletion_protection enabled`. | Automated ephemeral test environments fail to tear down, incurring continuous idle billing. | Run `terraform apply -var="deletion_protection=false"` to explicitly toggle off the protection before executing `terraform destroy`. |
-| **Private Services Peering CIDR Exhaustion** | When `private-ip-alloc` is sized too small (e.g. `/24`), adding a Cloud SQL read replica or expanding Memorystore Redis fails with `Error 400: IP pool exhausted for peering`. | In-flight scaling operations fail during traffic surges, leading to database CPU saturation. | Reserved `/16` (65,536 IPs) via `prefix_length = 16` in `google_compute_global_address.private_ip_address`, guaranteeing sufficient headroom for dozens of replicas. |
-| **GKE Master Private Endpoint Isolation Lockout** | Setting `enable_private_endpoint = true` without defining `master_authorized_networks_config` cuts off all external access to the Kubernetes API server. | Developers and GitHub Actions runners cannot run `kubectl` commands (`Unable to connect to the server: dial tcp: i/o timeout`). | Kept `enable_private_endpoint = false` with public master endpoint and private worker nodes (`enable_private_nodes = true`), or route `kubectl` through the IAP bastion host. |
+### Summary of Resolved Production Cloud Failure Modes:
+1. **Terraform GCS State Lock Deadlock (`Error acquiring the state lock`)**: Resolved via `terraform force-unlock <LOCK_ID>` and GCS atomic lock purge.
+2. **GKE Private Cluster Admission Webhook Freeze**: Resolved by provisioning custom firewall rule `${env}-allow-gke-master-to-nodes` allowing TCP ports 443, 10250, 8443, 9443 from GKE master CIDR `172.16.0.0/28`.
+3. **Cloud NAT Port Allocation Exhaustion (`IP_OUT_OF_RESOURCES`)**: Resolved via `enable_endpoint_independent_mapping = true` and auto-scaling NAT IP allocation.
+4. **Cloud SQL Deletion Protection vs Destroy Failure**: Resolved by explicitly decoupling `deletion_protection = false` before destruction.
+5. **Private Services Peering CIDR Exhaustion**: Sized reservation to `/16` (65,536 IPs) to ensure seamless horizontal replica scale-out.
+6. **GKE Master Private Endpoint Isolation Lockout**: Retained public master endpoint with private worker nodes (`enable_private_nodes = true`) and gated administrative access via Cloud IAP bastion.
 
 ---
 

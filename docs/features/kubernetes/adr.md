@@ -24,17 +24,17 @@ During the initial Kubernetes bootstrap, several failure modes emerged:
 
 ## 2. Failure-First Root Cause Analysis and Solutions
 
-| Failure Mode | Root Cause | Impact | Technical Resolution |
-|---|---|---|---|
-| **Grafana `Datasource not found`** | Grafana stores datasources in ephemeral SQLite if not provisioned via declarative YAML files. | Dashboards and queries failed with `Datasource not found`. | Created `grafana-datasources` ConfigMap mounting to `/etc/grafana/provisioning/datasources/datasources.yaml`, pre-configuring Prometheus, Tempo, Loki, and PostgreSQL with fixed UIDs. |
-| **OTel Collector Container Crash (Exit 128)** | `base/otel-collector.yaml` used `command: ["--config=..."]` instead of `args`. The distroless image entrypoint `/otelcol-contrib` was replaced by the argument string. | Pod entered `CrashLoopBackOff` with `exec: "--config=...": no such file or directory`. | Replaced `command` with `args: ["--config=/etc/otelcol-contrib/config.yaml"]` and updated image digest to valid multi-arch pin. |
-| **OTel Collector Missing ConfigMap** | Manifest referenced `otel-collector-config` ConfigMap which was not included in `deploy/k8s/base/kustomization.yaml`. | Kubelet could not mount volume (`FailedMount`). | Created `deploy/k8s/base/otel-collector-config.yaml` and registered it in `deploy/k8s/base/kustomization.yaml`. |
-| **Kafka KRaft Initial Quorum Split-Brain** | `KAFKA_CONTROLLER_QUORUM_VOTERS` pointed to `kafka.dist-tx.svc.cluster.local:9093` before the headless service DNS was populated. | JVM controller failed to bind quorum, causing continuous broker restart. | Set quorum voter to `1@127.0.0.1:9093` for the single-broker controller and configured `tcpSocket: port 9092` readiness probe. |
-| **Engine `ImagePullBackOff`** | `deploy/k8s/base/deployment.yaml` targets `gcr.io/dist-tx-engine/...:1.0.0` which is a remote registry image not available in local KinD. | Engine pods stay in `ImagePullBackOff`. | Documented local build and load command: `docker build -t ... && kind load docker-image ...`. |
-| **StatefulSet Volume Deadlock (`Multi-Attach error`)** | Worker node failure or abrupt network partition leaves PersistentVolume attached to the old node VM (`VolumeInUse`). Replacement pod on healthy node cannot mount the disk. | PostgreSQL or Kafka StatefulSet remains permanently in `ContainerCreating` for 6+ minutes until node controller timeout. | Configured `podManagementPolicy: OrderedReady`, aggressive Kubelet volume detachment timeouts, and non-graceful node shutdown fencing via `out-of-service` taint. |
-| **`kube-proxy` iptables Conntrack Exhaustion** | 15,000+ RPS transaction bursts generate hundreds of thousands of ephemeral TCP connections, exceeding Linux kernel `nf_conntrack_max`. | Kernel drops SYN packets (`nf_conntrack: table full`), causing random 504 Gateway Timeouts across completely healthy engine pods. | Tuned sysctl `net.netfilter.nf_conntrack_max = 1048576`, decreased TCP `conntrack_tcp_timeout_established` to 300s, and migrated ingress to container-native NEGs to bypass `kube-proxy` SNAT. |
-| **Cascading OOMKill & Connection Storm** | Under high memory load, several engine pods are OOMKilled simultaneously. Upon reboot, all replicas reconnect to PostgreSQL at once, exhausting `max_connections`. | PostgreSQL crashes with `FATAL: remaining connection slots are reserved for non-replication superuser connections`, taking down entire cluster. | Implemented PgBouncer connection pooling sidecars, bounded application pool to 10 connections per pod, and added exponential reconnect backoff with full jitter. |
-| **CoreDNS 5-Second UDP Query Drop Throttling** | Heavy cross-service gRPC and database calls generate millions of `.svc.cluster.local` DNS lookups. Linux kernel race conditions in `nf_conntrack` drop UDP responses. | Random 5-second HTTP request latency spikes as glibc resolver waits for UDP retry timeout. | Deployed NodeLocal DNSCache DaemonSet to cache DNS queries locally on node loopback (`169.254.20.10`), eliminating cross-node UDP traffic and race conditions. |
+For comprehensive, in-depth root cause analyses, real-user disaster scenarios, emergency CLI recovery commands, and side-by-side Before-vs-After architecture diagrams for every failure mode, see:
+👉 **[Kubernetes Failures & Real-User Resolution Deep-Dive Runbook](file:///home/btpl-lap-22/live/System-Architect/distributed-transaction-engine/docs/features/kubernetes/failures-and-resolutions.md)**
+
+### Summary of Resolved Production Failure Modes:
+1. **Grafana `Datasource not found`**: Resolved via declarative ConfigMap mounting to `/etc/grafana/provisioning/datasources/datasources.yaml`.
+2. **OTel Collector Container Crash (Exit 128)**: Resolved by overriding container `args` rather than `command` and updating image digest.
+3. **Kafka KRaft Initial Quorum Split-Brain**: Resolved by setting single-broker quorum voter to `1@127.0.0.1:9093`.
+4. **StatefulSet Volume Deadlock (`Multi-Attach error`)**: Resolved via non-graceful node shutdown fencing and `out-of-service` taints.
+5. **`kube-proxy` iptables Conntrack Exhaustion**: Resolved via kernel tuning and container-native NEGs.
+6. **Cascading OOMKill & Connection Storm**: Resolved via PgBouncer connection pooling and jittered reconnect backoff.
+7. **CoreDNS UDP Drop 5-Second Latency Spikes**: Resolved via NodeLocal DNSCache DaemonSet (`169.254.20.10`).
 
 ---
 
