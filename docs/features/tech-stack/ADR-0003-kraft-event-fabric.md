@@ -59,8 +59,8 @@ docker exec dist_tx-kafka-1 /bin/bash -c "echo 'infra-smoke-test' | /opt/kafka/b
 
 ```mermaid
 graph LR
-    OutboxRelay[Outbox Relay Worker] -->|Produce Key=tx_id| KafkaBroker[Kafka 4.4 Broker (KRaft)]
-    KafkaBroker -->|Partition 0| ConsumerA[Payment Service Worker]
-    KafkaBroker -->|Partition 1| ConsumerB[Inventory Service Worker]
-    KafkaBroker -->|Partition 2| ConsumerC[Notification Service Worker]
+    OutboxRelay["Outbox Relay Worker"] -->|Produce Key=tx_id| KafkaBroker["Kafka 4.4 Broker (KRaft)"]
+    KafkaBroker -->|Partition 0| ConsumerA["Payment Service Worker"]
+    KafkaBroker -->|Partition 1| ConsumerB["Inventory Service Worker"]
+    KafkaBroker -->|Partition 2| ConsumerC["Notification Service Worker"]
 ```

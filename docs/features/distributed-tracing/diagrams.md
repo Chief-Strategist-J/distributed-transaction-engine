@@ -5,31 +5,31 @@
 ```mermaid
 graph TD
     subgraph Execution Runtime
-        App[Distributed Transaction Engine]
-        GoOrch[Go 1.23 Orchestrator]
-        RustState[Rust 1.81 State Machine]
-        CppMath[C++20 Math Kernel]
+        App["Distributed Transaction Engine"]
+        GoOrch["Go 1.23 Orchestrator"]
+        RustState["Rust 1.81 State Machine"]
+        CppMath["C++20 Math Kernel"]
     end
 
     subgraph Collection Layer
-        OTelCol[OpenTelemetry Collector Contrib :4317/:4318]
+        OTelCol["OpenTelemetry Collector Contrib (:4317/:4318)"]
     end
 
     subgraph Storage & Indexing
-        Tempo[Grafana Tempo :3200]
-        Loki[Grafana Loki :3100]
-        Prom[Prometheus :9090]
+        Tempo[("Grafana Tempo (:3200)")]
+        Loki[("Grafana Loki (:3100)")]
+        Prom[("Prometheus (:9090)")]
     end
 
     subgraph Visualization
-        Grafana[Grafana Dashboard :3000]
+        Grafana["Grafana Dashboard (:3000)"]
     end
 
     App -->|OTLP Traces| OTelCol
     App -->|OTLP Logs| OTelCol
-    OTelCol -->|Scrape kafkametrics| Kafka[(Kafka 4.4)]
-    OTelCol -->|Scrape pgmetrics| PG[(PostgreSQL 18)]
-    OTelCol -->|Scrape redismetrics| Redis[(Redis 7.4)]
+    OTelCol -->|Scrape kafkametrics| Kafka[("Kafka 4.4")]
+    OTelCol -->|Scrape pgmetrics| PG[("PostgreSQL 18")]
+    OTelCol -->|Scrape redismetrics| Redis[("Redis 7.4")]
     
     OTelCol -->|Parquet Spans| Tempo
     OTelCol -->|Chunks| Loki

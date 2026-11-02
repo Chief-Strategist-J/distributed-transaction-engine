@@ -68,32 +68,32 @@ All detailed architecture records are housed in this feature directory:
 ```mermaid
 graph TB
     subgraph Client & Edge
-        Client[External Caller / Web App] -->|HTTP / gRPC| Caddy[Caddy 2.8 Gateway :8080]
+        Client["External Caller / Web App"] -->|HTTP / gRPC| Caddy["Caddy 2.8 Gateway (:8080)"]
     end
 
     subgraph Polyglot Execution Engine
-        Caddy -->|Reverse Proxy| GoAPI[Go 1.23 API & Saga Orchestrator]
-        GoAPI -->|cgo / FFI| RustCore[Rust 1.81 State Machine & Outbox Core]
-        RustCore -->|cxx Bridge| CppMath[C++20 Deterministic Rollback Kernel]
+        Caddy -->|Reverse Proxy| GoAPI["Go 1.23 API & Saga Orchestrator"]
+        GoAPI -->|cgo / FFI| RustCore["Rust 1.81 State Machine & Outbox Core"]
+        RustCore -->|cxx Bridge| CppMath["C++20 Deterministic Rollback Kernel"]
     end
 
     subgraph Storage & Event Fabric
-        RustCore -->|ACID State & Outbox Table| PG[(PostgreSQL 18 :5432)]
-        GoAPI -->|Idempotency Keys & Deduplication| Redis[(Redis 7.4 :6379)]
-        RustCore -->|Outbox Relay / Events| Kafka[(Apache Kafka 4.4 KRaft :9092)]
+        RustCore -->|ACID State & Outbox Table| PG[("PostgreSQL 18 (:5432)")]
+        GoAPI -->|Idempotency Keys & Deduplication| Redis[("Redis 7.4 (:6379)")]
+        RustCore -->|Outbox Relay / Events| Kafka[("Apache Kafka 4.4 KRaft (:9092)")]
     end
 
     subgraph Observability Fabric
-        GoAPI -->|OTLP Traces & Logs| OTelCol[OTel Collector Contrib :4317 / :4318]
+        GoAPI -->|OTLP Traces & Logs| OTelCol["OTel Collector Contrib (:4317 / :4318)"]
         OTelCol -->|Scrape PostgreSQL Metrics| PG
         OTelCol -->|Scrape Redis Metrics| Redis
         OTelCol -->|Kafkametrics Receiver| Kafka
         
-        OTelCol -->|Spans| Tempo[(Grafana Tempo :3200)]
-        OTelCol -->|Logs| Loki[(Grafana Loki :3100)]
-        OTelCol -->|Exporter :8889| Prom[(Prometheus :9090)]
+        OTelCol -->|Spans| Tempo[("Grafana Tempo (:3200)")]
+        OTelCol -->|Logs| Loki[("Grafana Loki (:3100)")]
+        OTelCol -->|Exporter :8889| Prom[("Prometheus (:9090)")]
         
-        Tempo -->|TraceQL View| Grafana[Grafana 13.3 Dashboard :3000]
+        Tempo -->|TraceQL View| Grafana["Grafana 13.3 Dashboard (:3000)"]
         Loki -->|LogQL & Trace Correlation| Grafana
         Prom -->|PromQL| Grafana
     end
