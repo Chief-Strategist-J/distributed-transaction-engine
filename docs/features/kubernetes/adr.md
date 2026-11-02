@@ -1,4 +1,4 @@
-# ADR-0005: Kubernetes Cluster Deployment and In-Cluster Observability Fabric
+# ADR-0005: Kubernetes Cluster Deployment, Networking, Autoscaling, and In-Cluster Observability Fabric
 
 | Field | Value |
 |---|---|
@@ -12,27 +12,69 @@
 
 ## 1. Context
 
-Transitioning from local Docker Compose to Kubernetes introduces service discovery differences (`svc.cluster.local`), cluster networking, and pod lifecycle semantics. 
+Transitioning from local Docker Compose to Kubernetes introduces fundamental architectural changes in service discovery (`.svc.cluster.local`), cluster networking, stateful persistence, and horizontal scaling. 
 
-Without an automated deployment and datasource provisioning strategy, operators encounter `Datasource not found` and `ImagePullBackOff` errors when querying Prometheus, Tempo, or Loki in Grafana.
-
----
-
-## 2. Decision Outcome
-
-**Chosen option:** **Automated Local KinD Multi-Node Architecture with Provisioned LGTM Fabric**
-
-- **Cluster Orchestration:** Multi-node KinD cluster (`dist-tx-cluster`) mapping host ports (`8080`, `5432`, `9092`, `13133`, `3000`) to internal Kubernetes services.
-- **Unified Lifecycle Runner:** [scripts/run/k8s.sh](file:///home/btpl-lap-22/live/System-Architect/distributed-transaction-engine/scripts/run/k8s.sh) coordinates zero-manual-intervention cluster creation, secret generation, manifests application, and in-cluster smoke tests.
-- **Auto-Provisioned Grafana Datasources:** Mounted via `grafana-datasources` ConfigMap at `/etc/grafana/provisioning/datasources/datasources.yaml`, establishing pre-configured connections to:
-  1. **Prometheus (`uid: prometheus`):** `http://prometheus:9090`
-  2. **Tempo (`uid: tempo`):** `http://tempo:3200` with NodeGraph and ServiceMap enabled.
-  3. **Loki (`uid: loki`):** `http://loki:3100` with derived fields mapping `trace_id` to Tempo spans.
-  4. **PostgreSQL (`uid: postgres`):** `postgres:5432` (`dist_tx_engine`).
+During the initial Kubernetes bootstrap, several failure modes emerged:
+1. **Datasources Not Found in Grafana:** Deploying vanilla Grafana without automated datasource mounting caused `Datasource was not found` query errors when attempting to query Prometheus, Tempo, or Loki.
+2. **OTel Collector Image & Startup Failures:** Invalid sha256 digests caused `ErrImagePull` / `ImagePullBackOff`. Furthermore, setting `command: ["--config=..."]` instead of overriding `args` caused containerd OCI runtime failure `exec: "--config=...": stat no such file or directory`.
+3. **Kafka KRaft Broker Loop:** In single-node KRaft statefulsets, setting quorum voters to an external DNS name that has not resolved yet prevents the controller from forming the initial metadata quorum, triggering `CrashLoopBackOff`.
+4. **OTel ConfigMap Volume Mount Failures:** Missing `otel-collector-config` ConfigMap in `deploy/k8s/base/` caused `FailedMount: configmap "otel-collector-config" not found`.
 
 ---
 
-## 3. Kubernetes Services & In-Cluster Endpoints Directory
+## 2. Failure-First Root Cause Analysis and Solutions
+
+| Failure Mode | Root Cause | Impact | Technical Resolution |
+|---|---|---|---|
+| **Grafana `Datasource not found`** | Grafana stores datasources in ephemeral SQLite if not provisioned via declarative YAML files. | Dashboards and queries failed with `Datasource not found`. | Created `grafana-datasources` ConfigMap mounting to `/etc/grafana/provisioning/datasources/datasources.yaml`, pre-configuring Prometheus, Tempo, Loki, and PostgreSQL with fixed UIDs. |
+| **OTel Collector Container Crash (Exit 128)** | `base/otel-collector.yaml` used `command: ["--config=..."]` instead of `args`. The distroless image entrypoint `/otelcol-contrib` was replaced by the argument string. | Pod entered `CrashLoopBackOff` with `exec: "--config=...": no such file or directory`. | Replaced `command` with `args: ["--config=/etc/otelcol-contrib/config.yaml"]` and updated image digest to valid multi-arch pin. |
+| **OTel Collector Missing ConfigMap** | Manifest referenced `otel-collector-config` ConfigMap which was not included in `deploy/k8s/base/kustomization.yaml`. | Kubelet could not mount volume (`FailedMount`). | Created `deploy/k8s/base/otel-collector-config.yaml` and registered it in `deploy/k8s/base/kustomization.yaml`. |
+| **Kafka KRaft Initial Quorum Split-Brain** | `KAFKA_CONTROLLER_QUORUM_VOTERS` pointed to `kafka.dist-tx.svc.cluster.local:9093` before the headless service DNS was populated. | JVM controller failed to bind quorum, causing continuous broker restart. | Set quorum voter to `1@127.0.0.1:9093` for the single-broker controller and configured `tcpSocket: port 9092` readiness probe. |
+| **Engine `ImagePullBackOff`** | `deploy/k8s/base/deployment.yaml` targets `gcr.io/dist-tx-engine/...:1.0.0` which is a remote registry image not available in local KinD. | Engine pods stay in `ImagePullBackOff`. | Documented local build and load command: `docker build -t ... && kind load docker-image ...`. |
+
+---
+
+## 3. Kubernetes Networking & Ingress Architecture
+
+All networking within the KinD cluster operates across three isolation tiers:
+
+```
+[Host Machine Traffic]
+       │
+       ▼ (KinD extraPortMappings)
+[Control-Plane NodePorts: :30000, :30432, :30092, :30080, :31133]
+       │
+       ▼ (Kubernetes ClusterIP / NodePort Services)
+[Core Services in Namespace: dist-tx]
+  ├── grafana.dist-tx.svc:3000
+  ├── prometheus.dist-tx.svc:9090
+  ├── tempo.dist-tx.svc:3200 (OTLP :4317/:4318)
+  ├── loki.dist-tx.svc:3100
+  ├── postgres.dist-tx.svc:5432
+  ├── kafka.dist-tx.svc:9092
+  ├── redis.dist-tx.svc:6379
+  └── otel-collector.dist-tx.svc:4318 (Metrics :8889, Health :13133)
+```
+
+---
+
+## 4. Horizontal Autoscaling & Pod Disruption Topology
+
+Scaling and resilience are enforced declaratively in `deploy/k8s/base/`:
+
+1. **Horizontal Pod Autoscaler (HPA) (`hpa.yaml`):**
+   - **Target Deployment:** `distributed-transaction-engine`
+   - **Min Replicas:** `2`
+   - **Max Replicas:** `10`
+   - **Scaling Triggers:** CPU utilization target `75%`, Memory utilization target `80%`.
+2. **Pod Disruption Budget (PDB) (`pdb.yaml`):**
+   - `minAvailable: 1`: Guarantees at least one engine pod remains healthy during node draining, upgrades, or spot instance preemption.
+3. **StatefulSet Volume Strategy:**
+   - PostgreSQL and Kafka run as single-pod StatefulSets with stable network identities (`postgres-0`, `kafka-0`) and dedicated PV/PVC bindings.
+
+---
+
+## 5. Kubernetes Services & In-Cluster Endpoints Directory
 
 | Service | Pod Type | Cluster DNS Endpoint | Host Mapped Port | Purpose |
 |---|---|---|---|---|
@@ -47,59 +89,22 @@ Without an automated deployment and datasource provisioning strategy, operators 
 
 ---
 
-## 4. Execution Commands Runbook
+## 6. Execution Commands Runbook
 
 ### 1. Cluster Provisioning & Deployment
 ```bash
 ./scripts/run/k8s.sh up
 ```
-*Creates the KinD cluster, provisions the `dist-tx` namespace, secrets, PostgreSQL 18, Kafka 4.4, Redis 7.4, Prometheus, Tempo, Loki, Grafana, and applies `deploy/k8s/base`.*
+*Creates the multi-node KinD cluster, provisions namespace `dist-tx`, secrets, PostgreSQL 18, Kafka 4.4, Redis 7.4, Prometheus, Tempo, Loki, Grafana, and applies `deploy/k8s/base`.*
 
 ### 2. End-to-End Verification Test
 ```bash
 ./scripts/run/k8s.sh test
 ```
-*Executes in-cluster PostgreSQL query test, Kafka KRaft message write & read, and Redis ping.*
+*Executes live SQL query against PostgreSQL pod, Kafka KRaft produce & consume, Redis ping, OTLP trace ingestion, OTLP log forwarding, and Prometheus Kafka metric checks.*
 
-### 3. Direct kubectl Verification Commands
+### 3. Cluster Teardown
 ```bash
-# View all pods across the cluster
-kubectl get pods -n dist-tx -o wide
-
-# Test PostgreSQL in pod
-kubectl exec -n dist-tx statefulset/postgres -c postgres -- psql -U postgres -d dist_tx_engine -c "SELECT version();"
-
-# Test Kafka produce & consume inside pod
-kubectl exec -n dist-tx statefulset/kafka -c kafka -- /bin/bash -c "echo 'smoke-test' | /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic smoke-test && /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic smoke-test --partition 0 --offset 0 --max-messages 1"
-
-# Forward Grafana to localhost:3000
-kubectl port-forward svc/grafana 3000:3000 -n dist-tx
+./scripts/run/k8s.sh down
 ```
-
----
-
-## 5. Architectural Topology Diagram
-
-```mermaid
-graph TB
-    subgraph Host Network
-        User["Operator / Developer"]
-    end
-
-    subgraph KinD Cluster dist-tx-cluster
-        subgraph Namespace dist-tx
-            User -->|Port 3000| Grafana["Grafana 13.3 UI (:3000)"]
-            User -->|Port 5432| PG[("PostgreSQL 18 StatefulSet (:5432)")]
-            User -->|Port 9092| Kafka[("Kafka 4.4 KRaft StatefulSet (:9092)")]
-            
-            OTelCol["OTel Collector Pod (:4317/:4318)"] -->|Export Metrics| Prom["Prometheus Pod (:9090)"]
-            OTelCol -->|Export Traces| Tempo["Tempo Pod (:3200)"]
-            OTelCol -->|Export Logs| Loki["Loki Pod (:3100)"]
-            
-            Grafana -->|PromQL| Prom
-            Grafana -->|TraceQL| Tempo
-            Grafana -->|LogQL| Loki
-            Grafana -->|SQL| PG
-        end
-    end
-```
+*Deletes all resources and completely destroys the KinD cluster.*
