@@ -123,11 +123,27 @@ Custom VPCs drop all incoming traffic by default. The following rules enforce st
 | `${env}-allow-internal-traffic` | 1000 | INGRESS | `10.10.0.0/20`, `10.20.0.0/16`, `10.30.0.0/20`, `10.0.0.0/16` | TCP: 0–65535, UDP: 0–65535, ICMP | Allows intra-cluster pod-to-pod, node-to-node, and datastore traffic. |
 | `${env}-allow-gcp-health-checks` | 1000 | INGRESS | `130.211.0.0/22`, `35.191.0.0/16` | TCP: 8080, 443, 80, 13133 | Allows Google Cloud Load Balancer health checkers to probe GKE endpoints. |
 | `${env}-allow-iap-ssh` | 1000 | INGRESS | `35.235.240.0/20` (Google IAP) | TCP: 22 | Allows authorized SSH traffic via Cloud IAP into the Bastion Host (`bastion-host`). |
+| `${env}-allow-gke-master-to-nodes` | 1000 | INGRESS | `172.16.0.0/28` (GKE Master) | TCP: 443, 10250, 8443, 9443 | Allows GKE master control plane to execute admission webhooks and scrape Kubelet metrics. |
 | Default Deny Ingress | 65535 | INGRESS | `0.0.0.0/0` | ALL | Blocks all unsolicited external inbound traffic. |
 
 ---
 
-## 4. Beginner's Comprehensive CLI Command Runbook (From Scratch)
+## 4. Failure-First Root Cause Analysis & Disaster Recovery Matrix
+
+In cloud infrastructure, misconfigurations do not cause graceful warnings—they cause catastrophic deployment deadlocks, silent packet dropping, and permanent state corruption.
+
+| Failure Mode | Root Cause | Real-World Impact | Technical Resolution & Runbook Command |
+|---|---|---|---|
+| **Terraform GCS State Lock Deadlock (`Error acquiring the state lock`)** | A CI/CD runner crashed or was killed (SIGKILL / timeout) while executing `terraform apply`, leaving the lock object in `gs://${TF_STATE_BUCKET}` active. | All subsequent team PRs and deployment pipelines are completely blocked with `Lock Info: ID: 169829381`. | Run: `terraform force-unlock <LOCK_ID>`. Verify in CI/CD pipeline settings that pipeline timeouts send graceful SIGINT rather than SIGKILL. |
+| **GKE Private Cluster Admission Webhook Freeze** | The GKE master control plane runs in `172.16.0.0/28`. When pods use validating/mutating admission webhooks (e.g. Istio, Calico, OTel Operator) on ports 8443/9443, the custom VPC firewall blocks the master from reaching the worker node. | All `kubectl apply` commands hang indefinitely and time out with `Internal error occurred: failed calling webhook`. | Provisioned firewall rule `${env}-allow-gke-master-to-nodes` allowing TCP `443, 10250, 8443, 9443` from `172.16.0.0/28` to target tag `gke-node`. |
+| **Cloud NAT Port Allocation Exhaustion (`IP_OUT_OF_RESOURCES`)** | During a 15,000+ RPS surge, engine pods initiate hundreds of outbound HTTPS requests to external SaaS APIs. With default NAT port allocation (64 ports per VM), source ports are instantly exhausted. | Outbound payment API and webhook calls fail intermittently with `Connection timed out` or `Cannot assign requested address`. | Configured `enable_endpoint_independent_mapping = true` and increased `min_ports_per_vm = 64` with auto-scaling NAT IPs to allocate dynamic IP pools automatically. |
+| **Cloud SQL Deletion Protection vs Terraform Destroy Failure** | `google_sql_database_instance.postgres` sets `deletion_protection = true`. Running `terraform destroy` halts with `cannot delete instance with deletion_protection enabled`. | Automated ephemeral test environments fail to tear down, incurring continuous idle billing. | Run `terraform apply -var="deletion_protection=false"` to explicitly toggle off the protection before executing `terraform destroy`. |
+| **Private Services Peering CIDR Exhaustion** | When `private-ip-alloc` is sized too small (e.g. `/24`), adding a Cloud SQL read replica or expanding Memorystore Redis fails with `Error 400: IP pool exhausted for peering`. | In-flight scaling operations fail during traffic surges, leading to database CPU saturation. | Reserved `/16` (65,536 IPs) via `prefix_length = 16` in `google_compute_global_address.private_ip_address`, guaranteeing sufficient headroom for dozens of replicas. |
+| **GKE Master Private Endpoint Isolation Lockout** | Setting `enable_private_endpoint = true` without defining `master_authorized_networks_config` cuts off all external access to the Kubernetes API server. | Developers and GitHub Actions runners cannot run `kubectl` commands (`Unable to connect to the server: dial tcp: i/o timeout`). | Kept `enable_private_endpoint = false` with public master endpoint and private worker nodes (`enable_private_nodes = true`), or route `kubectl` through the IAP bastion host. |
+
+---
+
+## 5. Beginner's Comprehensive CLI Command Runbook (From Scratch)
 
 This section is designed for students and engineers learning Google Cloud and Terraform from the ground up. Every command is explained with its purpose, flags, and expected outputs.
 

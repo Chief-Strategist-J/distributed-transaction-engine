@@ -46,6 +46,9 @@ resource "google_compute_router_nat" "nat" {
   nat_ip_allocate_option             = "AUTO_ONLY"
   source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
 
+  min_ports_per_vm                    = 64
+  enable_endpoint_independent_mapping = true
+
   log_config {
     enable = true
     filter = "ERRORS_ONLY"
@@ -113,6 +116,23 @@ resource "google_compute_firewall" "allow_iap_ssh" {
   ]
 
   target_tags = ["bastion-host"]
+}
+
+# Rule D: Allow GKE Master Control Plane to Worker Node Webhooks & Kubelet
+resource "google_compute_firewall" "allow_gke_master_to_nodes" {
+  name    = "${var.environment}-allow-gke-master-to-nodes"
+  network = google_compute_network.vpc.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["443", "10250", "8443", "9443"]
+  }
+
+  source_ranges = [
+    "172.16.0.0/28" # GKE Master control-plane CIDR block
+  ]
+
+  target_tags = ["gke-node", "${var.environment}-dist-tx"]
 }
 
 # ------------------------------------------------------------------------------
@@ -323,5 +343,23 @@ resource "google_pubsub_topic" "events_dlq" {
   labels = {
     env    = var.environment
     system = "distributed-transaction-engine"
+  }
+}
+
+# ------------------------------------------------------------------------------
+# 10. ARTIFACT REGISTRY & SECRET MANAGER (Missing Critical Infrastructure)
+# ------------------------------------------------------------------------------
+resource "google_artifact_registry_repository" "repo" {
+  location      = var.region
+  repository_id = "${var.environment}-dist-tx-repo"
+  description   = "Docker container repository for Distributed Transaction Engine"
+  format        = "DOCKER"
+}
+
+resource "google_secret_manager_secret" "db_password" {
+  secret_id = "${var.environment}-dist-tx-db-password"
+
+  replication {
+    auto {}
   }
 }
