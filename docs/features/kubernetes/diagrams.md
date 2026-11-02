@@ -111,7 +111,7 @@ graph TD
     GoLayer -->|1. Check / Acquire Lock| Redis
     GoLayer -->|2. Invoke Invariants| RustLayer
     RustLayer -->|3. Calculate Compensation| CppLayer
-    RustLayer -->|4. Atomic Commit (State + Outbox)| PG
+    RustLayer -->|"4. Atomic Commit: State and Outbox"| PG
     RustLayer -->|5. Relay Outbox Event| Kafka
     Kafka -.->|6. Kafka Partition Lag Scrape| OTelCol["OTel Collector Pod"]
 ```
