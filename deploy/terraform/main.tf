@@ -114,11 +114,11 @@ resource "google_redis_instance" "cache" {
 
 # Declarative Pub/Sub Messaging Topics per messaging/topics/topics.yaml
 resource "google_pubsub_topic" "events" {
-  name = "distributed-transaction-engine-events"
+  name                       = "distributed-transaction-engine-events"
   message_retention_duration = "604800s" # 7 days (matching retention_ms: 604800000)
 
   labels = {
-    env = var.environment
+    env    = var.environment
     system = "distributed-transaction-engine"
   }
 }
@@ -144,7 +144,7 @@ resource "google_pubsub_topic" "events_dlq" {
   name = "distributed-transaction-engine-events-dlq"
 
   labels = {
-    env = var.environment
+    env    = var.environment
     system = "distributed-transaction-engine"
   }
 }
