@@ -47,7 +47,7 @@ graph TB
     VpcPeeringLink <== Internal SDN Private Peering ==> CloudSQL & RedisInstance
 
     PodSecondary -->|TLS Encrypted SQL via Auth Proxy Sidecar| CloudSQL
-    PodSecondary -->|Direct TCP Lock Fencing (:6379)| RedisInstance
+    PodSecondary -->|"Direct TCP Lock Fencing: port 6379"| RedisInstance
     NodeSubnet -.->|Private Master Endpoint| GkeMaster
 ```
 
