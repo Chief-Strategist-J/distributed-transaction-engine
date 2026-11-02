@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
-ARG BUILDER_IMAGE=golang:1.23.1-bookworm@sha256:d824d528994a5c92c813be5bfb3a58eeb06f190a07e868a83ee07ff5b3f11467
-ARG RUST_BUILDER_IMAGE=rust:1.81.0-bookworm@sha256:69b76c8c49e29a9738ad3cf0845a7d7bcab8c0b78d2fb1b83d1c415510657929
-ARG CPP_BUILDER_IMAGE=debian:bookworm-slim@sha256:49195b098197775ce087dd46c7bc3a670f5e1f0217ec5e1bce9f6b5791dfae40
-ARG BASE_IMAGE=debian:bookworm-slim@sha256:49195b098197775ce087dd46c7bc3a670f5e1f0217ec5e1bce9f6b5791dfae40
+ARG BUILDER_IMAGE=golang:1.23-bookworm
+ARG RUST_BUILDER_IMAGE=rust:1.81-bookworm
+ARG CPP_BUILDER_IMAGE=debian:bookworm-slim
+ARG BASE_IMAGE=debian:bookworm-slim
 
 # ---------- Stage 1: Rust Module Builder ----------
 FROM ${RUST_BUILDER_IMAGE} AS rust-builder

@@ -644,6 +644,17 @@ EOF
     log_success "Core datastores and LGTM observability fabric applied."
 }
 
+build_engine_image() {
+    check_prerequisites
+    log_info "Building Distributed Transaction Engine image using deploy/docker/service/Dockerfile..."
+    docker build -f "${REPO_ROOT}/deploy/docker/service/Dockerfile" \
+        -t "gcr.io/dist-tx-engine/distributed-transaction-engine:1.0.0" \
+        "${REPO_ROOT}"
+    log_info "Loading image 'gcr.io/dist-tx-engine/distributed-transaction-engine:1.0.0' into KinD cluster '${KIND_CLUSTER_NAME}'..."
+    TMPDIR="${HOME}" kind load docker-image "gcr.io/dist-tx-engine/distributed-transaction-engine:1.0.0" --name "${KIND_CLUSTER_NAME}"
+    log_success "Image built and loaded into KinD."
+}
+
 deploy_k8s_base() {
     log_info "Applying Kustomize base manifests from deploy/k8s/base into '${NAMESPACE}'..."
     kubectl apply -k "${K8S_BASE}" -n "${NAMESPACE}"
@@ -778,7 +789,8 @@ usage() {
 Usage: $0 [command]
 
 Commands:
-  up         Create KinD cluster, provision namespace, secrets, datastores, and deploy k8s base
+  up         Create KinD cluster, provision namespace, secrets, datastores, build/load image, and deploy k8s base
+  build      Build polyglot engine image and load it into KinD cluster
   test       Run in-cluster pod health, PostgreSQL query, Kafka pub/sub, and Redis tests
   status     Show running cluster nodes, pods, services, and deployments
   down       Completely tear down and delete the KinD cluster
@@ -793,8 +805,12 @@ main() {
             create_cluster
             setup_namespace_and_secrets
             deploy_infra_services
+            build_engine_image
             deploy_k8s_base
             wait_for_rollout
+            ;;
+        build)
+            build_engine_image
             ;;
         test)
             run_verification_tests

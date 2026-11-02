@@ -39,7 +39,7 @@ func main() {
 
 	cfg := Config{
 		PublicAddr: ":8080",
-		AdminAddr:  "127.0.0.1:8081",
+		AdminAddr:  ":8081",
 	}
 
 	sagaRepo := sagaAdapters.NewMemorySagaRepositoryAdapter()
