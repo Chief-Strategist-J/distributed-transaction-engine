@@ -89,22 +89,67 @@ Scaling and resilience are enforced declaratively in `deploy/k8s/base/`:
 
 ---
 
-## 6. Execution Commands Runbook
+## 6. Execution Commands & Kubectl Operational Runbook
 
-### 1. Cluster Provisioning & Deployment
+### 1. Automated Lifecycle Management
 ```bash
+# Provision multi-node KinD cluster, namespace, secrets, datastores & observability
 ./scripts/run/k8s.sh up
-```
-*Creates the multi-node KinD cluster, provisions namespace `dist-tx`, secrets, PostgreSQL 18, Kafka 4.4, Redis 7.4, Prometheus, Tempo, Loki, Grafana, and applies `deploy/k8s/base`.*
 
-### 2. End-to-End Verification Test
-```bash
+# Run full in-cluster telemetry and datastore verification test suite
 ./scripts/run/k8s.sh test
-```
-*Executes live SQL query against PostgreSQL pod, Kafka KRaft produce & consume, Redis ping, OTLP trace ingestion, OTLP log forwarding, and Prometheus Kafka metric checks.*
 
-### 3. Cluster Teardown
-```bash
+# View all running cluster resources
+./scripts/run/k8s.sh status
+
+# Destroy cluster completely
 ./scripts/run/k8s.sh down
 ```
-*Deletes all resources and completely destroys the KinD cluster.*
+
+### 2. Manual Kubectl Troubleshooting & Inspection Commands
+
+#### Inspect Cluster State and Workloads
+```bash
+# Get all workloads and pods in the dist-tx namespace
+kubectl get pods,svc,statefulset,deployment,hpa,pdb -n dist-tx -o wide
+
+# Check pod resource usage
+kubectl top pods -n dist-tx
+
+# View events across the namespace
+kubectl get events -n dist-tx --sort-by='.metadata.creationTimestamp'
+```
+
+#### Datastore In-Pod Testing Commands
+```bash
+# Execute SQL query on PostgreSQL 18 StatefulSet
+kubectl exec -it -n dist-tx statefulset/postgres -c postgres -- psql -U postgres -d dist_tx_engine -c "SELECT version();"
+
+# Produce a test event to Kafka KRaft broker
+kubectl exec -i -n dist-tx statefulset/kafka -c kafka -- /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic k8s-test-topic <<< "k8s-event-payload"
+
+# Consume from Kafka KRaft broker
+kubectl exec -it -n dist-tx statefulset/kafka -c kafka -- /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic k8s-test-topic --partition 0 --offset 0 --max-messages 1
+
+# Test Redis cache response
+kubectl exec -it -n dist-tx deployment/redis -c redis -- redis-cli ping
+```
+
+#### Telemetry & Observability Verification Commands
+```bash
+# Check OTel Collector health extension
+kubectl exec -it -n dist-tx deployment/otel-collector -c otel-collector -- /otelcol-contrib -v || curl -s http://localhost:13133/
+
+# Ingest test trace via curl pod
+kubectl run trace-probe -n dist-tx --image=curlimages/curl:8.10.1 --rm -i --restart=Never -- \
+  curl -s -X POST http://otel-collector:4318/v1/traces \
+  -H "Content-Type: application/json" \
+  -d '{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"distributed-transaction-engine"}}]},"scopeSpans":[{"scope":{"name":"probe"},"spans":[{"traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"00f067aa0ba902b7","name":"probe-span","kind":1,"startTimeUnixNano":"1700000000000000000","endTimeUnixNano":"1700000001000000000","status":{"code":1}}]}]}]}'
+
+# Query Prometheus exported Kafka broker metrics
+kubectl run prom-probe -n dist-tx --image=curlimages/curl:8.10.1 --rm -i --restart=Never -- \
+  curl -s "http://prometheus:9090/api/v1/query?query=otel_kafka_brokers"
+
+# Port-forward Grafana to localhost:3000
+kubectl port-forward svc/grafana 3000:3000 -n dist-tx
+```
