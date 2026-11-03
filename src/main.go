@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/lib/pq"
+
 	"distributed-transaction-engine/src/api/rest/v1/handlers"
 	"distributed-transaction-engine/src/api/rest/v1/routers"
 	sagaAdapters "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/adapters"
@@ -19,6 +21,7 @@ import (
 	sagaService "distributed-transaction-engine/src/features/saga-orchestration/service"
 	transactionStateMachine "distributed-transaction-engine/src/features/transaction-state-machine"
 	workflowDefinitions "distributed-transaction-engine/src/features/workflow-definitions"
+	"distributed-transaction-engine/src/infra/database"
 	"distributed-transaction-engine/src/infra/observability"
 )
 
@@ -53,6 +56,7 @@ func main() {
 	workflowRouter := routers.NewWorkflowDefinitionsRouter(workflowHandler)
 
 	var sagaRepo sagaPorts.SagaRepositoryPort = sagaAdapters.NewMemorySagaRepositoryAdapter()
+	var activeDB *sql.DB
 	dbHost := os.Getenv("DB_HOST")
 	if dbHost != "" {
 		dbPort := os.Getenv("DB_PORT")
@@ -80,6 +84,10 @@ func main() {
 			db.SetMaxIdleConns(10)
 			db.SetConnMaxLifetime(5 * time.Minute)
 			if pingErr := db.Ping(); pingErr == nil {
+				activeDB = db
+				if migErr := database.RunMigrations(rootCtx, db, "database/migrations/sql"); migErr != nil {
+					log.Printf("Migration error: %v\n", migErr)
+				}
 				sagaRepo = sagaAdapters.NewPostgresSagaRepositoryAdapter(db)
 			}
 		}
@@ -108,6 +116,15 @@ func main() {
 		w.Write([]byte(`{"status":"alive"}`))
 	})
 	adminMux.HandleFunc("/health/ready", func(w http.ResponseWriter, r *http.Request) {
+		if activeDB != nil {
+			pingCtx, pingCancel := context.WithTimeout(r.Context(), 2*time.Second)
+			defer pingCancel()
+			if pingErr := activeDB.PingContext(pingCtx); pingErr != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(`{"status":"database unreachable"}`))
+				return
+			}
+		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ready"}`))
 	})
@@ -165,6 +182,10 @@ func main() {
 	}
 	if err := adminServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Admin server shutdown error: %v\n", err)
+	}
+
+	if activeDB != nil {
+		_ = activeDB.Close()
 	}
 
 	log.Println("Shutdown complete, exiting with code 0")
