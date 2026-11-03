@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"distributed-transaction-engine/src/api/rest/v1/handlers"
 	"distributed-transaction-engine/src/api/rest/v1/routers"
 	sagaAdapters "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/adapters"
+	sagaPorts "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/ports"
 	sagaService "distributed-transaction-engine/src/features/saga-orchestration/service"
 	transactionStateMachine "distributed-transaction-engine/src/features/transaction-state-machine"
 	workflowDefinitions "distributed-transaction-engine/src/features/workflow-definitions"
@@ -50,11 +52,50 @@ func main() {
 	workflowHandler := handlers.NewWorkflowDefinitionsHandler(workflowSvc)
 	workflowRouter := routers.NewWorkflowDefinitionsRouter(workflowHandler)
 
-	sagaRepo := sagaAdapters.NewMemorySagaRepositoryAdapter()
+	var sagaRepo sagaPorts.SagaRepositoryPort = sagaAdapters.NewMemorySagaRepositoryAdapter()
+	dbHost := os.Getenv("DB_HOST")
+	if dbHost != "" {
+		dbPort := os.Getenv("DB_PORT")
+		if dbPort == "" {
+			dbPort = "5432"
+		}
+		dbUser := os.Getenv("DB_USER")
+		if dbUser == "" {
+			dbUser = "postgres"
+		}
+		dbPass := os.Getenv("DB_PASSWORD")
+		dbName := os.Getenv("DB_NAME")
+		if dbName == "" {
+			dbName = "transaction_engine"
+		}
+		sslMode := os.Getenv("DB_SSLMODE")
+		if sslMode == "" {
+			sslMode = "disable"
+		}
+
+		connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+			dbHost, dbPort, dbUser, dbPass, dbName, sslMode)
+		if db, err := sql.Open("postgres", connStr); err == nil {
+			db.SetMaxOpenConns(25)
+			db.SetMaxIdleConns(10)
+			db.SetConnMaxLifetime(5 * time.Minute)
+			if pingErr := db.Ping(); pingErr == nil {
+				sagaRepo = sagaAdapters.NewPostgresSagaRepositoryAdapter(db)
+			}
+		}
+	}
+
 	sagaDispatcher := sagaAdapters.NewHttpStepDispatcherAdapter()
 	sagaSvc := sagaService.NewSagaOrchestrationService(sagaRepo, workflowRepo, sagaDispatcher)
 	sagaHandler := handlers.NewSagaHandler(sagaSvc)
 	sagaRouter := routers.NewSagaRouter(sagaHandler)
+
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		workerID = "worker-main"
+	}
+	poller := sagaService.NewSagaPoller(sagaRepo, sagaSvc, workerID, 30*time.Second)
+	go poller.Start(rootCtx, 250*time.Millisecond)
 
 	stateRepo := transactionStateMachine.NewMemoryAdapter()
 	stateSvc := transactionStateMachine.NewService(stateRepo)

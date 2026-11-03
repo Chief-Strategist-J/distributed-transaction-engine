@@ -54,3 +54,26 @@ func (p *SagaPoller) PollAndExecuteNext(ctx context.Context) (bool, error) {
 	execErr := p.sagaService.ProcessSaga(ctx, instance)
 	return true, execErr
 }
+
+func (p *SagaPoller) Start(ctx context.Context, pollInterval time.Duration) {
+	if pollInterval <= 0 {
+		pollInterval = 200 * time.Millisecond
+	}
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for {
+				handled, err := p.PollAndExecuteNext(ctx)
+				if err != nil || !handled {
+					break
+				}
+			}
+		}
+	}
+}
+

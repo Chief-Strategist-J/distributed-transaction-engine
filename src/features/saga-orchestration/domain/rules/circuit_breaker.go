@@ -112,3 +112,4 @@ func (cb *ActionCircuitBreaker) GetState() CircuitState {
 	defer cb.mu.Unlock()
 	return cb.state
 }
+

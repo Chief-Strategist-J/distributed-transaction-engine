@@ -45,6 +45,15 @@ func (r *SagaRouter) RegisterRoutes(mux *http.ServeMux) {
 			return
 		}
 
+		if strings.HasSuffix(req.URL.Path, "/cancel") {
+			if req.Method == http.MethodPost {
+				r.handler.CancelSaga(w, req)
+				return
+			}
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
 		if req.Method == http.MethodGet {
 			r.handler.GetSaga(w, req)
 			return

@@ -64,10 +64,10 @@ func (h *SagaHandler) ExecuteSaga(w http.ResponseWriter, r *http.Request) {
 		observability.String("idempotency_key", idempKey),
 	)
 
-	result, err := h.service.ExecuteSaga(ctx, input)
+	result, err := h.service.StartSaga(ctx, input)
 	if err != nil {
 		observability.RecordError(span, err)
-		h.logger.Error(ctx, "saga execution failed or compensated",
+		h.logger.Error(ctx, "saga start failed",
 			observability.String("workflow_name", input.WorkflowName),
 			observability.String("error", err.Error()),
 		)
@@ -80,14 +80,69 @@ func (h *SagaHandler) ExecuteSaga(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
+	statusCode := http.StatusAccepted
+	if result.CurrentState != sagaContracts.SagaStateCreated {
+		statusCode = http.StatusOK
+	}
+
+	w.Header().Set("Location", "/api/v1/sagas/"+result.PublicID)
+	w.WriteHeader(statusCode)
 	if traceparent != "" {
 		w.Header().Set(constants.HeaderTraceparent, traceparent)
 	}
 
 	resp := types.ApiResponse{
 		Success:    true,
-		StatusCode: http.StatusCreated,
+		StatusCode: statusCode,
+		Data:       result,
+		Meta: types.ResponseMeta{
+			RequestID:       reqID,
+			CorrelationID:   corrID,
+			Timestamp:       time.Now().UTC().Format(time.RFC3339),
+			ExecutionTimeMs: time.Since(start).Milliseconds(),
+			APIVersion:      "v1",
+		},
+	}
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *SagaHandler) CancelSaga(w http.ResponseWriter, r *http.Request) {
+	ctx, span := h.tracer.StartSpan(r.Context(), "saga.cancel")
+	defer span.End()
+
+	start := time.Now()
+	w.Header().Set("Content-Type", "application/json")
+	reqID := r.Header.Get(constants.HeaderXRequestID)
+	corrID := r.Header.Get(constants.HeaderXCorrelationID)
+	tenantID := r.Header.Get(constants.HeaderXTenantID)
+
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		h.writeError(w, http.StatusBadRequest, constants.ErrCodeValidationFailed, "missing saga id in path", start, reqID, corrID)
+		return
+	}
+	sagaID := parts[3]
+
+	if tenantID == "" {
+		h.writeError(w, http.StatusBadRequest, constants.ErrCodeValidationFailed, "x-tenant-id header is required", start, reqID, corrID)
+		return
+	}
+
+	result, err := h.service.CancelSaga(ctx, tenantID, sagaID)
+	if err != nil {
+		observability.RecordError(span, err)
+		if appErr, ok := err.(*appErrors.ApplicationError); ok {
+			h.writeError(w, appErr.StatusCode, appErr.CanonicalCode, appErr.Message, start, reqID, corrID)
+			return
+		}
+		h.writeError(w, http.StatusInternalServerError, constants.ErrCodeInternalError, err.Error(), start, reqID, corrID)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	resp := types.ApiResponse{
+		Success:    true,
+		StatusCode: http.StatusOK,
 		Data:       result,
 		Meta: types.ResponseMeta{
 			RequestID:       reqID,

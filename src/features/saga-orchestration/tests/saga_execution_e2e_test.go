@@ -101,8 +101,8 @@ func TestEndToEnd_SagaHTTPExecutionLifecycle(t *testing.T) {
 	execRec := httptest.NewRecorder()
 	wrappedMux.ServeHTTP(execRec, execReq)
 
-	if execRec.Code != http.StatusCreated {
-		t.Fatalf("saga execution failed, expected 201 got %d: %s", execRec.Code, execRec.Body.String())
+	if execRec.Code != http.StatusAccepted && execRec.Code != http.StatusCreated {
+		t.Fatalf("saga execution failed, expected 202 or 201 got %d: %s", execRec.Code, execRec.Body.String())
 	}
 	if execRec.Header().Get("X-Trace-Id") == "" {
 		t.Fatalf("expected X-Trace-Id header in saga execution response")
@@ -130,6 +130,16 @@ func TestEndToEnd_SagaHTTPExecutionLifecycle(t *testing.T) {
 
 	if getRec.Code != http.StatusOK {
 		t.Fatalf("failed to retrieve saga, expected 200 got %d: %s", getRec.Code, getRec.Body.String())
+	}
+
+	cancelReq := httptest.NewRequest(http.MethodPost, "/api/v1/sagas/"+sagaPublicID+"/cancel", nil)
+	cancelReq.Header.Set("x-tenant-id", tenantID)
+
+	cancelRec := httptest.NewRecorder()
+	wrappedMux.ServeHTTP(cancelRec, cancelReq)
+
+	if cancelRec.Code != http.StatusOK {
+		t.Fatalf("expected cancel to succeed with 200, got %d: %s", cancelRec.Code, cancelRec.Body.String())
 	}
 }
 

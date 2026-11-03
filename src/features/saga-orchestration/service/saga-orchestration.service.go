@@ -402,6 +402,82 @@ func (s *SagaOrchestrationService) GetSaga(ctx context.Context, tenantID string,
 	return s.repo.GetSagaByID(ctx, tenantID, id)
 }
 
+func (s *SagaOrchestrationService) CancelSaga(ctx context.Context, tenantID string, id string) (*sagaContracts.SagaInstance, error) {
+	ctx, span := s.tracer.StartSpan(ctx, "saga_orchestration.cancel")
+	defer span.End()
+
+	instance, err := s.GetSaga(ctx, tenantID, id)
+	if err != nil {
+		observability.RecordError(span, err)
+		return nil, err
+	}
+
+	if instance.CurrentState == sagaContracts.SagaStateCompleted ||
+		instance.CurrentState == sagaContracts.SagaStateFailedCompensated ||
+		instance.CurrentState == sagaContracts.SagaStateCancelled {
+		conflictErr := errors.NewConflictError("saga is already in terminal state: " + string(instance.CurrentState))
+		observability.RecordError(span, conflictErr)
+		return nil, conflictErr
+	}
+
+	workflowDef, err := s.workflowRepo.GetByID(ctx, instance.TenantID, instance.WorkflowDefinitionID)
+	if err != nil {
+		observability.RecordError(span, err)
+		return nil, err
+	}
+
+	stepMap := make(map[string]workflowContracts.StepDefinition, len(workflowDef.Steps))
+	for _, step := range workflowDef.Steps {
+		stepMap[step.StepID] = step
+		if step.IsPivot {
+			for _, stepExec := range instance.Steps {
+				if stepExec.StepID == step.StepID {
+					if stepExec.ExecutionState == sagaContracts.StepStateSucceeded ||
+						stepExec.ExecutionState == sagaContracts.StepStateUnknown ||
+						stepExec.ExecutionState == sagaContracts.StepStateDispatched {
+						pastPivotErr := errors.NewConflictError("cannot cancel saga: past point of no return (pivot step executed)")
+						observability.RecordError(span, pastPivotErr)
+						return nil, pastPivotErr
+					}
+				}
+			}
+		}
+	}
+
+	_ = s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCompensating)
+
+	drainedSteps, compSet := sagaRules.DeriveDrainPlan(instance.Steps, map[string]bool{})
+	instance.Steps = drainedSteps
+	for i := range instance.Steps {
+		_ = s.repo.UpdateStepExecution(ctx, instance.TenantID, instance.ID, &instance.Steps[i])
+	}
+
+	topoResult := workflowRules.ValidateDAGTopology(workflowDef.Steps)
+	compensationChain := sagaRules.ComputeReverseCompensationChain(workflowDef.Steps, topoResult.TopologicalOrder, compSet)
+
+	for _, compStepID := range compensationChain {
+		compDef := stepMap[compStepID]
+		compExec := s.findStepExecution(instance, compStepID)
+
+		s.recordStepTransition(ctx, instance.TenantID, instance.ID, compExec, sagaContracts.StepStateCompensating, nil, nil)
+
+		compKey := sagaRules.DeriveCompensationIdempotencyKey(instance.ID, compStepID)
+		_ = s.dispatcher.CompensateStep(ctx, compDef, instance.InitialPayload, compExec.StepOutput, compKey)
+
+		s.recordStepTransition(ctx, instance.TenantID, instance.ID, compExec, sagaContracts.StepStateCompensated, nil, nil)
+	}
+
+	_ = s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCancelled)
+	_ = s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken)
+
+	s.logger.Info(ctx, "saga successfully cancelled",
+		observability.String("saga_id", instance.PublicID),
+		observability.String("tenant_id", instance.TenantID),
+	)
+
+	return instance, nil
+}
+
 func (s *SagaOrchestrationService) ListSagas(ctx context.Context, tenantID string, limit int, offset int) ([]sagaContracts.SagaInstance, error) {
 	if tenantID == "" {
 		return nil, errors.NewValidationError("tenantId is required")
