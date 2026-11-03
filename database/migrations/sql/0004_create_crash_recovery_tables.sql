@@ -30,3 +30,4 @@ ALTER TABLE saga_instances ADD CONSTRAINT saga_instances_state_ck CHECK (
 CREATE INDEX IF NOT EXISTS idx_saga_instances_orphan_scan 
 ON saga_instances (lease_until) 
 WHERE current_state IN ('CREATED', 'RUNNING', 'ROLLING_FORWARD', 'COMPENSATING');
+

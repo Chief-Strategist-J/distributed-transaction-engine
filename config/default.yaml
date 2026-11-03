@@ -29,3 +29,9 @@ kafka:
 
 endpoints:
   base_path: "/api/v1"
+  health_live: "/health/live"
+  health_ready: "/health/ready"
+  sagas: "/sagas"
+  workflows: "/workflows"
+  state: "/state"
+  crash_recovery: "/crash-recovery"

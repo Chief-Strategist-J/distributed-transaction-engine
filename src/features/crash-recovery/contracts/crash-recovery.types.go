@@ -46,3 +46,4 @@ type CrashRecoveryConfig struct {
 	SelfFenceMargin      time.Duration
 	MaxConcurrentOwned   int
 }
+

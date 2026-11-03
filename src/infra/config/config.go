@@ -44,7 +44,13 @@ type KafkaConfig struct {
 }
 
 type EndpointsConfig struct {
-	BasePath string `yaml:"base_path"`
+	BasePath      string `yaml:"base_path"`
+	HealthLive    string `yaml:"health_live"`
+	HealthReady   string `yaml:"health_ready"`
+	Sagas         string `yaml:"sagas"`
+	Workflows     string `yaml:"workflows"`
+	State         string `yaml:"state"`
+	CrashRecovery string `yaml:"crash_recovery"`
 }
 
 type AppConfig struct {
@@ -135,7 +141,13 @@ func Load(path string) (*AppConfig, error) {
 			PollIntervalMillis:   250,
 		},
 		Endpoints: EndpointsConfig{
-			BasePath: "/api/v1",
+			BasePath:      "/api/v1",
+			HealthLive:    "/health/live",
+			HealthReady:   "/health/ready",
+			Sagas:         "/sagas",
+			Workflows:     "/workflows",
+			State:         "/state",
+			CrashRecovery: "/crash-recovery",
 		},
 	}
 

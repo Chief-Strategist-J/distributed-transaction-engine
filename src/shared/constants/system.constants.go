@@ -22,3 +22,9 @@ const (
 	ErrCodePreconditionFailed  = "PRECONDITION_FAILED"
 	ErrCodeInternalError       = "INTERNAL_SERVER_ERROR"
 )
+
+const (
+	StatusAlive         = "alive"
+	StatusReady         = "ready"
+	StatusDBUnreachable = "database unreachable"
+)

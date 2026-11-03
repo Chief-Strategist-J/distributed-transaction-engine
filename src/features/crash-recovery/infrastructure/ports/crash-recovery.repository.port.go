@@ -17,3 +17,4 @@ type CrashRecoveryRepositoryPort interface {
 	UpdateStepExecution(ctx context.Context, tenantID string, sagaID string, step *sagaContracts.SagaStepExecution) error
 	ReleaseLease(ctx context.Context, tenantID string, sagaID string, token int64) error
 }
+

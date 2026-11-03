@@ -25,3 +25,4 @@ func NewService(
 ) *service.CrashRecoveryService {
 	return service.NewCrashRecoveryService(cfg, repo, sagaSvc)
 }
+

@@ -34,6 +34,26 @@ func NewCrashRecoveryService(
 	}
 }
 
+func (s *CrashRecoveryService) GetConfig() contracts.CrashRecoveryConfig {
+	return s.cfg
+}
+
+func (s *CrashRecoveryService) GetOrphans(ctx context.Context, limit int) ([]contracts.OrphanCandidate, error) {
+	ctx, span := s.tracer.StartSpan(ctx, "crash_recovery.get_orphans")
+	defer span.End()
+
+	if limit <= 0 || limit > 1000 {
+		limit = s.cfg.BatchSize
+	}
+
+	orphans, err := s.repo.FindExpiredLeases(ctx, limit)
+	if err != nil {
+		observability.RecordError(span, err)
+		return nil, err
+	}
+	return orphans, nil
+}
+
 func (s *CrashRecoveryService) Start(ctx context.Context) {
 	ticker := time.NewTicker(s.cfg.ScanInterval)
 	defer ticker.Stop()

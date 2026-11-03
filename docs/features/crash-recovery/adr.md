@@ -66,3 +66,4 @@ When a worker holding a 30-minute lease on a saga crashes:
 
 * **Database Load**: A partial index on `(lease_until) WHERE current_state IN ('CREATED', 'RUNNING', 'ROLLING_FORWARD', 'COMPENSATING')` ensures sweep queries execute in under 1ms without table scans.
 * **Poller Separation**: Standard poller queries now exclusively claim unassigned work (`lease_owner = ''`), while `CrashRecoveryService` claims expired owned leases (`lease_owner != '' AND lease_until < NOW()`).
+

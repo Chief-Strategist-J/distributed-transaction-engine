@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -30,6 +31,7 @@ import (
 	"distributed-transaction-engine/src/infra/config"
 	"distributed-transaction-engine/src/infra/database"
 	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/constants"
 )
 
 func parseFlags() (string, bool) {
@@ -111,10 +113,7 @@ func initCrashRecoveryFeature(
 	cfg *config.AppConfig,
 	db *sql.DB,
 	sagaSvc *sagaService.SagaOrchestrationService,
-) {
-	if db == nil {
-		return
-	}
+) *routers.CrashRecoveryRouter {
 	bootUUID := uuid.New().String()
 	recoveryCfg := crashRecoveryContracts.CrashRecoveryConfig{
 		IncarnationID:      crashRecoveryRules.BuildIncarnationID(cfg.Poller.WorkerID, bootUUID),
@@ -126,30 +125,55 @@ func initCrashRecoveryFeature(
 		SelfFenceMargin:    5 * time.Second,
 		MaxConcurrentOwned: 100,
 	}
-	repo := crashRecovery.NewPostgresAdapter(db)
+	var repo crashRecovery.CrashRecoveryRepositoryPort
+	if db != nil {
+		repo = crashRecovery.NewPostgresAdapter(db)
+	}
 	recoverySvc := crashRecovery.NewService(recoveryCfg, repo, sagaSvc)
-	go recoverySvc.Start(ctx)
+	if db != nil {
+		go recoverySvc.Start(ctx)
+	}
+	handler := handlers.NewCrashRecoveryHandler(recoverySvc)
+	return routers.NewCrashRecoveryRouter(handler)
 }
 
-func buildAdminServer(cfg *config.AppConfig, db *sql.DB) *http.Server {
-	adminMux := http.NewServeMux()
-	adminMux.HandleFunc("/health/live", func(w http.ResponseWriter, r *http.Request) {
+func registerHealthLive(mux *http.ServeMux, path string) {
+	target := path
+	if target == "" {
+		target = "/health/live"
+	}
+	mux.HandleFunc(target, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"alive"}`))
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": constants.StatusAlive})
 	})
-	adminMux.HandleFunc("/health/ready", func(w http.ResponseWriter, r *http.Request) {
+}
+
+func registerHealthReady(mux *http.ServeMux, path string, db *sql.DB) {
+	target := path
+	if target == "" {
+		target = "/health/ready"
+	}
+	mux.HandleFunc(target, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		if db != nil {
 			pingCtx, pingCancel := context.WithTimeout(r.Context(), 2*time.Second)
 			defer pingCancel()
 			if err := db.PingContext(pingCtx); err != nil {
 				w.WriteHeader(http.StatusServiceUnavailable)
-				w.Write([]byte(`{"status":"database unreachable"}`))
+				_ = json.NewEncoder(w).Encode(map[string]string{"status": constants.StatusDBUnreachable})
 				return
 			}
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ready"}`))
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": constants.StatusReady})
 	})
+}
+
+func buildAdminServer(cfg *config.AppConfig, db *sql.DB) *http.Server {
+	adminMux := http.NewServeMux()
+	registerHealthLive(adminMux, cfg.Endpoints.HealthLive)
+	registerHealthReady(adminMux, cfg.Endpoints.HealthReady, db)
 
 	return &http.Server{
 		Addr:         cfg.Server.AdminBindAddress,
@@ -159,16 +183,20 @@ func buildAdminServer(cfg *config.AppConfig, db *sql.DB) *http.Server {
 	}
 }
 
+type RouteRegistrar interface {
+	RegisterRoutes(mux *http.ServeMux)
+}
+
 func buildPublicServer(
 	cfg *config.AppConfig,
-	sagaRouter *routers.SagaRouter,
-	stateRouter *routers.TransactionStateMachineRouter,
-	workflowRouter *routers.WorkflowDefinitionsRouter,
+	registrars ...RouteRegistrar,
 ) *http.Server {
 	publicMux := http.NewServeMux()
-	sagaRouter.RegisterRoutes(publicMux)
-	stateRouter.RegisterRoutes(publicMux)
-	workflowRouter.RegisterRoutes(publicMux)
+	for _, registrar := range registrars {
+		if registrar != nil {
+			registrar.RegisterRoutes(publicMux)
+		}
+	}
 
 	publicHandler := observability.ObservabilityMiddleware(cfg.Server.Name, publicMux)
 
@@ -243,10 +271,16 @@ func main() {
 	workflowRepo, workflowRouter := initWorkflowFeature(db)
 	stateRouter := initStateFeature(db)
 	sagaRouter, sagaSvc := initSagaFeature(rootCtx, cfg, sagaRepo, workflowRepo)
-	initCrashRecoveryFeature(rootCtx, cfg, db, sagaSvc)
+	recoveryRouter := initCrashRecoveryFeature(rootCtx, cfg, db, sagaSvc)
 
 	adminServer := buildAdminServer(cfg, db)
-	publicServer := buildPublicServer(cfg, sagaRouter, stateRouter, workflowRouter)
+	publicServer := buildPublicServer(
+		cfg,
+		sagaRouter,
+		stateRouter,
+		workflowRouter,
+		recoveryRouter,
+	)
 
 	fatalChan := startListeners(adminServer, publicServer)
 	log.Println("Server running (Phase 7: Run)")

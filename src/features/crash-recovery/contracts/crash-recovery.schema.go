@@ -28,3 +28,4 @@ func ValidateCrashRecoveryConfig(cfg CrashRecoveryConfig) error {
 	}
 	return nil
 }
+

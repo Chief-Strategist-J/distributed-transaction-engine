@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export PATH="/home/btpl-lap-22/.local/go/bin:/home/btpl-lap-22/.local/bin:${PATH}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -709,3 +710,71 @@ if [[ -n "${RECOVERY_DB_CHECK}" ]]; then
         exit 1
     fi
 fi
+
+echo ""
+echo "================================================================"
+echo " 11. SCENARIO 8: CRASH RECOVERY API & ADMIN PROBE CONTRACT VERIFICATION"
+echo "================================================================"
+
+echo "Verifying Admin Probes with declarative paths..."
+LIVE_RESP=$(curl -s "http://127.0.0.1:${ADMIN_PORT}/health/live")
+LIVE_STATUS=$(echo "${LIVE_RESP}" | json_extract "['status']")
+if [[ "${LIVE_STATUS}" != "alive" ]]; then
+    echo "FAIL: Expected /health/live status to be 'alive', got: ${LIVE_STATUS}"
+    exit 1
+fi
+echo "[PASS] /health/live returned: ${LIVE_STATUS}"
+
+READY_RESP=$(curl -s "http://127.0.0.1:${ADMIN_PORT}/health/ready")
+READY_STATUS=$(echo "${READY_RESP}" | json_extract "['status']")
+if [[ "${READY_STATUS}" != "ready" ]]; then
+    echo "FAIL: Expected /health/ready status to be 'ready', got: ${READY_STATUS}"
+    exit 1
+fi
+echo "[PASS] /health/ready returned: ${READY_STATUS}"
+
+echo "Verifying GET /api/v1/crash-recovery/status..."
+STATUS_API_RESP=$(curl -s "http://127.0.0.1:${PORT}/api/v1/crash-recovery/status" \
+    -H "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" \
+    -H "x-request-id: req-rec-status-1" \
+    -H "x-correlation-id: corr-rec-status-1")
+STATUS_SUCCESS=$(echo "${STATUS_API_RESP}" | json_extract "['success']")
+STATUS_DAEMON=$(echo "${STATUS_API_RESP}" | json_extract "['data']['status']")
+STATUS_INCARNATION=$(echo "${STATUS_API_RESP}" | json_extract "['data']['incarnationId']")
+STATUS_REQ_ECHO=$(echo "${STATUS_API_RESP}" | json_extract "['meta']['requestId']")
+
+if [[ "${STATUS_SUCCESS}" != "True" || "${STATUS_DAEMON}" != "ACTIVE" || -z "${STATUS_INCARNATION}" || "${STATUS_REQ_ECHO}" != "req-rec-status-1" ]]; then
+    echo "FAIL: Crash recovery status verification failed: ${STATUS_API_RESP}"
+    exit 1
+fi
+echo "[PASS] GET /api/v1/crash-recovery/status returned active incarnation: ${STATUS_INCARNATION}"
+
+echo "Verifying GET /api/v1/crash-recovery/orphans?limit=10..."
+ORPHANS_API_RESP=$(curl -s "http://127.0.0.1:${PORT}/api/v1/crash-recovery/orphans?limit=10")
+ORPHANS_SUCCESS=$(echo "${ORPHANS_API_RESP}" | json_extract "['success']")
+if [[ "${ORPHANS_SUCCESS}" != "True" ]]; then
+    echo "FAIL: Crash recovery orphans query failed: ${ORPHANS_API_RESP}"
+    exit 1
+fi
+echo "[PASS] GET /api/v1/crash-recovery/orphans returned valid envelope"
+
+echo "Verifying POST /api/v1/crash-recovery/sweep (Valid Closed Schema)..."
+SWEEP_RESP=$(curl -s -X POST "http://127.0.0.1:${PORT}/api/v1/crash-recovery/sweep" \
+    -H "Content-Type: application/json" \
+    -d '{"batchLimit": 50}')
+SWEEP_SUCCESS=$(echo "${SWEEP_RESP}" | json_extract "['success']")
+if [[ "${SWEEP_SUCCESS}" != "True" ]]; then
+    echo "FAIL: Crash recovery sweep failed: ${SWEEP_RESP}"
+    exit 1
+fi
+echo "[PASS] POST /api/v1/crash-recovery/sweep executed successfully"
+
+echo "Verifying POST /api/v1/crash-recovery/sweep (Closed Schema Guardrail 6 Rejection)..."
+REJECT_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:${PORT}/api/v1/crash-recovery/sweep" \
+    -H "Content-Type: application/json" \
+    -d '{"unknownDisallowedField": 12345}')
+if [[ "${REJECT_HTTP_CODE}" != "400" ]]; then
+    echo "FAIL: Expected HTTP 400 rejection for unknown fields, got: ${REJECT_HTTP_CODE}"
+    exit 1
+fi
+echo "[PASS] Guardrail 6 enforced: unknown field rejected with HTTP 400"

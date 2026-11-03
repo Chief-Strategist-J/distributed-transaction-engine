@@ -52,3 +52,4 @@ func ShouldSelfFence(now time.Time, lastRenewal time.Time, leaseDuration time.Du
 	fenceDeadline := lastRenewal.Add(leaseDuration - margin)
 	return !now.Before(fenceDeadline)
 }
+

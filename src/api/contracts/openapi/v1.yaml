@@ -300,6 +300,105 @@ paths:
                 $ref: '#/components/schemas/WorkflowDefinitionResponse'
         '404':
           description: Workflow definition not found
+  /api/v1/crash-recovery/status:
+    get:
+      summary: Retrieve crash recovery daemon status and active configuration
+      operationId: getCrashRecoveryStatus
+      parameters:
+        - name: traceparent
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Crash recovery status and configuration details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrashRecoveryStatusResponse'
+  /api/v1/crash-recovery/orphans:
+    get:
+      summary: Query expired orphan sagas awaiting takeover
+      operationId: getCrashRecoveryOrphans
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+        - name: traceparent
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of orphaned saga instances
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrashRecoveryOrphansResponse'
+  /api/v1/crash-recovery/sweep:
+    post:
+      summary: Trigger immediate manual sweep and reclamation cycle
+      operationId: triggerCrashRecoverySweep
+      parameters:
+        - name: traceparent
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                batchLimit:
+                  type: integer
+      responses:
+        '200':
+          description: Sweep execution result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrashRecoverySweepResponse'
+        '400':
+          description: Validation failed on unrecognized payload fields
 components:
   schemas:
     WorkflowDefinitionResponse:
@@ -360,6 +459,90 @@ components:
               type: string
             retryable:
               type: boolean
+        meta:
+          type: object
+    CrashRecoveryStatusResponse:
+      type: object
+      required:
+        - success
+        - statusCode
+        - meta
+      properties:
+        success:
+          type: boolean
+        statusCode:
+          type: integer
+        data:
+          type: object
+          properties:
+            incarnationId:
+              type: string
+            scanIntervalMs:
+              type: integer
+            batchSize:
+              type: integer
+            leaseDurationMs:
+              type: integer
+            maxTakeovers:
+              type: integer
+            selfFenceMarginMs:
+              type: integer
+            maxConcurrentOwned:
+              type: integer
+            status:
+              type: string
+        meta:
+          type: object
+    CrashRecoveryOrphansResponse:
+      type: object
+      required:
+        - success
+        - statusCode
+        - meta
+      properties:
+        success:
+          type: boolean
+        statusCode:
+          type: integer
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              sagaId:
+                type: string
+              leaseOwner:
+                type: string
+              leaseUntil:
+                type: string
+                format: date-time
+              currentState:
+                type: string
+              takeoverCount:
+                type: integer
+              fencingToken:
+                type: integer
+        meta:
+          type: object
+    CrashRecoverySweepResponse:
+      type: object
+      required:
+        - success
+        - statusCode
+        - meta
+      properties:
+        success:
+          type: boolean
+        statusCode:
+          type: integer
+        data:
+          type: object
+          properties:
+            reclaimedCount:
+              type: integer
+            timestamp:
+              type: string
+              format: date-time
         meta:
           type: object
   headers:

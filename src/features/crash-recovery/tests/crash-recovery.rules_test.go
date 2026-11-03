@@ -170,3 +170,4 @@ func TestSelfFenceEvaluation(t *testing.T) {
 		})
 	}
 }
+

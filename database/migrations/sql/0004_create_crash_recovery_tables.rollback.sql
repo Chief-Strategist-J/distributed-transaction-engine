@@ -23,3 +23,4 @@ ALTER TABLE saga_instances ADD CONSTRAINT saga_instances_state_ck CHECK (
 );
 
 ALTER TABLE saga_instances DROP COLUMN IF EXISTS takeover_count;
+
