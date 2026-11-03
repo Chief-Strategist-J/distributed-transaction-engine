@@ -1,6 +1,8 @@
 package transactionstatemachine
 
 import (
+	"database/sql"
+
 	contracts "distributed-transaction-engine/src/features/transaction-state-machine/contracts"
 	machines "distributed-transaction-engine/src/features/transaction-state-machine/domain/machines"
 	adapters "distributed-transaction-engine/src/features/transaction-state-machine/infrastructure/adapters"
@@ -27,4 +29,8 @@ func NewService(repo ports.TransactionStateMachineRepositoryPort) *Service {
 
 func NewMemoryAdapter() *MemoryAdapter {
 	return adapters.NewMemoryTransactionStateMachineRepositoryAdapter()
+}
+
+func NewPostgresAdapter(db *sql.DB) *PostgresAdapter {
+	return adapters.NewPostgresTransactionStateMachineRepositoryAdapter(db)
 }

@@ -63,16 +63,22 @@ func initDatabase(ctx context.Context, cfg *config.AppConfig) (*sql.DB, sagaPort
 	return db, sagaAdapters.NewPostgresSagaRepositoryAdapter(db)
 }
 
-func initWorkflowFeature() (workflowPorts.WorkflowDefinitionsRepositoryPort, *routers.WorkflowDefinitionsRouter) {
-	repo := workflowDefinitions.NewMemoryAdapter()
+func initWorkflowFeature(db *sql.DB) (workflowPorts.WorkflowDefinitionsRepositoryPort, *routers.WorkflowDefinitionsRouter) {
+	var repo workflowPorts.WorkflowDefinitionsRepositoryPort = workflowDefinitions.NewMemoryAdapter()
+	if db != nil {
+		repo = workflowDefinitions.NewPostgresAdapter(db)
+	}
 	svc := workflowDefinitions.NewService(repo)
 	handler := handlers.NewWorkflowDefinitionsHandler(svc)
 	router := routers.NewWorkflowDefinitionsRouter(handler)
 	return repo, router
 }
 
-func initStateFeature() *routers.TransactionStateMachineRouter {
-	repo := transactionStateMachine.NewMemoryAdapter()
+func initStateFeature(db *sql.DB) *routers.TransactionStateMachineRouter {
+	var repo transactionStateMachine.RepositoryPort = transactionStateMachine.NewMemoryAdapter()
+	if db != nil {
+		repo = transactionStateMachine.NewPostgresAdapter(db)
+	}
 	svc := transactionStateMachine.NewService(repo)
 	handler := handlers.NewTransactionStateMachineHandler(svc)
 	return routers.NewTransactionStateMachineRouter(handler)
@@ -190,9 +196,22 @@ func main() {
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	shutdownTracer, err := observability.InitTracer(rootCtx, cfg.Server.Name)
+	if err != nil {
+		log.Printf("Warning: failed to initialize distributed tracing: %v\n", err)
+	} else {
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := shutdownTracer(shutdownCtx); err != nil {
+				log.Printf("Tracing shutdown error: %v\n", err)
+			}
+		}()
+	}
+
 	db, sagaRepo := initDatabase(rootCtx, cfg)
-	workflowRepo, workflowRouter := initWorkflowFeature()
-	stateRouter := initStateFeature()
+	workflowRepo, workflowRouter := initWorkflowFeature(db)
+	stateRouter := initStateFeature(db)
 	sagaRouter := initSagaFeature(rootCtx, cfg, sagaRepo, workflowRepo)
 
 	adminServer := buildAdminServer(cfg, db)

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	contracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
 	ports "distributed-transaction-engine/src/features/workflow-definitions/infrastructure/ports"
 	"distributed-transaction-engine/src/features/workflow-definitions/infrastructure/queries"
@@ -30,7 +32,10 @@ func (a *PostgresWorkflowDefinitionsRepositoryAdapter) Save(ctx context.Context,
 	}
 	defer tx.Rollback()
 
-	rawSpecJSON, err := json.Marshal(def.Steps)
+	rawSpecJSON, err := json.Marshal(map[string]interface{}{
+		"name":  def.Name,
+		"steps": def.Steps,
+	})
 	if err != nil {
 		return errors.NewValidationError("failed to serialize steps to JSON")
 	}
@@ -65,12 +70,12 @@ func (a *PostgresWorkflowDefinitionsRepositoryAdapter) Save(ctx context.Context,
 		if err != nil {
 			return errors.NewValidationError("failed to serialize step dependencies")
 		}
-		stepPublicID := fmt.Sprintf("stp_%s%s", step.StepID, "0000000000000000000000")[:30]
+		stepPublicID := fmt.Sprintf("stp_%s", strings.ReplaceAll(uuid.New().String(), "-", "")[:26])
 
 		_, err = tx.ExecContext(
 			ctx,
 			queries.FlowInsertWorkflowDefinitionStep,
-			def.ID,
+			uuid.New().String(),
 			stepPublicID,
 			def.TenantID,
 			def.ID,

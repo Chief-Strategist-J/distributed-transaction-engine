@@ -1,6 +1,8 @@
 package workflowdefinitions
 
 import (
+	"database/sql"
+
 	contracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
 	adapters "distributed-transaction-engine/src/features/workflow-definitions/infrastructure/adapters"
 	ports "distributed-transaction-engine/src/features/workflow-definitions/infrastructure/ports"
@@ -21,5 +23,9 @@ func NewService(repo RepositoryPort) *Service {
 
 func NewMemoryAdapter() *MemoryAdapter {
 	return adapters.NewMemoryWorkflowDefinitionsRepositoryAdapter()
+}
+
+func NewPostgresAdapter(db *sql.DB) *PostgresAdapter {
+	return adapters.NewPostgresWorkflowDefinitionsRepositoryAdapter(db)
 }
 
