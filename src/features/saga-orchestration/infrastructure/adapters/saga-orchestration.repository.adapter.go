@@ -3,40 +3,144 @@ package adapters
 import (
 	"context"
 	"sync"
+	"time"
 
 	sagaContracts "distributed-transaction-engine/src/features/saga-orchestration/contracts"
 	"distributed-transaction-engine/src/shared/errors"
 )
 
 type MemorySagaRepositoryAdapter struct {
-	mu    sync.RWMutex
-	store map[string]*sagaContracts.SagaInstance
+	mu           sync.RWMutex
+	storeByID    map[string]*sagaContracts.SagaInstance
+	storeByPubID map[string]*sagaContracts.SagaInstance
+	storeByExtID map[string]*sagaContracts.SagaInstance
 }
 
 func NewMemorySagaRepositoryAdapter() *MemorySagaRepositoryAdapter {
 	return &MemorySagaRepositoryAdapter{
-		store: make(map[string]*sagaContracts.SagaInstance),
+		storeByID:    make(map[string]*sagaContracts.SagaInstance),
+		storeByPubID: make(map[string]*sagaContracts.SagaInstance),
+		storeByExtID: make(map[string]*sagaContracts.SagaInstance),
 	}
+}
+
+func (a *MemorySagaRepositoryAdapter) CreateSaga(ctx context.Context, instance *sagaContracts.SagaInstance) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	idKey := instance.TenantID + ":" + instance.ID
+	if _, exists := a.storeByID[idKey]; exists {
+		return errors.NewConflictError("saga instance already exists with id: " + instance.ID)
+	}
+
+	extKey := instance.TenantID + ":" + instance.Source + ":" + instance.ExternalID
+	if _, exists := a.storeByExtID[extKey]; exists {
+		return errors.NewConflictError("saga instance already exists with external id: " + instance.ExternalID)
+	}
+
+	copied := *instance
+	copiedSteps := make([]sagaContracts.SagaStepExecution, len(instance.Steps))
+	copy(copiedSteps, instance.Steps)
+	copied.Steps = copiedSteps
+
+	a.storeByID[idKey] = &copied
+	if instance.PublicID != "" {
+		pubKey := instance.TenantID + ":" + instance.PublicID
+		a.storeByPubID[pubKey] = &copied
+	}
+	a.storeByExtID[extKey] = &copied
+	return nil
 }
 
 func (a *MemorySagaRepositoryAdapter) GetSagaByID(ctx context.Context, tenantID string, id string) (*sagaContracts.SagaInstance, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+
 	key := tenantID + ":" + id
-	instance, exists := a.store[key]
+	instance, exists := a.storeByID[key]
 	if !exists {
 		return nil, errors.NewNotFoundError("saga instance not found")
 	}
 	return instance, nil
 }
 
-func (a *MemorySagaRepositoryAdapter) CreateSaga(ctx context.Context, instance *sagaContracts.SagaInstance) error {
+func (a *MemorySagaRepositoryAdapter) GetSagaByPublicID(ctx context.Context, tenantID string, publicID string) (*sagaContracts.SagaInstance, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	key := tenantID + ":" + publicID
+	instance, exists := a.storeByPubID[key]
+	if !exists {
+		return nil, errors.NewNotFoundError("saga instance not found")
+	}
+	return instance, nil
+}
+
+func (a *MemorySagaRepositoryAdapter) UpdateSagaState(ctx context.Context, tenantID string, id string, expectedVersion int64, nextState sagaContracts.SagaState) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	key := instance.TenantID + ":" + instance.ID
-	if _, exists := a.store[key]; exists {
-		return errors.NewConflictError("saga instance already exists")
+
+	key := tenantID + ":" + id
+	instance, exists := a.storeByID[key]
+	if !exists {
+		return errors.NewNotFoundError("saga instance not found")
 	}
-	a.store[key] = instance
+
+	if instance.Version != expectedVersion {
+		return errors.NewConflictError("concurrency conflict: optimistic lock failed on saga state transition")
+	}
+
+	instance.CurrentState = nextState
+	instance.Version++
+	instance.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	return nil
+}
+
+func (a *MemorySagaRepositoryAdapter) UpdateStepExecution(ctx context.Context, tenantID string, sagaID string, updatedStep *sagaContracts.SagaStepExecution) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	key := tenantID + ":" + sagaID
+	instance, exists := a.storeByID[key]
+	if !exists {
+		return errors.NewNotFoundError("saga instance not found")
+	}
+
+	found := false
+	for i := range instance.Steps {
+		if instance.Steps[i].StepID == updatedStep.StepID {
+			instance.Steps[i] = *updatedStep
+			instance.Steps[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return errors.NewNotFoundError("saga step execution not found: " + updatedStep.StepID)
+	}
+	return nil
+}
+
+func (a *MemorySagaRepositoryAdapter) ListSagas(ctx context.Context, tenantID string, limit int, offset int) ([]sagaContracts.SagaInstance, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	var result []sagaContracts.SagaInstance
+	for _, inst := range a.storeByID {
+		if inst.TenantID == tenantID {
+			result = append(result, *inst)
+		}
+	}
+
+	if offset >= len(result) {
+		return []sagaContracts.SagaInstance{}, nil
+	}
+
+	end := offset + limit
+	if end > len(result) {
+		end = len(result)
+	}
+
+	return result[offset:end], nil
 }

@@ -45,8 +45,14 @@ func main() {
 		AdminAddr:  ":8081",
 	}
 
+	workflowRepo := workflowDefinitions.NewMemoryAdapter()
+	workflowSvc := workflowDefinitions.NewService(workflowRepo)
+	workflowHandler := handlers.NewWorkflowDefinitionsHandler(workflowSvc)
+	workflowRouter := routers.NewWorkflowDefinitionsRouter(workflowHandler)
+
 	sagaRepo := sagaAdapters.NewMemorySagaRepositoryAdapter()
-	sagaSvc := sagaService.NewSagaOrchestrationService(sagaRepo)
+	sagaDispatcher := sagaAdapters.NewHttpStepDispatcherAdapter()
+	sagaSvc := sagaService.NewSagaOrchestrationService(sagaRepo, workflowRepo, sagaDispatcher)
 	sagaHandler := handlers.NewSagaHandler(sagaSvc)
 	sagaRouter := routers.NewSagaRouter(sagaHandler)
 
@@ -54,11 +60,6 @@ func main() {
 	stateSvc := transactionStateMachine.NewService(stateRepo)
 	stateHandler := handlers.NewTransactionStateMachineHandler(stateSvc)
 	stateRouter := routers.NewTransactionStateMachineRouter(stateHandler)
-
-	workflowRepo := workflowDefinitions.NewMemoryAdapter()
-	workflowSvc := workflowDefinitions.NewService(workflowRepo)
-	workflowHandler := handlers.NewWorkflowDefinitionsHandler(workflowSvc)
-	workflowRouter := routers.NewWorkflowDefinitionsRouter(workflowHandler)
 
 	adminMux := http.NewServeMux()
 	adminMux.HandleFunc("/health/live", func(w http.ResponseWriter, r *http.Request) {
