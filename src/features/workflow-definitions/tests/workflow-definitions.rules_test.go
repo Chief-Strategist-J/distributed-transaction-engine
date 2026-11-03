@@ -1,0 +1,222 @@
+package tests
+
+import (
+	"testing"
+
+	contracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
+	rules "distributed-transaction-engine/src/features/workflow-definitions/domain/rules"
+)
+
+func TestWorkflowRules_ValidLinearDAG(t *testing.T) {
+	steps := []contracts.StepDefinition{
+		{
+			StepID:               "reserve_inventory",
+			StepName:             "Reserve Inventory",
+			IsPivot:              false,
+			ActionType:           "REST",
+			ActionEndpoint:       "http://inventory:8080/reserve",
+			CompensationAction:   "RELEASE",
+			CompensationEndpoint: "http://inventory:8080/release",
+			TimeoutSeconds:       30,
+			MaxRetries:           3,
+			Dependencies:         []string{},
+		},
+		{
+			StepID:               "charge_card",
+			StepName:             "Charge Payment Card",
+			IsPivot:              true,
+			ActionType:           "REST",
+			ActionEndpoint:       "http://payments:8080/charge",
+			CompensationAction:   "",
+			CompensationEndpoint: "",
+			TimeoutSeconds:       60,
+			MaxRetries:           1,
+			Dependencies:         []string{"reserve_inventory"},
+		},
+	}
+
+	result := rules.ValidateDAGTopology(steps)
+	if !result.IsValid {
+		t.Fatalf("expected valid DAG, got error: %v", result.Error)
+	}
+	if len(result.TopologicalOrder) != 2 {
+		t.Fatalf("expected 2 ordered steps, got %d", len(result.TopologicalOrder))
+	}
+	if result.TopologicalOrder[0] != "reserve_inventory" || result.TopologicalOrder[1] != "charge_card" {
+		t.Fatalf("unexpected order: %v", result.TopologicalOrder)
+	}
+}
+
+func TestWorkflowRules_MultipleRootsSingleComponentValid(t *testing.T) {
+	steps := []contracts.StepDefinition{
+		{
+			StepID:               "reserve_flight",
+			StepName:             "Reserve Flight",
+			IsPivot:              false,
+			ActionType:           "REST",
+			ActionEndpoint:       "http://flights/reserve",
+			CompensationAction:   "RELEASE_FLIGHT",
+			CompensationEndpoint: "http://flights/release",
+			TimeoutSeconds:       30,
+			Dependencies:         []string{},
+		},
+		{
+			StepID:               "reserve_hotel",
+			StepName:             "Reserve Hotel",
+			IsPivot:              false,
+			ActionType:           "REST",
+			ActionEndpoint:       "http://hotel/reserve",
+			CompensationAction:   "RELEASE_HOTEL",
+			CompensationEndpoint: "http://hotel/release",
+			TimeoutSeconds:       30,
+			Dependencies:         []string{},
+		},
+		{
+			StepID:               "charge_bundle",
+			StepName:             "Charge Bundle",
+			IsPivot:              true,
+			ActionType:           "REST",
+			ActionEndpoint:       "http://billing/charge",
+			TimeoutSeconds:       60,
+			Dependencies:         []string{"reserve_flight", "reserve_hotel"},
+		},
+	}
+
+	result := rules.ValidateDAGTopology(steps)
+	if !result.IsValid {
+		t.Fatalf("expected valid multi-root single-component DAG, got error: %v", result.Error)
+	}
+	if len(result.TopologicalOrder) != 3 {
+		t.Fatalf("expected 3 ordered steps, got %d", len(result.TopologicalOrder))
+	}
+}
+
+func TestWorkflowRules_DisconnectedComponentsRejected(t *testing.T) {
+	steps := []contracts.StepDefinition{
+		{
+			StepID:               "order_step_a",
+			StepName:             "Step A",
+			IsPivot:              false,
+			ActionType:           "REST",
+			ActionEndpoint:       "http://service/a",
+			CompensationAction:   "UNDO_A",
+			CompensationEndpoint: "http://service/a/undo",
+			TimeoutSeconds:       10,
+			Dependencies:         []string{},
+		},
+		{
+			StepID:               "order_step_b",
+			StepName:             "Step B",
+			IsPivot:              true,
+			ActionType:           "REST",
+			ActionEndpoint:       "http://service/b",
+			TimeoutSeconds:       10,
+			Dependencies:         []string{"order_step_a"},
+		},
+		{
+			StepID:               "legacy_notify",
+			StepName:             "Legacy Notify Unconnected",
+			IsPivot:              false,
+			ActionType:           "REST",
+			ActionEndpoint:       "http://service/notify",
+			CompensationAction:   "UNDO_NOTIFY",
+			CompensationEndpoint: "http://service/notify/undo",
+			TimeoutSeconds:       10,
+			Dependencies:         []string{},
+		},
+	}
+
+	result := rules.ValidateDAGTopology(steps)
+	if result.IsValid {
+		t.Fatalf("expected disconnected components rejection, got valid")
+	}
+}
+
+func TestWorkflowRules_CycleDetection(t *testing.T) {
+	steps := []contracts.StepDefinition{
+		{
+			StepID:               "step_a",
+			StepName:             "Step A",
+			IsPivot:              false,
+			ActionType:           "REST",
+			ActionEndpoint:       "http://step-a",
+			CompensationAction:   "UNDO_A",
+			CompensationEndpoint: "http://step-a/undo",
+			TimeoutSeconds:       30,
+			Dependencies:         []string{"step_b"},
+		},
+		{
+			StepID:               "step_b",
+			StepName:             "Step B",
+			IsPivot:              false,
+			ActionType:           "REST",
+			ActionEndpoint:       "http://step-b",
+			CompensationAction:   "UNDO_B",
+			CompensationEndpoint: "http://step-b/undo",
+			TimeoutSeconds:       30,
+			Dependencies:         []string{"step_a"},
+		},
+	}
+
+	result := rules.ValidateDAGTopology(steps)
+	if result.IsValid {
+		t.Fatalf("expected cycle error, but result was valid")
+	}
+}
+
+func TestWorkflowRules_OrphanDependencyDetection(t *testing.T) {
+	steps := []contracts.StepDefinition{
+		{
+			StepID:               "step_a",
+			StepName:             "Step A",
+			IsPivot:              false,
+			ActionType:           "REST",
+			ActionEndpoint:       "http://step-a",
+			CompensationAction:   "UNDO_A",
+			CompensationEndpoint: "http://step-a/undo",
+			TimeoutSeconds:       30,
+			Dependencies:         []string{"non_existent_step"},
+		},
+	}
+
+	result := rules.ValidateDAGTopology(steps)
+	if result.IsValid {
+		t.Fatalf("expected orphan dependency error, but got valid")
+	}
+}
+
+func TestWorkflowRules_MultiplePivotsRejected(t *testing.T) {
+	input := contracts.CreateWorkflowDefinitionInput{
+		TenantID:      "tenant_test",
+		Name:          "multi-pivot-flow",
+		Version:       1,
+		Source:        "TEST",
+		ExternalID:    "ext_1",
+		CorrelationID: "c0000000-0000-0000-0000-000000000001",
+		Steps: []contracts.StepDefinition{
+			{
+				StepID:         "pivot_1",
+				StepName:       "Pivot 1",
+				IsPivot:        true,
+				ActionType:     "REST",
+				ActionEndpoint: "http://pivot1",
+				TimeoutSeconds: 30,
+				Dependencies:   []string{},
+			},
+			{
+				StepID:         "pivot_2",
+				StepName:       "Pivot 2",
+				IsPivot:        true,
+				ActionType:     "REST",
+				ActionEndpoint: "http://pivot2",
+				TimeoutSeconds: 30,
+				Dependencies:   []string{},
+			},
+		},
+	}
+
+	err := contracts.ValidateCreateWorkflowDefinitionInput(input)
+	if err == nil {
+		t.Fatalf("expected multiple pivots rejection, got nil")
+	}
+}

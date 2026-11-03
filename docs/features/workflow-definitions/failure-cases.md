@@ -76,3 +76,4 @@ This document details the critical edge cases, attack vectors, subtle graph topo
 * **Architectural Defense**:
   1. Zero recursion: Kahn's algorithm is implemented as an iterative BFS loop using a heap-allocated slice queue.
   2. Performance benchmarks prove that even for 200-step chains, validation finishes in **0.20 ms** (206 µs) with only 68 KB allocated.
+

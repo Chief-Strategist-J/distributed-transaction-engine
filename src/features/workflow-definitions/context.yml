@@ -1,2 +1,28 @@
 feature: workflow-definitions
 mode: stateless_hexagonal
+owner: distributed-transaction-core
+boundary:
+  - workflow_validation
+  - dag_cycle_detection
+  - versioned_dag_registry
+identifiers:
+  id: uuidv7
+  public_id: wfd_[0-9a-zA-Z]{26}
+  tenant_id: string
+  source: string
+  external_id: string
+  correlation_id: uuid
+tables:
+  - workflow_definitions
+  - workflow_definition_steps
+ports:
+  driving:
+    - WorkflowDefinitionsService
+  driven:
+    - WorkflowDefinitionsRepositoryPort
+linearization:
+  - service/workflow-definitions.service.go
+  - domain/rules/workflow-definitions.rules.go
+  - infrastructure/ports/workflow-definitions.repository.port.go
+  - infrastructure/adapters/workflow-definitions.repository.adapter.go
+  - infrastructure/adapters/workflow-definitions.postgres.repository.adapter.go

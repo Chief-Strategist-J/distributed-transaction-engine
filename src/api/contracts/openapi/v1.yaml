@@ -126,3 +126,221 @@ paths:
           description: Saga not found
         '409':
           description: Optimistic concurrency or illegal state transition conflict
+  /api/v1/workflow-definitions:
+    post:
+      summary: Register and validate a new workflow DAG definition
+      operationId: registerWorkflowDefinition
+      parameters:
+        - name: traceparent
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-tenant-id
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - tenantId
+                - name
+                - version
+                - source
+                - externalId
+                - correlationId
+                - steps
+              properties:
+                tenantId:
+                  type: string
+                name:
+                  type: string
+                  pattern: "^[a-zA-Z0-9_\\-\\.]{3,128}$"
+                version:
+                  type: integer
+                  minimum: 1
+                source:
+                  type: string
+                externalId:
+                  type: string
+                correlationId:
+                  type: string
+                  format: uuid
+                steps:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required:
+                      - stepId
+                      - stepName
+                      - isPivot
+                      - actionType
+                      - actionEndpoint
+                      - timeoutSeconds
+                    properties:
+                      stepId:
+                        type: string
+                        pattern: "^[a-zA-Z0-9_\\-]{2,64}$"
+                      stepName:
+                        type: string
+                      isPivot:
+                        type: boolean
+                      actionType:
+                        type: string
+                      actionEndpoint:
+                        type: string
+                      compensationAction:
+                        type: string
+                      compensationEndpoint:
+                        type: string
+                      timeoutSeconds:
+                        type: integer
+                        minimum: 1
+                        maximum: 86400
+                      maxRetries:
+                        type: integer
+                        minimum: 0
+                        maximum: 100
+                      dependencies:
+                        type: array
+                        items:
+                          type: string
+      responses:
+        '201':
+          description: Workflow definition registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowDefinitionResponse'
+        '400':
+          description: Schema validation error or missing required fields
+        '409':
+          description: Cyclic DAG detected or duplicate version / hash conflict
+    get:
+      summary: List registered workflow definitions for a tenant
+      operationId: listWorkflowDefinitions
+      parameters:
+        - name: x-tenant-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of workflow definitions
+  /api/v1/workflow-definitions/{id}:
+    get:
+      summary: Retrieve workflow definition by ID
+      operationId: getWorkflowDefinitionById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: x-tenant-id
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Workflow definition found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowDefinitionResponse'
+        '404':
+          description: Workflow definition not found
+components:
+  schemas:
+    WorkflowDefinitionResponse:
+      type: object
+      required:
+        - success
+        - statusCode
+        - meta
+      properties:
+        success:
+          type: boolean
+        statusCode:
+          type: integer
+        data:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            publicId:
+              type: string
+              pattern: "^wfd_[0-9a-zA-Z]{26}$"
+            tenantId:
+              type: string
+            name:
+              type: string
+            version:
+              type: integer
+            source:
+              type: string
+            externalId:
+              type: string
+            correlationId:
+              type: string
+            specHash:
+              type: string
+            status:
+              type: string
+              enum: [ACTIVE, DEPRECATED, ARCHIVED]
+            totalSteps:
+              type: integer
+            steps:
+              type: array
+              items:
+                type: object
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            retryable:
+              type: boolean
+        meta:
+          type: object
