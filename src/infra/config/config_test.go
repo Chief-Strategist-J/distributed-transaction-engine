@@ -124,3 +124,4 @@ func TestConfig_PasswordFileOverride(t *testing.T) {
 		t.Errorf("expected file-password, got %s", cfg.Database.Password)
 	}
 }
+

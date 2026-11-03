@@ -11,6 +11,7 @@ type StepDefinition struct {
 	TimeoutSeconds       int      `json:"timeoutSeconds"`
 	MaxRetries           int      `json:"maxRetries"`
 	Dependencies         []string `json:"dependencies"`
+	When                 string   `json:"when,omitempty"`
 }
 
 type WorkflowDefinitionInstance struct {

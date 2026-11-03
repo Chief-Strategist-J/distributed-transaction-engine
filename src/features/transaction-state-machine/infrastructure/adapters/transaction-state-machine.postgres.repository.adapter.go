@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	contracts "distributed-transaction-engine/src/features/transaction-state-machine/contracts"
 	queries "distributed-transaction-engine/src/features/transaction-state-machine/infrastructure/queries"
 	"distributed-transaction-engine/src/shared/errors"
@@ -127,8 +129,8 @@ func (a *PostgresTransactionStateMachineRepositoryAdapter) UpdateStateCAS(
 		return nil, a.mapDbError(err)
 	}
 
-	auditPublicID := fmt.Sprintf("aud_00000000000000000000%06d", record.Version)
-	auditID := fmt.Sprintf("audit_%s_%d", sagaID, record.Version)
+	auditPublicID := fmt.Sprintf("aud_%s", strings.ReplaceAll(uuid.New().String(), "-", "")[:26])
+	auditID := uuid.New().String()
 	_, err = tx.ExecContext(
 		ctx,
 		queries.FlowInsertStateAudit,

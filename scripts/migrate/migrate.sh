@@ -9,8 +9,8 @@ LOCK_FILE="${ROOT_DIR}/database/schema.lock"
 DB_HOST="${DB_HOST:-localhost}"
 DB_PORT="${DB_PORT:-5432}"
 DB_USER="${DB_USER:-postgres}"
-DB_NAME="${DB_NAME:-distributed_transaction_db}"
-export PGPASSWORD="${DB_PASSWORD:-postgres}"
+DB_NAME="${DB_NAME:-dist_tx_engine}"
+export PGPASSWORD="${DB_PASSWORD:-supersecretpgpassword}"
 
 echo "Starting migration run on database ${DB_NAME} at ${DB_HOST}:${DB_PORT}..."
 

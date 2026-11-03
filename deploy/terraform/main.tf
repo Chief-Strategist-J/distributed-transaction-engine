@@ -270,6 +270,12 @@ resource "google_compute_instance" "bastion" {
 # ------------------------------------------------------------------------------
 # 8. DATASTORES: PRIVATE CLOUD SQL POSTGRESQL 17 & MEMORYSTORE REDIS
 # ------------------------------------------------------------------------------
+resource "random_password" "db_password" {
+  length           = 32
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
+}
+
 resource "google_sql_database_instance" "postgres" {
   name             = "${var.environment}-dist-tx-db"
   database_version = "POSTGRES_17"
@@ -279,7 +285,18 @@ resource "google_sql_database_instance" "postgres" {
     tier              = "db-custom-2-7680"
     disk_type         = "PD_SSD"
     disk_autoresize   = true
-    availability_type = "ZONAL"
+    availability_type = var.environment == "prod" || var.environment == "production" ? "REGIONAL" : "ZONAL"
+
+    backup_configuration {
+      enabled                        = true
+      point_in_time_recovery_enabled = true
+      start_time                     = "03:00"
+      transaction_log_retention_days = 7
+      backup_retention_settings {
+        retained_backups = 14
+        retention_unit   = "COUNT"
+      }
+    }
 
     ip_configuration {
       ipv4_enabled    = false
@@ -287,13 +304,19 @@ resource "google_sql_database_instance" "postgres" {
     }
   }
 
-  deletion_protection = true
+  deletion_protection = var.environment == "prod" || var.environment == "production" ? true : false
   depends_on          = [google_service_networking_connection.private_vpc_connection]
 }
 
 resource "google_sql_database" "database" {
   name     = "dist_tx_engine"
   instance = google_sql_database_instance.postgres.name
+}
+
+resource "google_sql_user" "db_user" {
+  name     = "postgres"
+  instance = google_sql_database_instance.postgres.name
+  password = random_password.db_password.result
 }
 
 resource "google_redis_instance" "cache" {
@@ -362,4 +385,51 @@ resource "google_secret_manager_secret" "db_password" {
   replication {
     auto {}
   }
+}
+
+resource "google_secret_manager_secret_version" "db_password" {
+  secret      = google_secret_manager_secret.db_password.id
+  secret_data = random_password.db_password.result
+}
+
+# ------------------------------------------------------------------------------
+# 11. WORKLOAD IDENTITY SERVICE ACCOUNT & IAM BINDINGS
+# ------------------------------------------------------------------------------
+resource "google_service_account" "app_sa" {
+  account_id   = "${var.environment}-dist-tx-app"
+  display_name = "Workload Identity Service Account for Distributed Transaction Engine"
+}
+
+resource "google_service_account_iam_member" "workload_identity_user" {
+  service_account_id = google_service_account.app_sa.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[dist-tx-engine/app]"
+}
+
+# Grant App SA permission to read DB password from Secret Manager
+resource "google_secret_manager_secret_iam_member" "app_db_password" {
+  secret_id = google_secret_manager_secret.db_password.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
+# Grant App SA permission to publish & subscribe to PubSub events
+resource "google_pubsub_topic_iam_member" "app_pubsub_publisher" {
+  topic  = google_pubsub_topic.events.name
+  role   = "roles/pubsub.publisher"
+  member = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
+resource "google_pubsub_subscription_iam_member" "app_pubsub_subscriber" {
+  subscription = google_pubsub_subscription.events_sub.name
+  role         = "roles/pubsub.subscriber"
+  member       = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
+# ------------------------------------------------------------------------------
+# 12. INGRESS & NETWORKING: STATIC GLOBAL IP FOR EXTERNAL LOAD BALANCER
+# ------------------------------------------------------------------------------
+resource "google_compute_global_address" "ingress_ip" {
+  name        = "${var.environment}-dist-tx-ingress-ip"
+  description = "Reserved Global Static IP for external GKE Ingress controller"
 }

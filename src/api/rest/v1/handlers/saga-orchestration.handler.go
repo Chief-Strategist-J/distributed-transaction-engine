@@ -179,6 +179,11 @@ func (h *SagaHandler) GetSaga(w http.ResponseWriter, r *http.Request) {
 	result, err := h.service.GetSaga(ctx, tenantID, sagaID)
 	if err != nil {
 		observability.RecordError(span, err)
+		h.logger.Error(ctx, "failed to get saga",
+			observability.String("saga_id", sagaID),
+			observability.String("tenant_id", tenantID),
+			observability.String("error", err.Error()),
+		)
 		if appErr, ok := err.(*appErrors.ApplicationError); ok {
 			h.writeError(w, appErr.StatusCode, appErr.CanonicalCode, appErr.Message, start, reqID, corrID)
 			return
@@ -233,6 +238,10 @@ func (h *SagaHandler) ListSagas(w http.ResponseWriter, r *http.Request) {
 	results, err := h.service.ListSagas(ctx, tenantID, limit, offset)
 	if err != nil {
 		observability.RecordError(span, err)
+		h.logger.Error(ctx, "failed to list sagas",
+			observability.String("tenant_id", tenantID),
+			observability.String("error", err.Error()),
+		)
 		if appErr, ok := err.(*appErrors.ApplicationError); ok {
 			h.writeError(w, appErr.StatusCode, appErr.CanonicalCode, appErr.Message, start, reqID, corrID)
 			return

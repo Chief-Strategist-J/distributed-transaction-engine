@@ -220,3 +220,4 @@ func Load(path string) (*AppConfig, error) {
 
 	return cfg, nil
 }
+

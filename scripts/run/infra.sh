@@ -41,8 +41,29 @@ start_infrastructure() {
         log_info "Generated default .env from .env.example"
     fi
 
+    log_info "Ensuring volume ownership for unprivileged services (UID 10001)..."
+    docker volume create dist_tx_tempodata >/dev/null 2>&1 || true
+    docker volume create dist_tx_lokidata >/dev/null 2>&1 || true
+    docker volume create dist_tx_promdata >/dev/null 2>&1 || true
+    docker run --rm -v dist_tx_tempodata:/var/lib/tempo -v dist_tx_lokidata:/var/lib/loki -v dist_tx_promdata:/prometheus busybox sh -c "chown -R 10001:10001 /var/lib/tempo /var/lib/loki && chown -R 65534:65534 /prometheus" >/dev/null 2>&1 || true
+
     log_info "Starting Docker infrastructure containers..."
     docker compose -f "${COMPOSE_FILE}" up -d
+}
+
+apply_database_migrations() {
+    log_info "Applying automated database migrations to dist_tx_engine..."
+    local project_root="${SCRIPT_DIR}/../.."
+    local migrations_dir="${project_root}/database/migrations/sql"
+    
+    # Run migrations via docker exec on db container to ensure direct zero-dependency execution
+    for mig in $(ls "${migrations_dir}"/*.sql | grep -v "\.rollback\.sql" | sort); do
+        local mig_name
+        mig_name="$(basename "${mig}")"
+        log_info "Applying migration: ${mig_name}..."
+        docker compose -f "${COMPOSE_FILE}" exec -T db psql -U postgres -d dist_tx_engine -v ON_ERROR_STOP=1 < "${mig}"
+    done
+    log_success "Database migrations successfully applied."
 }
 
 wait_for_services() {
@@ -52,7 +73,7 @@ wait_for_services() {
 
     while [[ ${elapsed} -lt ${timeout} ]]; do
         local unhealthy
-        unhealthy=$(docker compose -f "${COMPOSE_FILE}" ps --format '{{.Service}}: {{.Health}}' | grep -v 'healthy' || true)
+        unhealthy=$(docker compose -f "${COMPOSE_FILE}" ps --format '{{.Service}}: {{.Health}}' | grep -E 'unhealthy|starting' || true)
 
         if [[ -z "${unhealthy}" ]]; then
             log_success "All infrastructure containers are healthy."
@@ -269,8 +290,28 @@ EOF
 }
 
 down_infrastructure() {
-    log_info "Stopping containers and wiping volumes for clean upgrade..."
-    docker compose -f "${COMPOSE_FILE}" down -v
+    log_info "Stopping containers while preserving persistent data volumes..."
+    docker compose -f "${COMPOSE_FILE}" down
+}
+
+restart_infrastructure() {
+    log_info "Restarting infrastructure services..."
+    docker compose -f "${COMPOSE_FILE}" restart
+    wait_for_services
+    verify_status
+}
+
+show_status() {
+    verify_status
+}
+
+show_logs() {
+    local service="${1:-}"
+    if [[ -n "${service}" ]]; then
+        docker compose -f "${COMPOSE_FILE}" logs -f "${service}"
+    else
+        docker compose -f "${COMPOSE_FILE}" logs -f
+    fi
 }
 
 prune_obsolete_images() {
@@ -295,6 +336,16 @@ main() {
         down)
             down_infrastructure
             ;;
+        restart)
+            restart_infrastructure
+            ;;
+        status)
+            show_status
+            ;;
+        logs)
+            shift || true
+            show_logs "${1:-}"
+            ;;
         prune)
             down_infrastructure
             prune_obsolete_images
@@ -303,6 +354,7 @@ main() {
             validate_prerequisites
             start_infrastructure
             wait_for_services
+            apply_database_migrations
             verify_status
             ;;
         test)
@@ -322,7 +374,7 @@ main() {
             test_endpoints
             ;;
         *)
-            echo "Usage: $0 [down|prune|up|test|all]"
+            echo "Usage: $0 [up|down|restart|status|logs [service]|test|all|prune]"
             exit 1
             ;;
     esac

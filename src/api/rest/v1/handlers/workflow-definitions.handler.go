@@ -111,6 +111,7 @@ func (h *WorkflowDefinitionsHandler) GetWorkflow(w http.ResponseWriter, r *http.
 
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(parts) < 4 {
+		h.logger.Warn(ctx, "missing workflow id in get request", observability.String("path", r.URL.Path))
 		h.writeError(w, http.StatusBadRequest, "INVALID_PATH", "Missing workflow id in path")
 		return
 	}
@@ -124,6 +125,11 @@ func (h *WorkflowDefinitionsHandler) GetWorkflow(w http.ResponseWriter, r *http.
 	def, err := h.svc.GetWorkflow(ctx, tenantID, id)
 	if err != nil {
 		observability.RecordError(span, err)
+		h.logger.Error(ctx, "failed to fetch workflow definition",
+			observability.String("workflow_id", id),
+			observability.String("tenant_id", tenantID),
+			observability.String("error", err.Error()),
+		)
 		h.mapAndWriteError(w, err)
 		return
 	}
@@ -176,6 +182,10 @@ func (h *WorkflowDefinitionsHandler) ListWorkflows(w http.ResponseWriter, r *htt
 	defs, err := h.svc.ListWorkflows(ctx, tenantID, limit, offset)
 	if err != nil {
 		observability.RecordError(span, err)
+		h.logger.Error(ctx, "failed to list workflows",
+			observability.String("tenant_id", tenantID),
+			observability.String("error", err.Error()),
+		)
 		h.mapAndWriteError(w, err)
 		return
 	}

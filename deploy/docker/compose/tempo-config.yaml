@@ -27,7 +27,7 @@ metrics_generator:
     external_labels:
       source: tempo
   storage:
-    path: /tmp/tempo/generator/wal
+    path: /var/lib/tempo/generator/wal
     remote_write:
       - url: http://prometheus:9090/api/v1/write
         send_exemplars: true
@@ -39,8 +39,8 @@ storage:
   trace:
     backend: local
     local:
-      path: /tmp/tempo/traces
+      path: /var/lib/tempo/traces
     wal:
-      path: /tmp/tempo/wal
+      path: /var/lib/tempo/wal
     search: {}
 

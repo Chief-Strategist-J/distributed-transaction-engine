@@ -48,11 +48,12 @@ services:
     <<: *hardening
     cap_drop: []
     image: redis:7.4-bookworm@sha256:b6b6e3dc0c0952737748e55d5d885272840c7e42ba41ab1d5489f693419882f5
-    command: ["redis-server", "--maxmemory", "200mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    command: ["redis-server", "--maxmemory", "200mb", "--maxmemory-policy", "allkeys-lru", "--appendonly", "yes"]
     networks: [backend]
     ports:
       - "6379:6379"
-    tmpfs: [/data]
+    volumes:
+      - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -113,6 +114,7 @@ services:
     tmpfs: [/tmp]
     volumes:
       - ./tempo-config.yaml:/etc/tempo.yaml:ro
+      - tempodata:/var/lib/tempo
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3200/ready || exit 1"]
       interval: 15s
@@ -141,6 +143,7 @@ services:
     tmpfs: [/tmp]
     volumes:
       - ./loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - lokidata:/var/lib/loki
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3100/ready || exit 1"]
       interval: 15s
@@ -158,7 +161,7 @@ services:
     image: prom/prometheus:v2.54.1@sha256:f6639335d34a77d9d9db382b92eeb7fc00934be8eae81dbc03b31cfe90411a94
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/tmp/prometheus"
+      - "--storage.tsdb.path=/prometheus"
       - "--web.enable-lifecycle"
       - "--web.enable-remote-write-receiver"
     networks:
@@ -173,6 +176,7 @@ services:
     tmpfs: [/tmp]
     volumes:
       - ./prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
     healthcheck:
       test: ["CMD", "/bin/sh", "-c", "wget -qO- http://127.0.0.1:9090/-/ready || exit 1"]
       interval: 10s
@@ -259,6 +263,14 @@ volumes:
     name: ${COMPOSE_PROJECT_NAME:-dist_tx}_pgdata
   kafkadata:
     name: ${COMPOSE_PROJECT_NAME:-dist_tx}_kafkadata
+  redisdata:
+    name: ${COMPOSE_PROJECT_NAME:-dist_tx}_redisdata
+  promdata:
+    name: ${COMPOSE_PROJECT_NAME:-dist_tx}_promdata
+  lokidata:
+    name: ${COMPOSE_PROJECT_NAME:-dist_tx}_lokidata
+  tempodata:
+    name: ${COMPOSE_PROJECT_NAME:-dist_tx}_tempodata
   caddy_data: {}
 
 secrets:

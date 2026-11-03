@@ -78,8 +78,8 @@ func ObservabilityMiddleware(serviceName string, next http.Handler) http.Handler
 		duration := time.Since(start).Milliseconds()
 		span.SetAttributes(attribute.Int("http.status_code", writerInterceptor.statusCode))
 
-		if writerInterceptor.statusCode >= 500 {
-			logger.Error(ctx, "HTTP request failed",
+		if writerInterceptor.statusCode >= 400 {
+			logger.Error(ctx, "HTTP request error",
 				String("method", r.Method),
 				String("path", r.URL.Path),
 				Int("status_code", writerInterceptor.statusCode),

@@ -419,3 +419,93 @@ terraform apply destroy-plan
 # Finally, delete the remote state bucket if completely removing the project:
 # gcloud storage rm -r "gs://${TF_STATE_BUCKET}"
 ```
+
+---
+
+## 8. Defect Root-Cause Analysis, Critical Risks & Remediation
+
+### A. Defect Identification Matrix (What Was Broken/Missing)
+
+Prior to the remediation, an architectural audit of `deploy/terraform/` revealed four critical reliability, security, and networking defects:
+
+| Defect # | Component | Root Cause in Previous Terraform Code | Critical Architectural Risk & Impact | Resolution Applied |
+|:---:|---|---|---|---|
+| **01** | Cloud SQL | Missing `backup_configuration` and `availability_type = "ZONAL"` | **Catastrophic Data Loss**: Zero automated point-in-time recovery (PITR) or transaction log retention. Single zone failure completely destroys transaction ledger availability. | Added automated daily backups, 7-day WAL log retention, PITR, 14 retained snapshots, and multi-zone `REGIONAL` failover for production. |
+| **02** | Database Auth | Missing `google_sql_user` and `random_password` provider | **Boot Failure / Hardcoded Credentials**: Database instance had no provisioned user or automated password management, preventing secure secret injection into Secret Manager. | Integrated `hashicorp/random` to mint cryptographically secure 32-char credentials, created `google_sql_user.db_user`, and stored payload in `google_secret_manager_secret_version`. |
+| **03** | IAM & Security | Workload Identity enabled on GKE, but zero GSA or KSA IAM bindings | **Authorization Failure / Broken Pod Egress**: GKE pods could not authenticate to Secret Manager or Pub/Sub via STS Workload Identity, forcing insecure static keys. | Added `google_service_account.app_sa`, bound `roles/iam.workloadIdentityUser` to `dist-tx-engine/app`, and granted least-privilege `secretAccessor` & Pub/Sub publisher/subscriber roles. |
+| **04** | Ingress | Missing static IP allocation for External Load Balancer | **Downtime on DNS/Ingress Updates**: Load balancer IP would be ephemeral, breaking DNS A-records and external client webhooks on ingress redeployment. | Added `google_compute_global_address.ingress_ip` to permanently reserve a dedicated global Anycast IP. |
+
+---
+
+### B. Remediation Architecture & Ingress/Data Flow Diagram
+
+```mermaid
+flowchart TD
+    subgraph Client["External Traffic"]
+        ExtClient["External API Client / Payment Webhooks"]
+    end
+
+    subgraph GCP_Edge["Google Cloud Edge & Ingress"]
+        StaticIP["Static Global Anycast IP\n(google_compute_global_address.ingress_ip)"]
+        GLB["Google Cloud External HTTP(S) Load Balancer\n(Container-Native Ingress)"]
+        StaticIP --> GLB
+    end
+
+    subgraph GKE["GKE Cluster: dist-tx-gke (Private Nodes)"]
+        subgraph K8s_Namespace["Namespace: dist-tx-engine"]
+            KSA["Kubernetes Service Account\n(KSA: app)"]
+            AppPod["App Engine Pod\n(dist-tx-engine)"]
+            KSA -.->|Workload Identity| AppPod
+        end
+    end
+
+    subgraph IAM_Security["IAM & Security Fabric"]
+        GSA["GCP Service Account\n(google_service_account.app_sa)"]
+        SM["Google Secret Manager\n(Database Password Secret Version)"]
+        RandPass["random_password.db_password\n(32-char Cryptographic)"]
+        
+        RandPass -->|Populates| SM
+        KSA ===|roles/iam.workloadIdentityUser| GSA
+        GSA -->|roles/secretmanager.secretAccessor| SM
+    end
+
+    subgraph VPC["Custom VPC Network (Private Service Access)"]
+        subgraph CloudSQL["High Availability Cloud SQL (PostgreSQL 17)"]
+            PG_Master["Primary Instance\n(dist-tx-db)"]
+            PG_Standby["Standby Failover Instance\n(REGIONAL HA)"]
+            PITR["Automated Backups & PITR\n(7-Day WAL Retention)"]
+            PG_User["google_sql_user (postgres)"]
+            
+            PG_Master -.->|Replication| PG_Standby
+            PG_Master --- PITR
+            PG_User --- PG_Master
+        end
+
+        subgraph EventBus["Cloud Pub/Sub Fabric"]
+            Topic["Event Topic (events)"]
+            DLQ["Dead Letter Queue (events_dlq)"]
+            Sub["Subscription (events_sub)"]
+            
+            Topic --> Sub
+            Sub -.->|Max Attempts Exceeded| DLQ
+        end
+    end
+
+    ExtClient --> StaticIP
+    GLB -->|Direct NEG 1-Hop Routing| AppPod
+    AppPod -->|Private IP Peering| PG_Master
+    AppPod -->|Publishes / Subscribes| Topic
+    SM -.->|Injected on Boot| AppPod
+```
+
+---
+
+### C. Why These Remediations Are Mission-Critical
+
+1. **Transactional Durability & RPO/RTO Guarantees**:
+   In distributed sagas and financial state machines, database corruption or uncommitted transaction loss is irrecoverable. By enforcing **point-in-time recovery (PITR)** and **multi-AZ regional failover**, Recovery Point Objective (RPO) is minimized to seconds, while Recovery Time Objective (RTO) satisfies zero-downtime SLA requirements.
+2. **Elimination of Credential Leakage & Static Key Risks**:
+   Binding **GKE Workload Identity** directly to the application service account completely eliminates static JSON service account credentials. Secrets are generated on-the-fly and stored directly in Secret Manager.
+3. **Immutable Network Addressing**:
+   Reserving a **Global Anycast Static IP** ensures that DNS records, partner whitelists, and webhook endpoints remain 100% stable across all ingress reconfigurations and rolling application deployments.
+
