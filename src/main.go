@@ -21,105 +21,91 @@ import (
 	sagaService "distributed-transaction-engine/src/features/saga-orchestration/service"
 	transactionStateMachine "distributed-transaction-engine/src/features/transaction-state-machine"
 	workflowDefinitions "distributed-transaction-engine/src/features/workflow-definitions"
+	workflowPorts "distributed-transaction-engine/src/features/workflow-definitions/infrastructure/ports"
+	"distributed-transaction-engine/src/infra/config"
 	"distributed-transaction-engine/src/infra/database"
 	"distributed-transaction-engine/src/infra/observability"
 )
 
-type Config struct {
-	PublicAddr string
-	AdminAddr  string
-}
-
-func main() {
+func parseFlags() (string, bool) {
 	var configPath string
 	var validateOnly bool
 	flag.StringVar(&configPath, "config", "config/default.yaml", "path to configuration file")
 	flag.BoolVar(&validateOnly, "validate-only", false, "validate configuration and desired state without starting")
 	flag.Parse()
+	return configPath, validateOnly
+}
 
-	if validateOnly {
-		fmt.Println("Configuration and desired state valid")
-		os.Exit(0)
+func initDatabase(ctx context.Context, cfg *config.AppConfig) (*sql.DB, sagaPorts.SagaRepositoryPort) {
+	if cfg.Database.Host == "" {
+		return nil, sagaAdapters.NewMemorySagaRepositoryAdapter()
 	}
 
-	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	cfg := Config{
-		PublicAddr: ":8080",
-		AdminAddr:  ":8081",
+	db, err := sql.Open("postgres", cfg.ConnString())
+	if err != nil {
+		log.Printf("PostgreSQL open failed: %v\n", err)
+		return nil, sagaAdapters.NewMemorySagaRepositoryAdapter()
 	}
 
-	workflowRepo := workflowDefinitions.NewMemoryAdapter()
-	workflowSvc := workflowDefinitions.NewService(workflowRepo)
-	workflowHandler := handlers.NewWorkflowDefinitionsHandler(workflowSvc)
-	workflowRouter := routers.NewWorkflowDefinitionsRouter(workflowHandler)
+	db.SetMaxOpenConns(cfg.Database.MaxOpenConns)
+	db.SetMaxIdleConns(cfg.Database.MaxIdleConns)
+	db.SetConnMaxLifetime(cfg.ConnMaxLifetime())
 
-	var sagaRepo sagaPorts.SagaRepositoryPort = sagaAdapters.NewMemorySagaRepositoryAdapter()
-	var activeDB *sql.DB
-	dbHost := os.Getenv("DB_HOST")
-	if dbHost != "" {
-		dbPort := os.Getenv("DB_PORT")
-		if dbPort == "" {
-			dbPort = "5432"
-		}
-		dbUser := os.Getenv("DB_USER")
-		if dbUser == "" {
-			dbUser = "postgres"
-		}
-		dbPass := os.Getenv("DB_PASSWORD")
-		dbName := os.Getenv("DB_NAME")
-		if dbName == "" {
-			dbName = "transaction_engine"
-		}
-		sslMode := os.Getenv("DB_SSLMODE")
-		if sslMode == "" {
-			sslMode = "disable"
-		}
-
-		connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-			dbHost, dbPort, dbUser, dbPass, dbName, sslMode)
-		if db, err := sql.Open("postgres", connStr); err == nil {
-			db.SetMaxOpenConns(25)
-			db.SetMaxIdleConns(10)
-			db.SetConnMaxLifetime(5 * time.Minute)
-			if pingErr := db.Ping(); pingErr == nil {
-				activeDB = db
-				if migErr := database.RunMigrations(rootCtx, db, "database/migrations/sql"); migErr != nil {
-					log.Printf("Migration error: %v\n", migErr)
-				}
-				sagaRepo = sagaAdapters.NewPostgresSagaRepositoryAdapter(db)
-			}
-		}
+	if err := db.Ping(); err != nil {
+		log.Printf("PostgreSQL ping failed: %v\n", err)
+		return nil, sagaAdapters.NewMemorySagaRepositoryAdapter()
 	}
 
-	sagaDispatcher := sagaAdapters.NewHttpStepDispatcherAdapter()
-	sagaSvc := sagaService.NewSagaOrchestrationService(sagaRepo, workflowRepo, sagaDispatcher)
-	sagaHandler := handlers.NewSagaHandler(sagaSvc)
-	sagaRouter := routers.NewSagaRouter(sagaHandler)
-
-	workerID := os.Getenv("WORKER_ID")
-	if workerID == "" {
-		workerID = "worker-main"
+	if err := database.RunMigrations(ctx, db, cfg.Database.MigrationsDir); err != nil {
+		log.Printf("Migration error: %v\n", err)
 	}
-	poller := sagaService.NewSagaPoller(sagaRepo, sagaSvc, workerID, 30*time.Second)
-	go poller.Start(rootCtx, 250*time.Millisecond)
 
-	stateRepo := transactionStateMachine.NewMemoryAdapter()
-	stateSvc := transactionStateMachine.NewService(stateRepo)
-	stateHandler := handlers.NewTransactionStateMachineHandler(stateSvc)
-	stateRouter := routers.NewTransactionStateMachineRouter(stateHandler)
+	return db, sagaAdapters.NewPostgresSagaRepositoryAdapter(db)
+}
 
+func initWorkflowFeature() (workflowPorts.WorkflowDefinitionsRepositoryPort, *routers.WorkflowDefinitionsRouter) {
+	repo := workflowDefinitions.NewMemoryAdapter()
+	svc := workflowDefinitions.NewService(repo)
+	handler := handlers.NewWorkflowDefinitionsHandler(svc)
+	router := routers.NewWorkflowDefinitionsRouter(handler)
+	return repo, router
+}
+
+func initStateFeature() *routers.TransactionStateMachineRouter {
+	repo := transactionStateMachine.NewMemoryAdapter()
+	svc := transactionStateMachine.NewService(repo)
+	handler := handlers.NewTransactionStateMachineHandler(svc)
+	return routers.NewTransactionStateMachineRouter(handler)
+}
+
+func initSagaFeature(
+	ctx context.Context,
+	cfg *config.AppConfig,
+	repo sagaPorts.SagaRepositoryPort,
+	workflowRepo workflowPorts.WorkflowDefinitionsRepositoryPort,
+) *routers.SagaRouter {
+	dispatcher := sagaAdapters.NewHttpStepDispatcherAdapter()
+	svc := sagaService.NewSagaOrchestrationService(repo, workflowRepo, dispatcher)
+	handler := handlers.NewSagaHandler(svc)
+	router := routers.NewSagaRouter(handler)
+
+	poller := sagaService.NewSagaPoller(repo, svc, cfg.Poller.WorkerID, cfg.LeaseDuration())
+	go poller.Start(ctx, cfg.PollInterval())
+
+	return router
+}
+
+func buildAdminServer(cfg *config.AppConfig, db *sql.DB) *http.Server {
 	adminMux := http.NewServeMux()
 	adminMux.HandleFunc("/health/live", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"alive"}`))
 	})
 	adminMux.HandleFunc("/health/ready", func(w http.ResponseWriter, r *http.Request) {
-		if activeDB != nil {
+		if db != nil {
 			pingCtx, pingCancel := context.WithTimeout(r.Context(), 2*time.Second)
 			defer pingCancel()
-			if pingErr := activeDB.PingContext(pingCtx); pingErr != nil {
+			if err := db.PingContext(pingCtx); err != nil {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				w.Write([]byte(`{"status":"database unreachable"}`))
 				return
@@ -129,42 +115,90 @@ func main() {
 		w.Write([]byte(`{"status":"ready"}`))
 	})
 
-	adminServer := &http.Server{
-		Addr:         cfg.AdminAddr,
+	return &http.Server{
+		Addr:         cfg.Server.AdminBindAddress,
 		Handler:      adminMux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
+		ReadTimeout:  cfg.ReadTimeout(),
+		WriteTimeout: cfg.WriteTimeout(),
 	}
+}
 
+func buildPublicServer(
+	cfg *config.AppConfig,
+	sagaRouter *routers.SagaRouter,
+	stateRouter *routers.TransactionStateMachineRouter,
+	workflowRouter *routers.WorkflowDefinitionsRouter,
+) *http.Server {
 	publicMux := http.NewServeMux()
 	sagaRouter.RegisterRoutes(publicMux)
 	stateRouter.RegisterRoutes(publicMux)
 	workflowRouter.RegisterRoutes(publicMux)
 
-	publicHandler := observability.ObservabilityMiddleware("distributed-transaction-engine", publicMux)
+	publicHandler := observability.ObservabilityMiddleware(cfg.Server.Name, publicMux)
 
-	publicServer := &http.Server{
-		Addr:         cfg.PublicAddr,
+	return &http.Server{
+		Addr:         cfg.Server.BindAddress,
 		Handler:      publicHandler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  75 * time.Second,
+		ReadTimeout:  cfg.ReadTimeout(),
+		WriteTimeout: cfg.WriteTimeout(),
+		IdleTimeout:  cfg.IdleTimeout(),
 	}
+}
 
+func startListeners(admin *http.Server, public *http.Server) <-chan error {
 	fatalChan := make(chan error, 2)
-
 	go func() {
-		if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := admin.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			fatalChan <- fmt.Errorf("admin listener failed: %w", err)
 		}
 	}()
-
 	go func() {
-		if err := publicServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := public.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			fatalChan <- fmt.Errorf("public listener failed: %w", err)
 		}
 	}()
+	return fatalChan
+}
 
+func gracefulShutdown(deadline time.Duration, public *http.Server, admin *http.Server, db *sql.DB) {
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+
+	if err := public.Shutdown(ctx); err != nil {
+		log.Printf("Public server shutdown error: %v\n", err)
+	}
+	if err := admin.Shutdown(ctx); err != nil {
+		log.Printf("Admin server shutdown error: %v\n", err)
+	}
+	if db != nil {
+		_ = db.Close()
+	}
+}
+
+func main() {
+	configPath, validateOnly := parseFlags()
+	if validateOnly {
+		fmt.Println("Configuration and desired state valid")
+		os.Exit(0)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
+
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	db, sagaRepo := initDatabase(rootCtx, cfg)
+	workflowRepo, workflowRouter := initWorkflowFeature()
+	stateRouter := initStateFeature()
+	sagaRouter := initSagaFeature(rootCtx, cfg, sagaRepo, workflowRepo)
+
+	adminServer := buildAdminServer(cfg, db)
+	publicServer := buildPublicServer(cfg, sagaRouter, stateRouter, workflowRouter)
+
+	fatalChan := startListeners(adminServer, publicServer)
 	log.Println("Server running (Phase 7: Run)")
 
 	select {
@@ -174,20 +208,6 @@ func main() {
 		log.Printf("Fatal runtime error: %v, shutting down\n", err)
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	if err := publicServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Public server shutdown error: %v\n", err)
-	}
-	if err := adminServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Admin server shutdown error: %v\n", err)
-	}
-
-	if activeDB != nil {
-		_ = activeDB.Close()
-	}
-
+	gracefulShutdown(cfg.ShutdownDeadline(), publicServer, adminServer, db)
 	log.Println("Shutdown complete, exiting with code 0")
-	os.Exit(0)
 }

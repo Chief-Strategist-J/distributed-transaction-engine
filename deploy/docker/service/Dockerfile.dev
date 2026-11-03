@@ -9,7 +9,7 @@ ENV CGO_ENABLED=0 \
     GOOS=linux \
     GOARCH=amd64
 
-COPY ${SERVICE_PATH}/go.mod ./
+COPY ${SERVICE_PATH}/go.mod ${SERVICE_PATH}/go.sum* ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 

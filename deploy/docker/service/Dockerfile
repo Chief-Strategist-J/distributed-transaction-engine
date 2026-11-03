@@ -37,7 +37,7 @@ ENV CGO_ENABLED=0 \
     GOARCH=amd64 \
     GOPROXY=https://proxy.golang.org,direct
 
-COPY ${SERVICE_PATH}/go.mod ./
+COPY ${SERVICE_PATH}/go.mod ${SERVICE_PATH}/go.sum* ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
@@ -54,7 +54,7 @@ ARG GID=10001
 
 RUN groupadd --gid ${GID} app 2>/dev/null || true \
  && useradd --uid ${UID} --gid ${GID} --no-create-home --shell /usr/sbin/nologin app 2>/dev/null || true \
- && mkdir -p /app/config /app/bin /app/lib && chown -R ${UID}:${GID} /app
+ && mkdir -p /app/config /app/database /app/bin /app/lib && chown -R ${UID}:${GID} /app
 
 WORKDIR /app
 
@@ -62,6 +62,7 @@ COPY --from=builder --chown=${UID}:${GID} /build/engine /app/bin/engine
 COPY --from=cpp-builder --chown=${UID}:${GID} /out/cpp/ /app/bin/
 COPY --from=rust-builder --chown=${UID}:${GID} /out/rust/ /app/lib/
 COPY --chown=${UID}:${GID} ${SERVICE_PATH}/config/ /app/config/
+COPY --chown=${UID}:${GID} ${SERVICE_PATH}/database/ /app/database/
 
 ARG GIT_SHA=unknown
 ARG BUILD_DATE=unknown

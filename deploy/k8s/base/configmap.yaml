@@ -10,10 +10,26 @@ data:
       name: "distributed-transaction-engine"
       bind_address: "0.0.0.0:8080"
       admin_bind_address: "0.0.0.0:8081"
+      read_timeout_seconds: 15
+      write_timeout_seconds: 15
       idle_timeout_seconds: 75
-      header_timeout_seconds: 15
-      drain_deadline_seconds: 15
-      propagation_wait_seconds: 5
-      shutdown_deadline_seconds: 30
+      shutdown_deadline_seconds: 15
+    database:
+      host: ""
+      port: "5432"
+      user: "postgres"
+      password: ""
+      name: "dist_tx_engine"
+      sslmode: "disable"
+      max_open_conns: 25
+      max_idle_conns: 10
+      conn_max_lifetime_minutes: 5
+      migrations_dir: "database/migrations/sql"
+    poller:
+      worker_id: ""
+      lease_duration_seconds: 30
+      poll_interval_millis: 250
+    kafka:
+      brokers: ""
     endpoints:
       base_path: "/api/v1"
