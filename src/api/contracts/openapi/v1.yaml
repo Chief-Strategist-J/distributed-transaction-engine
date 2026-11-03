@@ -28,6 +28,12 @@ paths:
           required: true
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Unique idempotency key to prevent double registrations
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -90,6 +96,12 @@ paths:
           required: true
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Unique idempotency key to prevent double registrations
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -149,6 +161,12 @@ paths:
         - name: x-tenant-id
           in: header
           required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Unique idempotency key to prevent double registrations
           schema:
             type: string
       requestBody:
@@ -344,3 +362,12 @@ components:
               type: boolean
         meta:
           type: object
+  headers:
+    X-Trace-Id:
+      description: W3C distributed trace identifier for request correlation
+      schema:
+        type: string
+    X-Span-Id:
+      description: Current span execution identifier
+      schema:
+        type: string

@@ -139,3 +139,4 @@ func (l *LokiLogger) Error(ctx context.Context, msg string, fields ...Field) {
 func (l *LokiLogger) Debug(ctx context.Context, msg string, fields ...Field) {
 	l.log(ctx, LogLevelDebug, msg, fields...)
 }
+

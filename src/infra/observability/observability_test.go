@@ -80,3 +80,4 @@ func TestObservabilityMiddleware(t *testing.T) {
 		t.Errorf("expected non-empty X-Span-Id header")
 	}
 }
+
