@@ -5,7 +5,7 @@
 | Status | Accepted |
 | Date | 2026-11-03 |
 | Deciders | Lead Systems Architect & Core Architecture Guild |
-| Related Docs | [Business Logic & Decision Trees](file:///home/btpl-lap-22/live/System-Architect/distributed-transaction-engine/docs/features/workflow-definitions/business-logic.md) · [Rule 0 Scaffolding](file:///home/btpl-lap-22/live/System-Architect/llm-obs-policies/rules/folder-structure/0-package-folder-writing-rule.md) · [Rule 5 Data Contract](file:///home/btpl-lap-22/live/System-Architect/llm-obs-policies/rules/folder-structure/05-db-writing-rules.md) |
+| Related Docs | [Business Logic & Decision Trees](file:///home/btpl-lap-22/live/System-Architect/distributed-transaction-engine/docs/features/workflow-definitions/business-logic.md) · [Diagrams](file:///home/btpl-lap-22/live/System-Architect/distributed-transaction-engine/docs/features/workflow-definitions/diagrams.md) · [Failure Cases & Mitigations](file:///home/btpl-lap-22/live/System-Architect/distributed-transaction-engine/docs/features/workflow-definitions/failure-cases.md) |
 | Target Feature | [Workflow Definitions Feature](file:///home/btpl-lap-22/live/System-Architect/distributed-transaction-engine/src/features/workflow-definitions) |
 
 ---
@@ -16,10 +16,11 @@ A distributed saga orchestrator coordinates multi-service transactions involving
 
 Allowing dynamic or unverified workflows directly into the execution engine introduces critical operational hazards:
 1. **Cyclic Deadlocks**: Mutual step dependencies (e.g. Step A requires Step B, and Step B requires Step A) cause the orchestrator loop to block indefinitely or consume unbounded CPU/goroutines.
-2. **Uncompensable Financial Drift**: If a forward step fails after non-pivot steps have mutated downstream state without declaring an inverse compensating action, the saga cannot cleanly rollback, resulting in permanent financial discrepancies.
-3. **Multiple Pivot Ambiguity**: A saga can have at most one pivot transaction (the point of no return). Workflows with multiple pivot steps create indeterminate rollback targets when later pivots fail.
-4. **Silent Workflow Definition Mutation**: Modifying step definitions under an active version causes in-flight sagas to execute incompatible steps, causing version mismatch panics and corrupted states.
-5. **Dangling/Orphan References**: Steps pointing to undeclared dependency keys lead to runtime panics during forward traversal.
+2. **Disconnected Island Graphs**: Workflows containing disconnected subgraphs (e.g. copy-pasted steps without incoming or outgoing edges) trigger rogue executions outside the primary lifecycle.
+3. **Uncompensable Financial Drift**: If a forward step fails after non-pivot steps have mutated downstream state without declaring an inverse compensating action, the saga cannot cleanly rollback, resulting in permanent financial discrepancies.
+4. **Multiple Pivot Ambiguity**: A saga can have at most one pivot transaction (the point of no return). Workflows with multiple pivot steps create indeterminate rollback targets when later pivots fail.
+5. **Silent Workflow Definition Mutation**: Modifying step definitions under an active version causes in-flight sagas to execute incompatible steps, causing version mismatch panics and corrupted states.
+6. **Dangling/Orphan References**: Steps pointing to undeclared dependency keys lead to runtime panics during forward traversal.
 
 ---
 
@@ -27,6 +28,7 @@ Allowing dynamic or unverified workflows directly into the execution engine intr
 
 * **Contract-First Inviolability (Rule 0 Guardrail 2)**: No implementation orchestrator may run until the workflow definition DAG specification is registered and validated as an immutable contract.
 * **Pure Acyclic Invariant (Kahn's / Tarjan's Theorem)**: A workflow is strictly a Directed Acyclic Graph (DAG). Any cycle or self-loop must be rejected at submission time with `HTTP 409 Conflict` / `HTTP 422 Unprocessable`.
+* **Weak Connectivity Invariant**: The workflow graph must constitute exactly one weakly connected component. Multiple roots within one connected component are permitted for parallel starts; disconnected island components are rejected (`E_DISCONNECTED_GRAPH`).
 * **Richardson Compensability Invariant**: Every forward step preceding the pivot transaction MUST declare a corresponding compensating action and endpoint. The pivot step itself must not declare compensation.
 * **Single Pivot Rule**: A workflow definition can declare at most one pivot step.
 * **Cryptographic Spec Immutability**: Every workflow spec is canonically serialized and hashed using SHA-256 (`spec_hash`). Re-registering the same version with modified steps is rejected; re-registering an identical spec under a new version is rejected.
@@ -56,7 +58,7 @@ Allowing dynamic or unverified workflows directly into the execution engine intr
 * **Verdict**: **Rejected (High security and operational hazard)**.
 
 ### Option 3: Declarative Directed Acyclic Graph (DAG) with Topological Validation & Cryptographic Version Hashing (Chosen)
-* **Architecture**: Pure declarative JSON/YAML schemas parsed into strongly typed step definitions. Verified via Kahn's topological sort algorithm, checked for compensability, and stored in PostgreSQL with SHA-256 checksum locks.
+* **Architecture**: Pure declarative JSON/YAML schemas parsed into strongly typed step definitions. Verified via Kahn's topological sort algorithm, checked for weak connectivity and compensability, and stored in PostgreSQL with SHA-256 checksum locks.
 * **Pros**:
   - Provable acyclic termination and deterministic execution order.
   - O(V + E) validation time with zero runtime allocation overhead.
@@ -66,65 +68,127 @@ Allowing dynamic or unverified workflows directly into the execution engine intr
 
 ---
 
-## 4. Detailed Technical Specification
+## 4. Entity-Relationship Model (ERD) & Relational Schema
 
-### 4.1 Pure Domain DAG Validation Algorithm
+Per [05-db-writing-rules.md](file:///home/btpl-lap-22/live/System-Architect/llm-obs-policies/rules/folder-structure/05-db-writing-rules.md), all identifiers enforce the 5 mandatory roles: internal surrogate UUIDv7, external opaque `public_id`, ownership partition key `tenant_id`, natural upsert key `source + external_id`, and causation `correlation_id`.
 
-The topology validator implements Kahn's algorithm in `domain/rules/workflow-definitions.rules.go`:
+```mermaid
+erDiagram
+    TENANTS ||--o{ WORKFLOW_DEFINITIONS : owns
+    WORKFLOW_DEFINITIONS ||--|{ WORKFLOW_DEFINITION_STEPS : contains
+    WORKFLOW_DEFINITIONS ||--o{ SAGA_INSTANCE_STATES : instantiates
+
+    WORKFLOW_DEFINITIONS {
+        uuid id PK "Surrogate UUIDv7 internal identity"
+        varchar public_id UK "External opaque id (wfd_...)"
+        varchar tenant_id PK,FK "Mandatory ownership & partition key"
+        varchar name "Workflow namespace name"
+        bigint version "Monotonic integer version (1, 2, 3...)"
+        varchar source "Source system (e.g. CI_CD, CLI, GIT)"
+        varchar external_id "Natural key from upstream system"
+        uuid correlation_id "Causation trace identifier"
+        char spec_hash UK "SHA-256 canonical payload checksum"
+        varchar status "Lifecycle status (ACTIVE, DEPRECATED, ARCHIVED)"
+        jsonb raw_spec "Unmodified submitted JSON/YAML payload"
+        int total_steps "Count of declared steps"
+        timestamptz created_at "Creation timestamp (UTC)"
+        timestamptz updated_at "Last update timestamp (UTC)"
+    }
+
+    WORKFLOW_DEFINITION_STEPS {
+        uuid id PK "Surrogate UUIDv7 internal step identity"
+        varchar public_id UK "External opaque step id (stp_...)"
+        varchar tenant_id PK,FK "Tenant scope partition key"
+        uuid workflow_id FK "Composite FK to parent workflow"
+        varchar step_id UK "Unique step key within workflow"
+        varchar step_name "Human readable step label"
+        boolean is_pivot "True if point-of-no-return transaction"
+        varchar action_type "Execution transport (REST, GRPC, INTERNAL)"
+        varchar action_endpoint "Target execution URL or service address"
+        varchar compensation_action "Rollback action name"
+        varchar compensation_endpoint "Target rollback service address"
+        int timeout_seconds "Per-step execution timeout"
+        int max_retries "Max retry attempts"
+        jsonb dependencies "JSON array of prerequisite step_ids"
+        timestamptz created_at "Creation timestamp (UTC)"
+        timestamptz updated_at "Last update timestamp (UTC)"
+    }
+
+    SAGA_INSTANCE_STATES {
+        uuid id PK "Saga execution surrogate UUIDv7"
+        varchar tenant_id PK "Tenant scope partition key"
+        varchar current_state "Active state (CREATED, RUNNING, etc)"
+        bigint version "Optimistic concurrency CAS version"
+        bigint fencing_token "Monotonic leader lease fencing token"
+    }
 ```
-function ValidateDAGTopology(steps):
-    Initialize inDegree map for all V steps to 0
-    Initialize adjList map for all V steps to empty list
-    
-    For each step in steps:
-        For each dep in step.Dependencies:
-            If dep not in stepMap: return ERROR_ORPHAN_DEPENDENCY
-            adjList[dep].append(step.StepID)
-            inDegree[step.StepID]++
-            
-    queue = [step for step in inDegree if inDegree[step] == 0]
-    topologicalOrder = []
-    
-    While queue is not empty:
-        curr = queue.pop()
-        topologicalOrder.append(curr)
-        For neighbor in adjList[curr]:
-            inDegree[neighbor]--
-            If inDegree[neighbor] == 0: queue.append(neighbor)
-            
-    If len(topologicalOrder) != len(steps):
-        return ERROR_CYCLIC_DEPENDENCY
-        
-    Validate that at most one pivot step exists.
-    Return topologicalOrder
+
+### Relational Constraints and Invariants
+```sql
+-- 1. Tenant + Name + Version Uniqueness (Prevents duplicate version pushes)
+CONSTRAINT workflow_definitions_tenant_name_ver_uk UNIQUE (tenant_id, name, version)
+
+-- 2. Spec Hash Uniqueness (Guarantees content immutability and prevents duplicate specs)
+CONSTRAINT workflow_definitions_spec_hash_uk UNIQUE (tenant_id, name, spec_hash)
+
+-- 3. Composite Foreign Key (Guarantees multi-tenant isolation and prevents cross-tenant leaks)
+CONSTRAINT fk_workflow_definition_steps_workflow FOREIGN KEY (tenant_id, workflow_id)
+    REFERENCES workflow_definitions (tenant_id, id) ON DELETE RESTRICT
+
+-- 4. Richardson Pivot / Compensability Invariant Gate
+CONSTRAINT workflow_definition_steps_pivot_comp_ck CHECK (
+    (is_pivot = TRUE AND compensation_action = '') OR
+    (is_pivot = FALSE AND compensation_action <> '')
+)
 ```
-
-### 4.2 Database Relational Schema
-
-Schema defined in `0002_create_workflow_definitions_tables.sql`:
-* `workflow_definitions`:
-  - `id UUID`, `public_id VARCHAR(32)`, `tenant_id VARCHAR(64)`
-  - `name VARCHAR(128)`, `version BIGINT`
-  - `spec_hash CHAR(64)` (SHA-256)
-  - `CONSTRAINT workflow_definitions_tenant_name_ver_uk UNIQUE (tenant_id, name, version)`
-  - `CONSTRAINT workflow_definitions_spec_hash_uk UNIQUE (tenant_id, name, spec_hash)`
-* `workflow_definition_steps`:
-  - `id UUID`, `workflow_id UUID`, `step_id VARCHAR(64)`
-  - `is_pivot BOOLEAN`, `action_type VARCHAR(64)`, `action_endpoint VARCHAR(256)`
-  - `compensation_action VARCHAR(64)`, `compensation_endpoint VARCHAR(256)`
-  - `timeout_seconds INT`, `max_retries INT`, `dependencies JSONB`
-  - `CONSTRAINT workflow_definition_steps_pivot_comp_ck CHECK ((is_pivot = TRUE AND compensation_action = '') OR (is_pivot = FALSE AND compensation_action <> ''))`
 
 ---
 
-## 5. Consequences & Trade-offs
+## 5. Detailed Technical Specification
+
+### 5.1 Pure Domain DAG Validation Algorithm
+
+The topology validator implements Kahn's algorithm with an undirected BFS projection in `domain/rules/workflow-definitions.rules.go`:
+```
+function ValidateDAGTopology(steps):
+    Build inDegree map, adjList, and undirectedAdj map
+    
+    1. Check Orphan Dependencies:
+       For each dep in step.Dependencies:
+           If dep not in stepMap: return ERROR_ORPHAN_DEPENDENCY
+           
+    2. Check Weak Connectivity:
+       componentCount = countWeaklyConnectedComponents(steps, undirectedAdj)
+       If componentCount > 1: return ERROR_DISCONNECTED_GRAPH
+       
+    3. Topological Sort (Kahn's BFS):
+       queue = [step for step in inDegree if inDegree[step] == 0]
+       topologicalOrder = []
+       While queue is not empty:
+           curr = queue.pop()
+           topologicalOrder.append(curr)
+           For neighbor in adjList[curr]:
+               inDegree[neighbor]--
+               If inDegree[neighbor] == 0: queue.append(neighbor)
+               
+       If len(topologicalOrder) != len(steps):
+           return ERROR_CYCLIC_DEPENDENCY
+           
+    4. Richardson Pivot Placement:
+       Verify at most one pivot step exists.
+       Return topologicalOrder
+```
+
+---
+
+## 6. Consequences & Trade-offs
 
 ### Positive Consequences
 * **Deterministic Execution**: The orchestrator receives a pre-sorted topological order, eliminating runtime resolution ambiguity.
 * **Audit & Version Stability**: Historical sagas retain an immutable pointer to the exact workflow version and hash under which they started.
-* **Fast Failure**: Malformed graphs, missing compensations, and cyclic graphs fail at ingress before touching runtime saga instances.
+* **Fast Failure**: Malformed graphs, missing compensations, disconnected graphs, and cyclic graphs fail at ingress before touching runtime saga instances.
+* **Relational Multi-Tenant Safety**: Composite foreign keys `(tenant_id, workflow_id)` prevent any cross-tenant data pollution at the storage layer.
 
 ### Negative Consequences / Risks
 * **No Dynamic Looping**: True iterative loops (e.g. while condition X do Y) are disallowed by design. Mitigated by designing iterations as fan-out parallel child sagas.
 * **Schema Strictness**: Adding even a minor non-breaking annotation to a step requires minting a new version because the `spec_hash` is cryptographically enforced.
-
