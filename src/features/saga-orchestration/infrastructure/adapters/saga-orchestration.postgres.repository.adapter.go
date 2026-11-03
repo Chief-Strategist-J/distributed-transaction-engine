@@ -162,6 +162,149 @@ func (a *PostgresSagaRepositoryAdapter) UpdateSagaState(ctx context.Context, ten
 	return nil
 }
 
+func (a *PostgresSagaRepositoryAdapter) UpdateSagaStateWithFencing(ctx context.Context, tenantID string, id string, expectedVersion int64, fencingToken int64, nextState sagaContracts.SagaState) error {
+	now := time.Now().UTC()
+	res, err := a.db.ExecContext(ctx, queries.UpdateSagaStateWithFencing, string(nextState), now, tenantID, id, expectedVersion, fencingToken)
+	if err != nil {
+		return errors.NewInternalError(err.Error())
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return errors.NewInternalError(err.Error())
+	}
+	if rowsAffected == 0 {
+		return errors.NewConflictError("concurrency conflict: optimistic lock or fencing token mismatch")
+	}
+	return nil
+}
+
+func (a *PostgresSagaRepositoryAdapter) AcquireNextLease(ctx context.Context, workerID string, leaseDuration time.Duration) (*sagaContracts.SagaInstance, error) {
+	now := time.Now().UTC()
+	leaseUntil := now.Add(leaseDuration)
+
+	row := a.db.QueryRowContext(ctx, queries.AcquireNextSagaLease, workerID, leaseUntil, now)
+	var s sagaContracts.SagaInstance
+	var stateStr string
+	var initJSON, finalJSON []byte
+	var created, updated, deadline time.Time
+	var lUntil sql.NullTime
+
+	err := row.Scan(
+		&s.ID,
+		&s.PublicID,
+		&s.TenantID,
+		&s.WorkflowDefinitionID,
+		&s.WorkflowVersion,
+		&s.SpecHash,
+		&s.Source,
+		&s.ExternalID,
+		&s.InputHash,
+		&s.CorrelationID,
+		&stateStr,
+		&s.Version,
+		&s.FencingToken,
+		&s.LeaseOwner,
+		&lUntil,
+		&deadline,
+		&initJSON,
+		&finalJSON,
+		&created,
+		&updated,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, errors.NewInternalError(err.Error())
+	}
+
+	s.CurrentState = sagaContracts.SagaState(stateStr)
+	s.CreatedAt = created.Format(time.RFC3339Nano)
+	s.UpdatedAt = updated.Format(time.RFC3339Nano)
+	s.DeadlineAt = deadline.Format(time.RFC3339Nano)
+	if lUntil.Valid {
+		s.LeaseUntil = lUntil.Time.Format(time.RFC3339Nano)
+	}
+	_ = json.Unmarshal(initJSON, &s.InitialPayload)
+	_ = json.Unmarshal(finalJSON, &s.FinalOutput)
+
+	stepRows, err := a.db.QueryContext(ctx, queries.SelectSagaSteps, s.TenantID, s.ID)
+	if err != nil {
+		return nil, errors.NewInternalError(err.Error())
+	}
+	defer stepRows.Close()
+
+	for stepRows.Next() {
+		var step sagaContracts.SagaStepExecution
+		var stepStateStr string
+		var stepInJSON, stepOutJSON []byte
+		var started, completed sql.NullTime
+		var stepCreated, stepUpdated time.Time
+
+		err := stepRows.Scan(
+			&step.ID,
+			&step.PublicID,
+			&step.TenantID,
+			&step.SagaID,
+			&step.StepID,
+			&stepStateStr,
+			&step.AttemptCount,
+			&stepInJSON,
+			&stepOutJSON,
+			&step.ErrorMessage,
+			&step.IdempotencyKey,
+			&started,
+			&completed,
+			&stepCreated,
+			&stepUpdated,
+		)
+		if err != nil {
+			return nil, errors.NewInternalError(err.Error())
+		}
+
+		step.ExecutionState = sagaContracts.StepExecutionState(stepStateStr)
+		step.CreatedAt = stepCreated.Format(time.RFC3339Nano)
+		step.UpdatedAt = stepUpdated.Format(time.RFC3339Nano)
+		if started.Valid {
+			step.StartedAt = started.Time.Format(time.RFC3339Nano)
+		}
+		if completed.Valid {
+			step.CompletedAt = completed.Time.Format(time.RFC3339Nano)
+		}
+		_ = json.Unmarshal(stepInJSON, &step.StepInput)
+		_ = json.Unmarshal(stepOutJSON, &step.StepOutput)
+
+		s.Steps = append(s.Steps, step)
+	}
+
+	return &s, nil
+}
+
+func (a *PostgresSagaRepositoryAdapter) ReleaseLease(ctx context.Context, tenantID string, id string, fencingToken int64) error {
+	now := time.Now().UTC()
+	res, err := a.db.ExecContext(ctx, queries.ReleaseSagaLease, now, tenantID, id, fencingToken)
+	if err != nil {
+		return errors.NewInternalError(err.Error())
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return errors.NewInternalError(err.Error())
+	}
+	if rowsAffected == 0 {
+		return errors.NewConflictError("fencing conflict: stale worker cannot release lease")
+	}
+	return nil
+}
+
+func (a *PostgresSagaRepositoryAdapter) AcquireLeaseForSaga(ctx context.Context, tenantID string, id string, workerID string, leaseDuration time.Duration) (*sagaContracts.SagaInstance, error) {
+	now := time.Now().UTC()
+	leaseUntil := now.Add(leaseDuration)
+
+	row := a.db.QueryRowContext(ctx, queries.AcquireSagaLeaseByID, workerID, leaseUntil, now, tenantID, id)
+	return a.scanSagaWithSteps(ctx, row, tenantID)
+}
+
 func (a *PostgresSagaRepositoryAdapter) UpdateStepExecution(ctx context.Context, tenantID string, sagaID string, step *sagaContracts.SagaStepExecution) error {
 	stepOutputJSON, _ := json.Marshal(step.StepOutput)
 	now := time.Now().UTC()

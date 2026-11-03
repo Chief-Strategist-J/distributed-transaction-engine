@@ -53,6 +53,41 @@ UPDATE saga_instances
 SET current_state = $1, version = version + 1, updated_at = $2
 WHERE tenant_id = $3 AND id = $4 AND version = $5;`
 
+	UpdateSagaStateWithFencing = `
+UPDATE saga_instances
+SET current_state = $1, version = version + 1, updated_at = $2
+WHERE tenant_id = $3 AND id = $4 AND version = $5 AND fencing_token = $6;`
+
+	AcquireNextSagaLease = `
+UPDATE saga_instances
+SET lease_owner = $1, lease_until = $2, fencing_token = fencing_token + 1, updated_at = $3
+WHERE id = (
+    SELECT id FROM saga_instances
+    WHERE current_state IN ('CREATED', 'RUNNING', 'ROLLING_FORWARD', 'COMPENSATING')
+      AND (lease_owner = '' OR lease_until IS NULL OR lease_until < $3 OR lease_owner = $1)
+    ORDER BY created_at ASC
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING id, public_id, tenant_id, workflow_definition_id, workflow_version,
+          spec_hash, source, external_id, input_hash, correlation_id, current_state,
+          version, fencing_token, lease_owner, lease_until, deadline_at,
+          initial_payload, final_output, created_at, updated_at;`
+
+	ReleaseSagaLease = `
+UPDATE saga_instances
+SET lease_owner = '', lease_until = NULL, updated_at = $1
+WHERE tenant_id = $2 AND id = $3 AND fencing_token = $4;`
+
+	AcquireSagaLeaseByID = `
+UPDATE saga_instances
+SET lease_owner = $1, lease_until = $2, fencing_token = fencing_token + 1, updated_at = $3
+WHERE tenant_id = $4 AND id = $5
+RETURNING id, public_id, tenant_id, workflow_definition_id, workflow_version,
+          spec_hash, source, external_id, input_hash, correlation_id, current_state,
+          version, fencing_token, lease_owner, lease_until, deadline_at,
+          initial_payload, final_output, created_at, updated_at;`
+
 	UpdateStepExecution = `
 UPDATE saga_step_executions
 SET execution_state = $1, attempt_count = $2, step_output = $3,

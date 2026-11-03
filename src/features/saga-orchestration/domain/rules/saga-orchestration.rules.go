@@ -2,6 +2,8 @@ package rules
 
 import (
 	"fmt"
+	"time"
+
 	sagaContracts "distributed-transaction-engine/src/features/saga-orchestration/contracts"
 	workflowContracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
 	"distributed-transaction-engine/src/shared/errors"
@@ -133,4 +135,30 @@ func ComputeReverseCompensationChain(steps []workflowContracts.StepDefinition, t
 		}
 	}
 	return compensationChain
+}
+
+func ComputeExponentialBackoff(attempt int, baseBackoff time.Duration, maxBackoff time.Duration) time.Duration {
+	if attempt <= 0 {
+		attempt = 1
+	}
+	backoff := baseBackoff * (1 << uint(attempt-1))
+	if backoff > maxBackoff || backoff <= 0 {
+		backoff = maxBackoff
+	}
+	return backoff
+}
+
+func FormatNextAttemptTimestamp(delay time.Duration) string {
+	return time.Now().UTC().Add(delay).Format(time.RFC3339Nano)
+}
+
+func IsRetryEligible(nextAttemptAt string) bool {
+	if nextAttemptAt == "" {
+		return true
+	}
+	t, err := time.Parse(time.RFC3339Nano, nextAttemptAt)
+	if err != nil {
+		return true
+	}
+	return time.Now().UTC().After(t) || time.Now().UTC().Equal(t)
 }

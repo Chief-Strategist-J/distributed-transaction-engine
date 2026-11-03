@@ -49,6 +49,7 @@ type SagaStepExecution struct {
 	StepOutput     map[string]interface{} `json:"stepOutput"`
 	ErrorMessage   string                 `json:"errorMessage,omitempty"`
 	IdempotencyKey string                 `json:"idempotencyKey"`
+	NextAttemptAt  string                 `json:"nextAttemptAt,omitempty"`
 	StartedAt      string                 `json:"startedAt,omitempty"`
 	CompletedAt    string                 `json:"completedAt,omitempty"`
 	CreatedAt      string                 `json:"createdAt"`

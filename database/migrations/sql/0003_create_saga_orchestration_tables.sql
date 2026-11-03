@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS saga_step_executions (
     step_output JSONB NOT NULL DEFAULT '{}'::jsonb,
     error_message VARCHAR(512) NOT NULL DEFAULT '',
     idempotency_key VARCHAR(128) NOT NULL,
+    next_attempt_at TIMESTAMPTZ,
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

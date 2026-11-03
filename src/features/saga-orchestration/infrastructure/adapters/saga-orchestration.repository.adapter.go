@@ -108,6 +108,114 @@ func (a *MemorySagaRepositoryAdapter) UpdateSagaState(ctx context.Context, tenan
 	return nil
 }
 
+func (a *MemorySagaRepositoryAdapter) UpdateSagaStateWithFencing(ctx context.Context, tenantID string, id string, expectedVersion int64, fencingToken int64, nextState sagaContracts.SagaState) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	key := tenantID + ":" + id
+	instance, exists := a.storeByID[key]
+	if !exists {
+		return errors.NewNotFoundError("saga instance not found")
+	}
+
+	if instance.Version != expectedVersion {
+		return errors.NewConflictError("concurrency conflict: optimistic lock failed on saga state transition")
+	}
+	if instance.FencingToken != fencingToken {
+		return errors.NewConflictError("fencing conflict: stale worker fencing token")
+	}
+
+	instance.CurrentState = nextState
+	instance.Version++
+	instance.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	return nil
+}
+
+func (a *MemorySagaRepositoryAdapter) AcquireNextLease(ctx context.Context, workerID string, leaseDuration time.Duration) (*sagaContracts.SagaInstance, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	now := time.Now().UTC()
+	for _, inst := range a.storeByID {
+		isActionable := inst.CurrentState == sagaContracts.SagaStateCreated ||
+			inst.CurrentState == sagaContracts.SagaStateRunning ||
+			inst.CurrentState == sagaContracts.SagaStateRollingForward ||
+			inst.CurrentState == sagaContracts.SagaStateCompensating
+
+		if !isActionable {
+			continue
+		}
+
+		isAvailable := false
+		if inst.LeaseOwner == "" || inst.LeaseUntil == "" || inst.LeaseOwner == workerID {
+			isAvailable = true
+		} else {
+			until, err := time.Parse(time.RFC3339Nano, inst.LeaseUntil)
+			if err == nil && now.After(until) {
+				isAvailable = true
+			}
+		}
+
+		if isAvailable {
+			inst.LeaseOwner = workerID
+			inst.LeaseUntil = now.Add(leaseDuration).Format(time.RFC3339Nano)
+			inst.FencingToken++
+			inst.UpdatedAt = now.Format(time.RFC3339Nano)
+
+			copied := *inst
+			copiedSteps := make([]sagaContracts.SagaStepExecution, len(inst.Steps))
+			copy(copiedSteps, inst.Steps)
+			copied.Steps = copiedSteps
+			return &copied, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func (a *MemorySagaRepositoryAdapter) ReleaseLease(ctx context.Context, tenantID string, id string, fencingToken int64) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	key := tenantID + ":" + id
+	instance, exists := a.storeByID[key]
+	if !exists {
+		return errors.NewNotFoundError("saga instance not found")
+	}
+
+	if instance.FencingToken != fencingToken {
+		return errors.NewConflictError("fencing conflict: stale token cannot release lease")
+	}
+
+	instance.LeaseOwner = ""
+	instance.LeaseUntil = ""
+	instance.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	return nil
+}
+
+func (a *MemorySagaRepositoryAdapter) AcquireLeaseForSaga(ctx context.Context, tenantID string, id string, workerID string, leaseDuration time.Duration) (*sagaContracts.SagaInstance, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	key := tenantID + ":" + id
+	inst, exists := a.storeByID[key]
+	if !exists {
+		return nil, errors.NewNotFoundError("saga instance not found")
+	}
+
+	now := time.Now().UTC()
+	inst.LeaseOwner = workerID
+	inst.LeaseUntil = now.Add(leaseDuration).Format(time.RFC3339Nano)
+	inst.FencingToken++
+	inst.UpdatedAt = now.Format(time.RFC3339Nano)
+
+	copied := *inst
+	copiedSteps := make([]sagaContracts.SagaStepExecution, len(inst.Steps))
+	copy(copiedSteps, inst.Steps)
+	copied.Steps = copiedSteps
+	return &copied, nil
+}
+
 func (a *MemorySagaRepositoryAdapter) UpdateStepExecution(ctx context.Context, tenantID string, sagaID string, updatedStep *sagaContracts.SagaStepExecution) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
