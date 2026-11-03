@@ -48,6 +48,11 @@ Deploying a naive or ad-hoc execution loop introduces critical production vulner
 * **S16 (Fenced Leasing with Monotonic Tokens)**: At most one worker owns a saga lease at any moment (`SELECT ... FOR UPDATE SKIP LOCKED`). State writes enforce `AND fencing_token = :my_token`. All timestamps originate from database time (`db_now()`).
 * **S17 (Idempotency Key TTL Guard)**: Dispatches do not retry if elapsed time exceeds downstream key retention; they transition to reconciliation.
 * **S18 (Absorbing Terminal States)**: Terminal states (`COMPLETED`, `FAILED_COMPENSATED`, `CANCELLED`) are absorbing; needs-human states (`COMPENSATION_STUCK`, `STUCK_FORWARD`) never auto-close.
+* **S19 (Conditional DAG Skipping)**: Steps declaring a `when` condition guard evaluate it against the saga payload prior to dispatch. If unfulfilled, the step transitions directly to `SKIPPED`. Dependent steps evaluate `SKIPPED` ancestors as satisfied terminal dependencies, and skipped steps are permanently excluded from reverse compensation sets.
+* **S20 (Active Global Deadline Sweeper)**: Independent sweeper loops monitor `deadline_at` on active sagas. If `db_now() > deadline_at`, sagas transition to `FAILED` (or `STUCK_FORWARD` post-pivot, `COMPENSATION_STUCK` during compensation), revoke active leases, and halt runaway worker loops.
+* **S21 (Ingress Decoupling via 202 Accepted)**: HTTP ingress endpoints (`POST /api/v1/sagas/execute`) commit the saga instance in `CREATED` state and immediately return `202 Accepted`. Heavy DAG execution is handled exclusively by asynchronous background pollers (`SagaPoller`) to protect against gateway timeouts (HTTP 504) and pod OOM crashes mid-transaction.
+* **S22 (Circuit Breakers & Action Bulkheads)**: Outbound HTTP step dispatchers enforce per-endpoint circuit breaking (`CLOSED`, `OPEN`, `HALF_OPEN`) and bulkhead concurrency limiting. Tripped circuit breakers trigger durable backoff retries without hammering degraded downstream microservices.
+* **S23 (Startup Migration Safety & Deep Probes)**: Database connections verify schema migrations via `schema_migrations` on initialization. Admin probes (`/health/ready`) actively ping the database connection pool with a bounded timeout, returning `503 Service Unavailable` if PostgreSQL is detached.
 
 ---
 
@@ -367,6 +372,71 @@ Input: compensation_targets (List[StepExecutionRow]), steps (List[StepDefinition
 4. CAS update saga current_state = FAILED_COMPENSATED
 ```
 
+### 6.3 Conditional Step Execution (`when` Guard) Algorithm
+```
+Algorithm: Evaluate Step Guard & Skip Unmet Steps
+Input: step_def (StepDefinition), initial_payload (JSON), journal_row (StepExecutionRow)
+Output: should_dispatch (Boolean)
+
+1. If step_def.when is empty:
+     Return True
+
+2. condition_result = EvaluateCondition(step_def.when, initial_payload)
+3. If condition_result == False:
+     // Transition directly to SKIPPED in step journal
+     Update journal_row.execution_state = SKIPPED
+     // Mark step completed in active DAG traversal so descendants can execute
+     completed_steps[step_def.step_id] = True
+     // Do NOT add to eligible_for_compensation
+     Return False
+
+4. Return True
+```
+
+### 6.4 Global Saga Deadline Sweeper Daemon
+```
+Algorithm: Active Saga Deadline Sweeper Loop
+Input: current_time (UTC Timestamp), batch_size (Integer, e.g. 50)
+
+1. For each active worker poller:
+     Every poll_interval (e.g. 250ms):
+       UPDATE saga_instances
+       SET current_state = CASE
+             WHEN current_state = 'COMPENSATING' THEN 'COMPENSATION_STUCK'
+             WHEN current_state = 'ROLLING_FORWARD' THEN 'STUCK_FORWARD'
+             ELSE 'FAILED'
+           END,
+           lease_owner = '',
+           lease_until = NULL,
+           version = version + 1,
+           updated_at = db_now()
+       WHERE current_state IN ('CREATED', 'RUNNING', 'ROLLING_FORWARD', 'COMPENSATING')
+         AND deadline_at <= db_now();
+```
+
+### 6.5 Action Circuit Breakers & Concurrency Bulkheads
+```
+Algorithm: Bulkhead & Breaker Guarded Step Dispatch
+Input: step_def (StepDefinition), action_endpoint (URI)
+
+1. breaker = breaker_registry.Get(action_endpoint)
+2. If breaker.State == OPEN:
+     Compute backoff delay = ComputeExponentialBackoff(attempt_count + 1)
+     Update step_execution.execution_state = RETRY_WAIT
+     Update step_execution.next_attempt_at = now() + backoff delay
+     Return // Skip dispatch, await poller durable retry
+
+3. Acquire concurrency permit from action bulkhead semaphore
+4. Dispatch outbound HTTP call
+5. If call succeeded:
+     breaker.RecordSuccess()
+   Else:
+     breaker.RecordFailure()
+     If failure_count >= threshold:
+       Transition breaker.State = OPEN (for cooldown period)
+6. Release bulkhead semaphore permit
+```
+
 ---
 
 ## 7. Observability, Security & Audit Logging (Loki Compliance)
@@ -406,5 +476,10 @@ Input: compensation_targets (List[StepExecutionRow]), steps (List[StepDefinition
 | **Ambiguous Timeouts (UNKNOWN)** | Integration Service Test | `TestSagaService_AmbiguousTimeoutMarkedUnknownAndCompensated` | Passed |
 | **Business-Key Deduplication** | Integration Service Test | `TestSagaService_BusinessKeyDeduplication` | Passed |
 | **Distinct Idempotency Suffixes** | Integration Service Test | `TestSagaService_DistinctIdempotencyKeysAndOutputPropagation` | Passed |
+| **Ingress Decoupling (202 Accepted)** | Resilience Test | `TestSagaResilience_IngressDecouplingReturns202Accepted` | Passed |
+| **Poller Leased Execution Daemon** | Resilience Test | `TestSagaResilience_PollerProcessesCreatedSaga` | Passed |
+| **Fencing Token Rejection** | Resilience Test | `TestSagaResilience_FencingTokenRejectsSplitBrainWorker` | Passed |
+| **Circuit Breakers & Bulkheads** | Resilience Test | `TestSagaResilience_CircuitBreakerTripsAndRecovers` | Passed |
+| **Durable Retries via Backoff** | Resilience Test | `TestSagaResilience_DurableRetriesHonoredByPoller` | Passed |
 | **Observability Headers & Tracing** | E2E HTTP Test | `TestEndToEnd_SagaHTTPExecutionLifecycle` | Passed |
 | **Zero Comments in Source Code** | Static Code Check | Rule 4 Zero-Comment Verification | Clean |
