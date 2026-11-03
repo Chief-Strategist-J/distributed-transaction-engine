@@ -4,9 +4,10 @@ const (
 	InsertSagaInstance = `
 INSERT INTO saga_instances (
     id, public_id, tenant_id, workflow_definition_id, workflow_version,
-    spec_hash, source, external_id, correlation_id, current_state,
-    version, fencing_token, initial_payload, final_output, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16);`
+    spec_hash, source, external_id, input_hash, correlation_id, current_state,
+    version, fencing_token, lease_owner, lease_until, deadline_at,
+    initial_payload, final_output, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20);`
 
 	InsertSagaStepExecution = `
 INSERT INTO saga_step_executions (
@@ -17,17 +18,27 @@ INSERT INTO saga_step_executions (
 
 	SelectSagaByID = `
 SELECT id, public_id, tenant_id, workflow_definition_id, workflow_version,
-       spec_hash, source, external_id, correlation_id, current_state,
-       version, fencing_token, initial_payload, final_output, created_at, updated_at
+       spec_hash, source, external_id, input_hash, correlation_id, current_state,
+       version, fencing_token, lease_owner, lease_until, deadline_at,
+       initial_payload, final_output, created_at, updated_at
 FROM saga_instances
 WHERE tenant_id = $1 AND id = $2;`
 
 	SelectSagaByPublicID = `
 SELECT id, public_id, tenant_id, workflow_definition_id, workflow_version,
-       spec_hash, source, external_id, correlation_id, current_state,
-       version, fencing_token, initial_payload, final_output, created_at, updated_at
+       spec_hash, source, external_id, input_hash, correlation_id, current_state,
+       version, fencing_token, lease_owner, lease_until, deadline_at,
+       initial_payload, final_output, created_at, updated_at
 FROM saga_instances
 WHERE tenant_id = $1 AND public_id = $2;`
+
+	SelectSagaByExternalID = `
+SELECT id, public_id, tenant_id, workflow_definition_id, workflow_version,
+       spec_hash, source, external_id, input_hash, correlation_id, current_state,
+       version, fencing_token, lease_owner, lease_until, deadline_at,
+       initial_payload, final_output, created_at, updated_at
+FROM saga_instances
+WHERE tenant_id = $1 AND workflow_definition_id = $2 AND external_id = $3;`
 
 	SelectSagaSteps = `
 SELECT id, public_id, tenant_id, saga_id, step_id,
@@ -50,8 +61,9 @@ WHERE tenant_id = $7 AND saga_id = $8 AND step_id = $9;`
 
 	ListSagasByTenant = `
 SELECT id, public_id, tenant_id, workflow_definition_id, workflow_version,
-       spec_hash, source, external_id, correlation_id, current_state,
-       version, fencing_token, initial_payload, final_output, created_at, updated_at
+       spec_hash, source, external_id, input_hash, correlation_id, current_state,
+       version, fencing_token, lease_owner, lease_until, deadline_at,
+       initial_payload, final_output, created_at, updated_at
 FROM saga_instances
 WHERE tenant_id = $1
 ORDER BY created_at DESC

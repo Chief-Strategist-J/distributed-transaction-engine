@@ -39,6 +39,18 @@ func (a *PostgresSagaRepositoryAdapter) CreateSaga(ctx context.Context, instance
 		return errors.NewValidationError("failed to serialize finalOutput")
 	}
 
+	var leaseUntil sql.NullTime
+	if instance.LeaseUntil != "" {
+		if t, parseErr := time.Parse(time.RFC3339Nano, instance.LeaseUntil); parseErr == nil {
+			leaseUntil = sql.NullTime{Time: t, Valid: true}
+		}
+	}
+
+	deadlineAt, err := time.Parse(time.RFC3339Nano, instance.DeadlineAt)
+	if err != nil {
+		deadlineAt = time.Now().UTC().Add(30 * time.Minute)
+	}
+
 	_, err = tx.ExecContext(
 		ctx,
 		queries.InsertSagaInstance,
@@ -50,10 +62,14 @@ func (a *PostgresSagaRepositoryAdapter) CreateSaga(ctx context.Context, instance
 		instance.SpecHash,
 		instance.Source,
 		instance.ExternalID,
+		instance.InputHash,
 		instance.CorrelationID,
 		string(instance.CurrentState),
 		instance.Version,
 		instance.FencingToken,
+		instance.LeaseOwner,
+		leaseUntil,
+		deadlineAt,
 		initPayloadJSON,
 		finalOutputJSON,
 		instance.CreatedAt,
@@ -124,6 +140,11 @@ func (a *PostgresSagaRepositoryAdapter) GetSagaByPublicID(ctx context.Context, t
 	return a.scanSagaWithSteps(ctx, row, tenantID)
 }
 
+func (a *PostgresSagaRepositoryAdapter) GetSagaByExternalID(ctx context.Context, tenantID string, workflowDefinitionID string, externalID string) (*sagaContracts.SagaInstance, error) {
+	row := a.db.QueryRowContext(ctx, queries.SelectSagaByExternalID, tenantID, workflowDefinitionID, externalID)
+	return a.scanSagaWithSteps(ctx, row, tenantID)
+}
+
 func (a *PostgresSagaRepositoryAdapter) UpdateSagaState(ctx context.Context, tenantID string, id string, expectedVersion int64, nextState sagaContracts.SagaState) error {
 	now := time.Now().UTC()
 	res, err := a.db.ExecContext(ctx, queries.UpdateSagaStateCAS, string(nextState), now, tenantID, id, expectedVersion)
@@ -191,7 +212,8 @@ func (a *PostgresSagaRepositoryAdapter) ListSagas(ctx context.Context, tenantID 
 		var s sagaContracts.SagaInstance
 		var stateStr string
 		var initJSON, finalJSON []byte
-		var created, updated time.Time
+		var created, updated, deadline time.Time
+		var leaseUntil sql.NullTime
 
 		err := rows.Scan(
 			&s.ID,
@@ -202,10 +224,14 @@ func (a *PostgresSagaRepositoryAdapter) ListSagas(ctx context.Context, tenantID 
 			&s.SpecHash,
 			&s.Source,
 			&s.ExternalID,
+			&s.InputHash,
 			&s.CorrelationID,
 			&stateStr,
 			&s.Version,
 			&s.FencingToken,
+			&s.LeaseOwner,
+			&leaseUntil,
+			&deadline,
 			&initJSON,
 			&finalJSON,
 			&created,
@@ -218,6 +244,10 @@ func (a *PostgresSagaRepositoryAdapter) ListSagas(ctx context.Context, tenantID 
 		s.CurrentState = sagaContracts.SagaState(stateStr)
 		s.CreatedAt = created.Format(time.RFC3339Nano)
 		s.UpdatedAt = updated.Format(time.RFC3339Nano)
+		s.DeadlineAt = deadline.Format(time.RFC3339Nano)
+		if leaseUntil.Valid {
+			s.LeaseUntil = leaseUntil.Time.Format(time.RFC3339Nano)
+		}
 		_ = json.Unmarshal(initJSON, &s.InitialPayload)
 		_ = json.Unmarshal(finalJSON, &s.FinalOutput)
 
@@ -231,7 +261,8 @@ func (a *PostgresSagaRepositoryAdapter) scanSagaWithSteps(ctx context.Context, r
 	var s sagaContracts.SagaInstance
 	var stateStr string
 	var initJSON, finalJSON []byte
-	var created, updated time.Time
+	var created, updated, deadline time.Time
+	var leaseUntil sql.NullTime
 
 	err := row.Scan(
 		&s.ID,
@@ -242,10 +273,14 @@ func (a *PostgresSagaRepositoryAdapter) scanSagaWithSteps(ctx context.Context, r
 		&s.SpecHash,
 		&s.Source,
 		&s.ExternalID,
+		&s.InputHash,
 		&s.CorrelationID,
 		&stateStr,
 		&s.Version,
 		&s.FencingToken,
+		&s.LeaseOwner,
+		&leaseUntil,
+		&deadline,
 		&initJSON,
 		&finalJSON,
 		&created,
@@ -261,6 +296,10 @@ func (a *PostgresSagaRepositoryAdapter) scanSagaWithSteps(ctx context.Context, r
 	s.CurrentState = sagaContracts.SagaState(stateStr)
 	s.CreatedAt = created.Format(time.RFC3339Nano)
 	s.UpdatedAt = updated.Format(time.RFC3339Nano)
+	s.DeadlineAt = deadline.Format(time.RFC3339Nano)
+	if leaseUntil.Valid {
+		s.LeaseUntil = leaseUntil.Time.Format(time.RFC3339Nano)
+	}
 	_ = json.Unmarshal(initJSON, &s.InitialPayload)
 	_ = json.Unmarshal(finalJSON, &s.FinalOutput)
 
@@ -315,4 +354,3 @@ func (a *PostgresSagaRepositoryAdapter) scanSagaWithSteps(ctx context.Context, r
 
 	return &s, nil
 }
-

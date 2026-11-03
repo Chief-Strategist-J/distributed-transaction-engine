@@ -8,14 +8,31 @@ import (
 func CanTransition(from sagaContracts.SagaState, to sagaContracts.SagaState) bool {
 	switch from {
 	case sagaContracts.SagaStatePending, sagaContracts.SagaStateCreated:
-		return to == sagaContracts.SagaStateRunning || to == sagaContracts.SagaStateFailed
+		return to == sagaContracts.SagaStateRunning || to == sagaContracts.SagaStateFailed || to == sagaContracts.SagaStateCancelled
 	case sagaContracts.SagaStateRunning:
-		return to == sagaContracts.SagaStateCompensating || to == sagaContracts.SagaStateCompleted || to == sagaContracts.SagaStateFailed
+		return to == sagaContracts.SagaStateRollingForward || to == sagaContracts.SagaStateCompensating || to == sagaContracts.SagaStateCompleted || to == sagaContracts.SagaStateFailed || to == sagaContracts.SagaStateCancelled
+	case sagaContracts.SagaStateRollingForward:
+		return to == sagaContracts.SagaStateStuckForward || to == sagaContracts.SagaStateCompleted
 	case sagaContracts.SagaStateCompensating:
-		return to == sagaContracts.SagaStateFailed
+		return to == sagaContracts.SagaStateCompensationStuck || to == sagaContracts.SagaStateFailedCompensated || to == sagaContracts.SagaStateFailed
 	default:
 		return false
 	}
+}
+
+func DeriveForwardIdempotencyKey(sagaID string, stepID string) string {
+	return "idem:" + sagaID + ":" + stepID + ":fwd"
+}
+
+func DeriveCompensationIdempotencyKey(sagaID string, stepID string) string {
+	return "idem:" + sagaID + ":" + stepID + ":comp"
+}
+
+func DetermineFailureRouting(isPivotSucceeded bool) string {
+	if isPivotSucceeded {
+		return "FORWARD_ONLY"
+	}
+	return "BACKWARD"
 }
 
 func FindInitialExecutableSteps(steps []workflowContracts.StepDefinition) []string {
@@ -48,7 +65,7 @@ func FindNextExecutableSteps(steps []workflowContracts.StepDefinition, completed
 	return nextSteps
 }
 
-func ComputeReverseCompensationChain(steps []workflowContracts.StepDefinition, topoOrder []string, succeededSteps map[string]bool) []string {
+func ComputeReverseCompensationChain(steps []workflowContracts.StepDefinition, topoOrder []string, eligibleSteps map[string]bool) []string {
 	stepMap := make(map[string]workflowContracts.StepDefinition, len(steps))
 	for _, s := range steps {
 		stepMap[s.StepID] = s
@@ -57,7 +74,7 @@ func ComputeReverseCompensationChain(steps []workflowContracts.StepDefinition, t
 	var compensationChain []string
 	for i := len(topoOrder) - 1; i >= 0; i-- {
 		stepID := topoOrder[i]
-		if !succeededSteps[stepID] {
+		if !eligibleSteps[stepID] {
 			continue
 		}
 		stepDef, exists := stepMap[stepID]

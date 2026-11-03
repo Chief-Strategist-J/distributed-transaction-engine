@@ -2,11 +2,12 @@ package tests
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	sagaAdapters "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/adapters"
-	sagaService "distributed-transaction-engine/src/features/saga-orchestration/service"
 	sagaContracts "distributed-transaction-engine/src/features/saga-orchestration/contracts"
+	sagaService "distributed-transaction-engine/src/features/saga-orchestration/service"
 	workflowAdapters "distributed-transaction-engine/src/features/workflow-definitions/infrastructure/adapters"
 	workflowContracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
 	workflowService "distributed-transaction-engine/src/features/workflow-definitions/service"
@@ -14,21 +15,35 @@ import (
 )
 
 type MockStepDispatcher struct {
-	failOnStepID      string
-	executedSteps     []string
-	compensatedSteps  []string
+	failOnStepID        string
+	failWithAmbiguous   bool
+	executedSteps       []string
+	compensatedSteps    []string
+	recordedFwdKeys     []string
+	recordedCompKeys    []string
+	receivedCompOutputs []map[string]interface{}
 }
 
-func (m *MockStepDispatcher) DispatchStep(ctx context.Context, stepDef workflowContracts.StepDefinition, input map[string]interface{}) (map[string]interface{}, error) {
+func (m *MockStepDispatcher) DispatchStep(ctx context.Context, stepDef workflowContracts.StepDefinition, input map[string]interface{}, idempotencyKey string) (map[string]interface{}, error) {
 	m.executedSteps = append(m.executedSteps, stepDef.StepID)
+	m.recordedFwdKeys = append(m.recordedFwdKeys, idempotencyKey)
+
 	if stepDef.StepID == m.failOnStepID {
+		if m.failWithAmbiguous {
+			return nil, &sagaAdapters.AmbiguousStepError{
+				StatusCode: 504,
+				Message:    "downstream 504 gateway timeout",
+			}
+		}
 		return nil, errors.NewInternalError("downstream step execution failed")
 	}
-	return map[string]interface{}{"status": "success", "step": stepDef.StepID}, nil
+	return map[string]interface{}{"status": "success", "step": stepDef.StepID, "charge_id": "ch_mock_123"}, nil
 }
 
-func (m *MockStepDispatcher) CompensateStep(ctx context.Context, stepDef workflowContracts.StepDefinition, input map[string]interface{}) error {
+func (m *MockStepDispatcher) CompensateStep(ctx context.Context, stepDef workflowContracts.StepDefinition, input map[string]interface{}, output map[string]interface{}, idempotencyKey string) error {
 	m.compensatedSteps = append(m.compensatedSteps, stepDef.StepID)
+	m.recordedCompKeys = append(m.recordedCompKeys, idempotencyKey)
+	m.receivedCompOutputs = append(m.receivedCompOutputs, output)
 	return nil
 }
 
@@ -103,24 +118,24 @@ func TestSagaService_SuccessfulDAGExecution(t *testing.T) {
 	}
 }
 
-func TestSagaService_FailureAndReverseCompensation(t *testing.T) {
+func TestSagaService_PostPivotFailureNeverCompensatesPrePivotSteps(t *testing.T) {
 	ctx := context.Background()
-	tenantID := "tenant_comp_01"
+	tenantID := "tenant_postpivot_01"
 
 	workflowRepo := workflowAdapters.NewMemoryWorkflowDefinitionsRepositoryAdapter()
 	wfService := workflowService.NewWorkflowDefinitionsService(workflowRepo)
 
 	_, err := wfService.RegisterWorkflow(ctx, workflowContracts.CreateWorkflowDefinitionInput{
 		TenantID:      tenantID,
-		Name:          "order-fulfillment",
+		Name:          "checkout-fulfillment-flow",
 		Version:       1,
 		Source:        "TEST",
-		ExternalID:    "ext_fulfill_001",
-		CorrelationID: "c3000000-0000-0000-0000-000000000001",
+		ExternalID:    "ext_postpivot_wf_001",
+		CorrelationID: "c1000000-0000-0000-0000-000000000099",
 		Steps: []workflowContracts.StepDefinition{
 			{
 				StepID:               "reserve_inventory",
-				StepName:             "Reserve Inventory",
+				StepName:             "Reserve Stock",
 				IsPivot:              false,
 				ActionType:           "REST",
 				ActionEndpoint:       "http://inventory/reserve",
@@ -130,13 +145,24 @@ func TestSagaService_FailureAndReverseCompensation(t *testing.T) {
 				Dependencies:         []string{},
 			},
 			{
-				StepID:               "charge_customer",
-				StepName:             "Charge Customer",
+				StepID:               "charge_card",
+				StepName:             "Charge Credit Card (Pivot)",
 				IsPivot:              true,
 				ActionType:           "REST",
-				ActionEndpoint:       "http://billing/charge",
+				ActionEndpoint:       "http://payments/charge",
 				TimeoutSeconds:       30,
 				Dependencies:         []string{"reserve_inventory"},
+			},
+			{
+				StepID:               "create_shipment",
+				StepName:             "Create Shipment Label",
+				IsPivot:              false,
+				ActionType:           "REST",
+				ActionEndpoint:       "http://shipping/create",
+				CompensationAction:   "CANCEL_SHIPMENT",
+				CompensationEndpoint: "http://shipping/cancel",
+				TimeoutSeconds:       30,
+				Dependencies:         []string{"charge_card"},
 			},
 		},
 	})
@@ -146,37 +172,253 @@ func TestSagaService_FailureAndReverseCompensation(t *testing.T) {
 
 	sagaRepo := sagaAdapters.NewMemorySagaRepositoryAdapter()
 	dispatcher := &MockStepDispatcher{
-		failOnStepID: "charge_customer",
+		failOnStepID: "create_shipment",
 	}
 	svc := sagaService.NewSagaOrchestrationService(sagaRepo, workflowRepo, dispatcher)
 
 	instance, err := svc.ExecuteSaga(ctx, sagaContracts.ExecuteSagaInput{
 		TenantID:        tenantID,
-		WorkflowName:    "order-fulfillment",
+		WorkflowName:    "checkout-fulfillment-flow",
 		WorkflowVersion: 1,
-		Source:          "COMP_TEST",
-		ExternalID:      "ext_comp_exec_001",
-		CorrelationID:   "c4000000-0000-0000-0000-000000000001",
-		InitialPayload:  map[string]interface{}{"order_id": 99},
+		Source:          "POSTPIVOT_TEST",
+		ExternalID:      "ext_postpivot_001",
+		CorrelationID:   "c2000000-0000-0000-0000-000000000099",
+		InitialPayload:  map[string]interface{}{"order_id": 555},
 	})
 	if err == nil {
-		t.Fatalf("expected error from failed step, got nil")
+		t.Fatalf("expected error from failed shipment step, got nil")
 	}
 
-	if instance.CurrentState != sagaContracts.SagaStateFailed {
-		t.Fatalf("expected FAILED state, got: %s", instance.CurrentState)
+	if instance.CurrentState != sagaContracts.SagaStateStuckForward {
+		t.Fatalf("expected STUCK_FORWARD state, got: %s", instance.CurrentState)
 	}
 
-	if len(dispatcher.compensatedSteps) != 1 || dispatcher.compensatedSteps[0] != "reserve_inventory" {
-		t.Fatalf("expected reserve_inventory to be compensated, got: %v", dispatcher.compensatedSteps)
+	if len(dispatcher.compensatedSteps) != 0 {
+		t.Fatalf("CRITICAL BUG DETECTED: post-pivot failure compensated pre-pivot steps: %v", dispatcher.compensatedSteps)
+	}
+}
+
+func TestSagaService_AmbiguousTimeoutMarkedUnknownAndCompensated(t *testing.T) {
+	ctx := context.Background()
+	tenantID := "tenant_unknown_01"
+
+	workflowRepo := workflowAdapters.NewMemoryWorkflowDefinitionsRepositoryAdapter()
+	wfService := workflowService.NewWorkflowDefinitionsService(workflowRepo)
+
+	_, err := wfService.RegisterWorkflow(ctx, workflowContracts.CreateWorkflowDefinitionInput{
+		TenantID:      tenantID,
+		Name:          "ambiguous-test-flow",
+		Version:       1,
+		Source:        "TEST",
+		ExternalID:    "ext_ambig_wf_001",
+		CorrelationID: "c1000000-0000-0000-0000-000000000088",
+		Steps: []workflowContracts.StepDefinition{
+			{
+				StepID:               "reserve_seat",
+				StepName:             "Reserve Seat",
+				IsPivot:              false,
+				ActionType:           "REST",
+				ActionEndpoint:       "http://airline/reserve",
+				CompensationAction:   "RELEASE_SEAT",
+				CompensationEndpoint: "http://airline/release",
+				TimeoutSeconds:       30,
+				Dependencies:         []string{},
+			},
+			{
+				StepID:               "charge_card",
+				StepName:             "Charge Card",
+				IsPivot:              true,
+				ActionType:           "REST",
+				ActionEndpoint:       "http://payments/charge",
+				TimeoutSeconds:       30,
+				Dependencies:         []string{"reserve_seat"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("workflow registration failed: %v", err)
 	}
 
-	for _, step := range instance.Steps {
-		if step.StepID == "reserve_inventory" && step.ExecutionState != sagaContracts.StepStateCompensated {
-			t.Errorf("expected reserve_inventory to be COMPENSATED, got: %s", step.ExecutionState)
-		}
-		if step.StepID == "charge_customer" && step.ExecutionState != sagaContracts.StepStateFailed {
-			t.Errorf("expected charge_customer to be FAILED, got: %s", step.ExecutionState)
-		}
+	sagaRepo := sagaAdapters.NewMemorySagaRepositoryAdapter()
+	dispatcher := &MockStepDispatcher{
+		failOnStepID:      "reserve_seat",
+		failWithAmbiguous: true,
+	}
+	svc := sagaService.NewSagaOrchestrationService(sagaRepo, workflowRepo, dispatcher)
+
+	instance, err := svc.ExecuteSaga(ctx, sagaContracts.ExecuteSagaInput{
+		TenantID:        tenantID,
+		WorkflowName:    "ambiguous-test-flow",
+		WorkflowVersion: 1,
+		Source:          "UNKNOWN_TEST",
+		ExternalID:      "ext_ambig_001",
+		CorrelationID:   "c2000000-0000-0000-0000-000000000088",
+		InitialPayload:  map[string]interface{}{"flight": "AI-101"},
+	})
+	if err == nil {
+		t.Fatalf("expected error from ambiguous 504 timeout, got nil")
+	}
+
+	if instance.CurrentState != sagaContracts.SagaStateFailedCompensated {
+		t.Fatalf("expected FAILED_COMPENSATED, got: %s", instance.CurrentState)
+	}
+
+	if len(dispatcher.compensatedSteps) != 1 || dispatcher.compensatedSteps[0] != "reserve_seat" {
+		t.Fatalf("expected ambiguous step reserve_seat to be compensated, got: %v", dispatcher.compensatedSteps)
+	}
+}
+
+func TestSagaService_BusinessKeyDeduplication(t *testing.T) {
+	ctx := context.Background()
+	tenantID := "tenant_dedup_01"
+
+	workflowRepo := workflowAdapters.NewMemoryWorkflowDefinitionsRepositoryAdapter()
+	wfService := workflowService.NewWorkflowDefinitionsService(workflowRepo)
+
+	_, err := wfService.RegisterWorkflow(ctx, workflowContracts.CreateWorkflowDefinitionInput{
+		TenantID:      tenantID,
+		Name:          "dedup-test-flow",
+		Version:       1,
+		Source:        "TEST",
+		ExternalID:    "ext_dedup_wf_001",
+		CorrelationID: "c1000000-0000-0000-0000-000000000077",
+		Steps: []workflowContracts.StepDefinition{
+			{
+				StepID:               "validate_user",
+				StepName:             "Validate User",
+				IsPivot:              true,
+				ActionType:           "REST",
+				ActionEndpoint:       "http://users/validate",
+				TimeoutSeconds:       30,
+				Dependencies:         []string{},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("workflow registration failed: %v", err)
+	}
+
+	sagaRepo := sagaAdapters.NewMemorySagaRepositoryAdapter()
+	dispatcher := &MockStepDispatcher{}
+	svc := sagaService.NewSagaOrchestrationService(sagaRepo, workflowRepo, dispatcher)
+
+	firstInstance, err := svc.ExecuteSaga(ctx, sagaContracts.ExecuteSagaInput{
+		TenantID:        tenantID,
+		WorkflowName:    "dedup-test-flow",
+		WorkflowVersion: 1,
+		Source:          "DEDUP_TEST",
+		ExternalID:      "ext_client_order_999",
+		CorrelationID:   "c2000000-0000-0000-0000-000000000077",
+		InitialPayload:  map[string]interface{}{"price": 100},
+	})
+	if err != nil {
+		t.Fatalf("first execution failed: %v", err)
+	}
+
+	replayedInstance, err := svc.ExecuteSaga(ctx, sagaContracts.ExecuteSagaInput{
+		TenantID:        tenantID,
+		WorkflowName:    "dedup-test-flow",
+		WorkflowVersion: 1,
+		Source:          "DEDUP_TEST",
+		ExternalID:      "ext_client_order_999",
+		CorrelationID:   "c3000000-0000-0000-0000-000000000077",
+		InitialPayload:  map[string]interface{}{"price": 100},
+	})
+	if err != nil {
+		t.Fatalf("idempotent replay failed: %v", err)
+	}
+	if replayedInstance.ID != firstInstance.ID {
+		t.Fatalf("expected same saga ID on idempotent replay, got %s vs %s", replayedInstance.ID, firstInstance.ID)
+	}
+
+	_, conflictErr := svc.ExecuteSaga(ctx, sagaContracts.ExecuteSagaInput{
+		TenantID:        tenantID,
+		WorkflowName:    "dedup-test-flow",
+		WorkflowVersion: 1,
+		Source:          "DEDUP_TEST",
+		ExternalID:      "ext_client_order_999",
+		CorrelationID:   "c4000000-0000-0000-0000-000000000077",
+		InitialPayload:  map[string]interface{}{"price": 999},
+	})
+	if conflictErr == nil {
+		t.Fatalf("expected 409 conflict error when payload differs, got nil")
+	}
+	if appErr, ok := conflictErr.(*errors.ApplicationError); !ok || appErr.StatusCode != 409 {
+		t.Fatalf("expected 409 conflict error, got: %v", conflictErr)
+	}
+}
+
+func TestSagaService_DistinctIdempotencyKeysAndOutputPropagation(t *testing.T) {
+	ctx := context.Background()
+	tenantID := "tenant_keys_01"
+
+	workflowRepo := workflowAdapters.NewMemoryWorkflowDefinitionsRepositoryAdapter()
+	wfService := workflowService.NewWorkflowDefinitionsService(workflowRepo)
+
+	_, err := wfService.RegisterWorkflow(ctx, workflowContracts.CreateWorkflowDefinitionInput{
+		TenantID:      tenantID,
+		Name:          "keys-flow",
+		Version:       1,
+		Source:        "TEST",
+		ExternalID:    "ext_keys_wf_001",
+		CorrelationID: "c1000000-0000-0000-0000-000000000066",
+		Steps: []workflowContracts.StepDefinition{
+			{
+				StepID:               "charge_step",
+				StepName:             "Charge",
+				IsPivot:              false,
+				ActionType:           "REST",
+				ActionEndpoint:       "http://payment/charge",
+				CompensationAction:   "REFUND",
+				CompensationEndpoint: "http://payment/refund",
+				TimeoutSeconds:       30,
+				Dependencies:         []string{},
+			},
+			{
+				StepID:               "fail_step",
+				StepName:             "Fail",
+				IsPivot:              true,
+				ActionType:           "REST",
+				ActionEndpoint:       "http://fail/run",
+				TimeoutSeconds:       30,
+				Dependencies:         []string{"charge_step"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("workflow registration failed: %v", err)
+	}
+
+	sagaRepo := sagaAdapters.NewMemorySagaRepositoryAdapter()
+	dispatcher := &MockStepDispatcher{
+		failOnStepID: "fail_step",
+	}
+	svc := sagaService.NewSagaOrchestrationService(sagaRepo, workflowRepo, dispatcher)
+
+	_, err = svc.ExecuteSaga(ctx, sagaContracts.ExecuteSagaInput{
+		TenantID:        tenantID,
+		WorkflowName:    "keys-flow",
+		WorkflowVersion: 1,
+		Source:          "KEYS_TEST",
+		ExternalID:      "ext_keys_001",
+		CorrelationID:   "c2000000-0000-0000-0000-000000000066",
+		InitialPayload:  map[string]interface{}{"amount": 50},
+	})
+	if err == nil {
+		t.Fatalf("expected error from fail_step")
+	}
+
+	if len(dispatcher.recordedFwdKeys) == 0 || !strings.HasSuffix(dispatcher.recordedFwdKeys[0], ":fwd") {
+		t.Fatalf("expected forward key to end in :fwd, got: %v", dispatcher.recordedFwdKeys)
+	}
+	if len(dispatcher.recordedCompKeys) == 0 || !strings.HasSuffix(dispatcher.recordedCompKeys[0], ":comp") {
+		t.Fatalf("expected compensation key to end in :comp, got: %v", dispatcher.recordedCompKeys)
+	}
+
+	if len(dispatcher.receivedCompOutputs) == 0 {
+		t.Fatalf("expected compensation to receive forward step output")
+	}
+	if dispatcher.receivedCompOutputs[0]["charge_id"] != "ch_mock_123" {
+		t.Fatalf("expected charge_id in compensation output payload, got: %v", dispatcher.receivedCompOutputs[0])
 	}
 }

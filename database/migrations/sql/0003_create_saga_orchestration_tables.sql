@@ -17,10 +17,14 @@ CREATE TABLE IF NOT EXISTS saga_instances (
     spec_hash CHAR(64) NOT NULL,
     source VARCHAR(64) NOT NULL DEFAULT 'SYSTEM',
     external_id VARCHAR(128) NOT NULL,
+    input_hash CHAR(64) NOT NULL,
     correlation_id UUID NOT NULL,
     current_state VARCHAR(32) NOT NULL DEFAULT 'CREATED',
     version BIGINT NOT NULL DEFAULT 1,
-    fencing_token BIGINT NOT NULL DEFAULT 1,
+    fencing_token BIGINT NOT NULL DEFAULT 0,
+    lease_owner VARCHAR(64) NOT NULL DEFAULT '',
+    lease_until TIMESTAMPTZ,
+    deadline_at TIMESTAMPTZ NOT NULL,
     initial_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     final_output JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -28,13 +32,13 @@ CREATE TABLE IF NOT EXISTS saga_instances (
     CONSTRAINT pk_saga_instances PRIMARY KEY (tenant_id, id),
     CONSTRAINT saga_instances_tenant_id_id_uk UNIQUE (tenant_id, id),
     CONSTRAINT saga_instances_public_id_uk UNIQUE (tenant_id, public_id),
-    CONSTRAINT saga_instances_external_uk UNIQUE (tenant_id, source, external_id),
+    CONSTRAINT saga_instances_tenant_wf_ext_uk UNIQUE (tenant_id, workflow_definition_id, external_id),
     CONSTRAINT saga_instances_public_id_ck CHECK (public_id ~ '^sga_[0-9a-zA-Z]{26}$'),
     CONSTRAINT saga_instances_source_ck CHECK (source = btrim(source) AND source <> ''),
     CONSTRAINT saga_instances_external_id_ck CHECK (external_id = btrim(external_id) AND external_id <> ''),
     CONSTRAINT saga_instances_version_ck CHECK (version >= 1),
-    CONSTRAINT saga_instances_fencing_token_ck CHECK (fencing_token >= 1),
-    CONSTRAINT saga_instances_state_ck CHECK (current_state IN ('CREATED', 'RUNNING', 'COMPENSATING', 'COMPLETED', 'FAILED')),
+    CONSTRAINT saga_instances_fencing_token_ck CHECK (fencing_token >= 0),
+    CONSTRAINT saga_instances_state_ck CHECK (current_state IN ('CREATED', 'RUNNING', 'ROLLING_FORWARD', 'STUCK_FORWARD', 'COMPENSATING', 'COMPENSATION_STUCK', 'COMPLETED', 'FAILED', 'FAILED_COMPENSATED', 'CANCELLED')),
     CONSTRAINT fk_saga_instances_workflow FOREIGN KEY (tenant_id, workflow_definition_id)
         REFERENCES workflow_definitions (tenant_id, id) ON DELETE RESTRICT
 );
@@ -62,12 +66,12 @@ CREATE TABLE IF NOT EXISTS saga_step_executions (
     CONSTRAINT saga_step_executions_public_id_ck CHECK (public_id ~ '^stx_[0-9a-zA-Z]{26}$'),
     CONSTRAINT saga_step_executions_step_id_ck CHECK (step_id = btrim(step_id) AND step_id <> ''),
     CONSTRAINT saga_step_executions_attempts_ck CHECK (attempt_count >= 0),
-    CONSTRAINT saga_step_executions_state_ck CHECK (execution_state IN ('PENDING', 'DISPATCHED', 'SUCCEEDED', 'FAILED', 'COMPENSATING', 'COMPENSATED', 'SKIPPED')),
+    CONSTRAINT saga_step_executions_state_ck CHECK (execution_state IN ('NOT_STARTED', 'PENDING', 'DISPATCHED', 'RETRY_WAIT', 'SUCCEEDED', 'FAILED', 'UNKNOWN', 'COMPENSATING', 'COMPENSATED', 'SKIPPED')),
     CONSTRAINT fk_saga_step_executions_saga FOREIGN KEY (tenant_id, saga_id)
         REFERENCES saga_instances (tenant_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_saga_instances_state ON saga_instances (tenant_id, current_state);
 CREATE INDEX IF NOT EXISTS idx_saga_instances_workflow ON saga_instances (tenant_id, workflow_definition_id, workflow_version);
+CREATE INDEX IF NOT EXISTS idx_saga_instances_recovery ON saga_instances (tenant_id, lease_until, current_state);
 CREATE INDEX IF NOT EXISTS idx_saga_step_executions_state ON saga_step_executions (tenant_id, saga_id, execution_state);
-

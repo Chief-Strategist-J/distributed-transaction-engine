@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"strings"
 	"testing"
 
 	sagaRules "distributed-transaction-engine/src/features/saga-orchestration/domain/rules"
@@ -103,3 +104,52 @@ func TestRules_ComputeReverseCompensationChain(t *testing.T) {
 	}
 }
 
+func TestRules_DetermineFailureRouting(t *testing.T) {
+	if route := sagaRules.DetermineFailureRouting(true); route != "FORWARD_ONLY" {
+		t.Fatalf("expected post-pivot route to be FORWARD_ONLY, got %s", route)
+	}
+	if route := sagaRules.DetermineFailureRouting(false); route != "BACKWARD" {
+		t.Fatalf("expected pre-pivot route to be BACKWARD, got %s", route)
+	}
+}
+
+func TestRules_IdempotencyKeySuffixes(t *testing.T) {
+	fwd := sagaRules.DeriveForwardIdempotencyKey("sga_1", "step_a")
+	comp := sagaRules.DeriveCompensationIdempotencyKey("sga_1", "step_a")
+
+	if !strings.HasSuffix(fwd, ":fwd") {
+		t.Fatalf("expected forward key to end with :fwd, got: %s", fwd)
+	}
+	if !strings.HasSuffix(comp, ":comp") {
+		t.Fatalf("expected compensation key to end with :comp, got: %s", comp)
+	}
+	if fwd == comp {
+		t.Fatalf("forward and compensation keys must not be equal")
+	}
+}
+
+func TestRules_ComputeReverseCompensationChainWithUnknownStep(t *testing.T) {
+	steps := []workflowContracts.StepDefinition{
+		{
+			StepID:             "step_1",
+			IsPivot:            false,
+			CompensationAction: "UNDO_1",
+		},
+		{
+			StepID:             "step_2",
+			IsPivot:            false,
+			CompensationAction: "UNDO_2",
+		},
+	}
+
+	topoOrder := []string{"step_1", "step_2"}
+	eligible := map[string]bool{
+		"step_1": true,
+		"step_2": true,
+	}
+
+	chain := sagaRules.ComputeReverseCompensationChain(steps, topoOrder, eligible)
+	if len(chain) != 2 || chain[0] != "step_2" || chain[1] != "step_1" {
+		t.Fatalf("expected [step_2, step_1], got %v", chain)
+	}
+}

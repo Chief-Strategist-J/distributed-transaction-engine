@@ -33,7 +33,7 @@ func (a *MemorySagaRepositoryAdapter) CreateSaga(ctx context.Context, instance *
 		return errors.NewConflictError("saga instance already exists with id: " + instance.ID)
 	}
 
-	extKey := instance.TenantID + ":" + instance.Source + ":" + instance.ExternalID
+	extKey := instance.TenantID + ":" + instance.WorkflowDefinitionID + ":" + instance.ExternalID
 	if _, exists := a.storeByExtID[extKey]; exists {
 		return errors.NewConflictError("saga instance already exists with external id: " + instance.ExternalID)
 	}
@@ -70,6 +70,18 @@ func (a *MemorySagaRepositoryAdapter) GetSagaByPublicID(ctx context.Context, ten
 
 	key := tenantID + ":" + publicID
 	instance, exists := a.storeByPubID[key]
+	if !exists {
+		return nil, errors.NewNotFoundError("saga instance not found")
+	}
+	return instance, nil
+}
+
+func (a *MemorySagaRepositoryAdapter) GetSagaByExternalID(ctx context.Context, tenantID string, workflowDefinitionID string, externalID string) (*sagaContracts.SagaInstance, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	key := tenantID + ":" + workflowDefinitionID + ":" + externalID
+	instance, exists := a.storeByExtID[key]
 	if !exists {
 		return nil, errors.NewNotFoundError("saga instance not found")
 	}
