@@ -103,3 +103,31 @@ flowchart LR
    - Logs are written locally to stdout in structured JSON format AND forwarded asynchronously to `http://<OTEL_EXPORTER_OTLP_ENDPOINT>/v1/logs`.
    - Each log entry is stamped with the exact `trace_id`, `span_id`, `tenant_id`, and error attributes, allowing 1-click drill-down from Loki logs directly to the Tempo trace in Grafana.
 
+---
+
+## 4. Operational Defects & Visual Trace Linking Fix in Grafana
+
+### A. The "Logs Present but Traces Missing" Defect
+During manual and automated API verification, structured logs appeared in Grafana Loki, but engineers were unable to view the correlated distributed traces directly in the UI.
+
+### B. Root Causes Identified
+1. **Loki Derived Fields Regex Failure**:
+   - The provisioning configuration in `deploy/docker/compose/grafana-datasources.yaml` used the legacy pattern `(?:trace_id|traceId)=(\w+)` expecting key-value pairs separated by `=`.
+   - The application writes JSON-formatted structured logs (`"trace_id":"5a4ef20c3a12da631202557893a9f739"`). Because the separator is `":"` with quotes, Grafana failed to extract the trace ID.
+2. **Missing Client 4xx Error Capturing**:
+   - The HTTP middleware previously checked `statusCode >= 500` to mark request failures.
+   - Client-side validation errors, missing `tenantId`, and `404 Not Found` responses (which represent the majority of real-world read API failures) were logged as `INFO` and lacked error recording in the active trace span.
+
+### C. Technical Resolutions Implemented
+1. **Enhanced Derived Field Regex in `grafana-datasources.yaml`**:
+   Updated the pattern to:
+   ```regex
+   (?:"trace_id"|"traceId"|trace_id|traceId)[":=\s]+([a-f0-9]{32})
+   ```
+   This matches JSON attributes, raw query parameters, logfmt lines, and standard strings, correctly linking Loki log entries directly to the Tempo trace explorer via a clickable `TraceID` button.
+2. **Comprehensive HTTP Middleware Error Classification**:
+   Updated `src/infra/observability/middleware.go` to capture all `statusCode >= 400` as structured `ERROR` logs and record error attributes directly on the root span.
+3. **Deep Service-Layer Tracing and CAS Transition Failure Spans**:
+   Added explicit child spans (`workflow_service.register`, `workflow_service.get`, `state_machine_service.initialize`, `state_machine_service.transition`) across all domain services, explicitly recording optimistic concurrency CAS version conflicts and fencing token rejections.
+
+
