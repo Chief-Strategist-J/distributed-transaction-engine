@@ -41,6 +41,58 @@ func NewSagaOrchestrationService(
 	}
 }
 
+func (s *SagaOrchestrationService) transitionSagaState(ctx context.Context, tenantID string, instance *sagaContracts.SagaInstance, nextState sagaContracts.SagaState) error {
+	if err := sagaRules.ValidateSagaTransition(instance.CurrentState, nextState); err != nil {
+		return err
+	}
+	if err := s.repo.UpdateSagaState(ctx, tenantID, instance.ID, instance.Version, nextState); err != nil {
+		return err
+	}
+	instance.CurrentState = nextState
+	instance.Version++
+	instance.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	return nil
+}
+
+func (s *SagaOrchestrationService) findStepExecution(instance *sagaContracts.SagaInstance, stepID string) *sagaContracts.SagaStepExecution {
+	for i := range instance.Steps {
+		if instance.Steps[i].StepID == stepID {
+			return &instance.Steps[i]
+		}
+	}
+	return nil
+}
+
+func (s *SagaOrchestrationService) recordStepTransition(
+	ctx context.Context,
+	tenantID string,
+	sagaID string,
+	stepExec *sagaContracts.SagaStepExecution,
+	state sagaContracts.StepExecutionState,
+	output map[string]interface{},
+	stepErr error,
+) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	stepExec.ExecutionState = state
+	stepExec.UpdatedAt = now
+
+	if state == sagaContracts.StepStateDispatched {
+		stepExec.AttemptCount++
+		stepExec.StartedAt = now
+	} else if state == sagaContracts.StepStateSucceeded || state == sagaContracts.StepStateFailed || state == sagaContracts.StepStateUnknown || state == sagaContracts.StepStateCompensated {
+		stepExec.CompletedAt = now
+	}
+
+	if output != nil {
+		stepExec.StepOutput = output
+	}
+	if stepErr != nil {
+		stepExec.ErrorMessage = stepErr.Error()
+	}
+
+	_ = s.repo.UpdateStepExecution(ctx, tenantID, sagaID, stepExec)
+}
+
 func (s *SagaOrchestrationService) ExecuteSaga(ctx context.Context, input sagaContracts.ExecuteSagaInput) (*sagaContracts.SagaInstance, error) {
 	ctx, span := s.tracer.StartSpan(ctx, "saga_orchestration.execute")
 	defer span.End()
@@ -134,12 +186,10 @@ func (s *SagaOrchestrationService) ExecuteSaga(ctx context.Context, input sagaCo
 		observability.String("tenant_id", input.TenantID),
 	)
 
-	if err := s.repo.UpdateSagaState(ctx, input.TenantID, sagaID, instance.Version, sagaContracts.SagaStateRunning); err != nil {
+	if err := s.transitionSagaState(ctx, input.TenantID, instance, sagaContracts.SagaStateRunning); err != nil {
 		observability.RecordError(span, err)
 		return nil, err
 	}
-	instance.CurrentState = sagaContracts.SagaStateRunning
-	instance.Version++
 
 	topoResult := workflowRules.ValidateDAGTopology(workflowDef.Steps)
 	if !topoResult.IsValid {
@@ -169,33 +219,19 @@ func (s *SagaOrchestrationService) ExecuteSaga(ctx context.Context, input sagaCo
 		for _, stepID := range executable {
 			inFlightSteps[stepID] = true
 			stepDef := stepMap[stepID]
+			stepExec := s.findStepExecution(instance, stepID)
 
-			var stepExec *sagaContracts.SagaStepExecution
-			for i := range instance.Steps {
-				if instance.Steps[i].StepID == stepID {
-					stepExec = &instance.Steps[i]
-					break
-				}
-			}
-
-			stepExec.ExecutionState = sagaContracts.StepStateDispatched
-			stepExec.AttemptCount++
-			stepExec.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
-			_ = s.repo.UpdateStepExecution(ctx, input.TenantID, sagaID, stepExec)
+			s.recordStepTransition(ctx, input.TenantID, sagaID, stepExec, sagaContracts.StepStateDispatched, nil, nil)
 
 			fwdKey := sagaRules.DeriveForwardIdempotencyKey(sagaID, stepDef.StepID)
 			output, dispatchErr := s.dispatcher.DispatchStep(ctx, stepDef, input.InitialPayload, fwdKey)
-			if dispatchErr != nil {
-				if sagaAdapters.IsAmbiguousError(dispatchErr) {
-					stepExec.ExecutionState = sagaContracts.StepStateUnknown
-				} else {
-					stepExec.ExecutionState = sagaContracts.StepStateFailed
-				}
-				stepExec.ErrorMessage = dispatchErr.Error()
-				stepExec.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
-				_ = s.repo.UpdateStepExecution(ctx, input.TenantID, sagaID, stepExec)
 
-				if stepExec.ExecutionState == sagaContracts.StepStateUnknown {
+			classifiedState := sagaRules.ClassifyStepResult(sagaAdapters.IsAmbiguousError(dispatchErr), dispatchErr)
+
+			if dispatchErr != nil {
+				s.recordStepTransition(ctx, input.TenantID, sagaID, stepExec, classifiedState, nil, dispatchErr)
+
+				if classifiedState == sagaContracts.StepStateUnknown {
 					eligibleForCompensation[stepID] = true
 				}
 
@@ -204,10 +240,7 @@ func (s *SagaOrchestrationService) ExecuteSaga(ctx context.Context, input sagaCo
 				break
 			}
 
-			stepExec.ExecutionState = sagaContracts.StepStateSucceeded
-			stepExec.StepOutput = output
-			stepExec.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
-			_ = s.repo.UpdateStepExecution(ctx, input.TenantID, sagaID, stepExec)
+			s.recordStepTransition(ctx, input.TenantID, sagaID, stepExec, classifiedState, output, nil)
 
 			completedSteps[stepID] = true
 			succeededSteps[stepID] = true
@@ -229,10 +262,8 @@ func (s *SagaOrchestrationService) ExecuteSaga(ctx context.Context, input sagaCo
 				observability.String("error", stepFailureError.Error()),
 			)
 
-			_ = s.repo.UpdateSagaState(ctx, input.TenantID, sagaID, instance.Version, sagaContracts.SagaStateStuckForward)
-			instance.CurrentState = sagaContracts.SagaStateStuckForward
-			instance.Version++
-
+			targetState := sagaRules.EvaluatePostPivotFailureState()
+			_ = s.transitionSagaState(ctx, input.TenantID, instance, targetState)
 			return instance, stepFailureError
 		}
 
@@ -241,69 +272,44 @@ func (s *SagaOrchestrationService) ExecuteSaga(ctx context.Context, input sagaCo
 			observability.String("error", stepFailureError.Error()),
 		)
 
+		drainedSteps, drainCompensationSet := sagaRules.DeriveDrainPlan(instance.Steps, inFlightSteps)
+		instance.Steps = drainedSteps
+		for stepID := range drainCompensationSet {
+			eligibleForCompensation[stepID] = true
+		}
 		for i := range instance.Steps {
-			st := &instance.Steps[i]
-			if st.ExecutionState == sagaContracts.StepStatePending {
-				st.ExecutionState = sagaContracts.StepStateNotStarted
-				_ = s.repo.UpdateStepExecution(ctx, input.TenantID, sagaID, st)
-			} else if inFlightSteps[st.StepID] && st.ExecutionState == sagaContracts.StepStateDispatched {
-				st.ExecutionState = sagaContracts.StepStateUnknown
-				eligibleForCompensation[st.StepID] = true
-				_ = s.repo.UpdateStepExecution(ctx, input.TenantID, sagaID, st)
-			}
+			_ = s.repo.UpdateStepExecution(ctx, input.TenantID, sagaID, &instance.Steps[i])
 		}
 
-		_ = s.repo.UpdateSagaState(ctx, input.TenantID, sagaID, instance.Version, sagaContracts.SagaStateCompensating)
-		instance.CurrentState = sagaContracts.SagaStateCompensating
-		instance.Version++
+		_ = s.transitionSagaState(ctx, input.TenantID, instance, sagaContracts.SagaStateCompensating)
 
 		compensationChain := sagaRules.ComputeReverseCompensationChain(workflowDef.Steps, topoResult.TopologicalOrder, eligibleForCompensation)
 		allCompensated := true
 
 		for _, compStepID := range compensationChain {
 			compDef := stepMap[compStepID]
-			var compExec *sagaContracts.SagaStepExecution
-			for i := range instance.Steps {
-				if instance.Steps[i].StepID == compStepID {
-					compExec = &instance.Steps[i]
-					break
-				}
-			}
+			compExec := s.findStepExecution(instance, compStepID)
 
-			compExec.ExecutionState = sagaContracts.StepStateCompensating
-			_ = s.repo.UpdateStepExecution(ctx, input.TenantID, sagaID, compExec)
+			s.recordStepTransition(ctx, input.TenantID, sagaID, compExec, sagaContracts.StepStateCompensating, nil, nil)
 
 			compKey := sagaRules.DeriveCompensationIdempotencyKey(sagaID, compStepID)
 			compErr := s.dispatcher.CompensateStep(ctx, compDef, input.InitialPayload, compExec.StepOutput, compKey)
 			if compErr != nil {
 				allCompensated = false
-				compExec.ErrorMessage = compErr.Error()
-				_ = s.repo.UpdateStepExecution(ctx, input.TenantID, sagaID, compExec)
+				s.recordStepTransition(ctx, input.TenantID, sagaID, compExec, sagaContracts.StepStateCompensating, nil, compErr)
 				break
 			}
 
-			compExec.ExecutionState = sagaContracts.StepStateCompensated
-			compExec.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
-			_ = s.repo.UpdateStepExecution(ctx, input.TenantID, sagaID, compExec)
+			s.recordStepTransition(ctx, input.TenantID, sagaID, compExec, sagaContracts.StepStateCompensated, nil, nil)
 		}
 
-		if !allCompensated {
-			_ = s.repo.UpdateSagaState(ctx, input.TenantID, sagaID, instance.Version, sagaContracts.SagaStateCompensationStuck)
-			instance.CurrentState = sagaContracts.SagaStateCompensationStuck
-			instance.Version++
-			return instance, stepFailureError
-		}
-
-		_ = s.repo.UpdateSagaState(ctx, input.TenantID, sagaID, instance.Version, sagaContracts.SagaStateFailedCompensated)
-		instance.CurrentState = sagaContracts.SagaStateFailedCompensated
-		instance.Version++
+		terminalCompState := sagaRules.EvaluatePostCompensationState(allCompensated)
+		_ = s.transitionSagaState(ctx, input.TenantID, instance, terminalCompState)
 
 		return instance, stepFailureError
 	}
 
-	_ = s.repo.UpdateSagaState(ctx, input.TenantID, sagaID, instance.Version, sagaContracts.SagaStateCompleted)
-	instance.CurrentState = sagaContracts.SagaStateCompleted
-	instance.Version++
+	_ = s.transitionSagaState(ctx, input.TenantID, instance, sagaContracts.SagaStateCompleted)
 
 	s.logger.Info(ctx, "saga successfully completed",
 		observability.String("saga_id", publicID),

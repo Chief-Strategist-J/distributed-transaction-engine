@@ -4,8 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	sagaContracts "distributed-transaction-engine/src/features/saga-orchestration/contracts"
 	sagaRules "distributed-transaction-engine/src/features/saga-orchestration/domain/rules"
 	workflowContracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
+	"distributed-transaction-engine/src/shared/errors"
 )
 
 func TestRules_FindInitialExecutableSteps(t *testing.T) {
@@ -151,5 +153,79 @@ func TestRules_ComputeReverseCompensationChainWithUnknownStep(t *testing.T) {
 	chain := sagaRules.ComputeReverseCompensationChain(steps, topoOrder, eligible)
 	if len(chain) != 2 || chain[0] != "step_2" || chain[1] != "step_1" {
 		t.Fatalf("expected [step_2, step_1], got %v", chain)
+	}
+}
+
+func TestRules_ClassifyStepResult(t *testing.T) {
+	succ := sagaRules.ClassifyStepResult(false, nil)
+	if succ != sagaContracts.StepStateSucceeded {
+		t.Fatalf("expected SUCCEEDED, got %s", succ)
+	}
+
+	ambig := sagaRules.ClassifyStepResult(true, errors.NewInternalError("timeout"))
+	if ambig != sagaContracts.StepStateUnknown {
+		t.Fatalf("expected UNKNOWN for ambiguous error, got %s", ambig)
+	}
+
+	fail := sagaRules.ClassifyStepResult(false, errors.NewValidationError("400 bad request"))
+	if fail != sagaContracts.StepStateFailed {
+		t.Fatalf("expected FAILED for definitive error, got %s", fail)
+	}
+}
+
+func TestRules_DeriveDrainPlan(t *testing.T) {
+	steps := []sagaContracts.SagaStepExecution{
+		{
+			StepID:         "step_pending",
+			ExecutionState: sagaContracts.StepStatePending,
+		},
+		{
+			StepID:         "step_dispatched_in_flight",
+			ExecutionState: sagaContracts.StepStateDispatched,
+		},
+		{
+			StepID:         "step_succeeded",
+			ExecutionState: sagaContracts.StepStateSucceeded,
+		},
+	}
+
+	inFlight := map[string]bool{"step_dispatched_in_flight": true}
+
+	drained, compSet := sagaRules.DeriveDrainPlan(steps, inFlight)
+	if len(drained) != 3 {
+		t.Fatalf("expected 3 steps, got %d", len(drained))
+	}
+	if drained[0].ExecutionState != sagaContracts.StepStateNotStarted {
+		t.Fatalf("expected PENDING to become NOT_STARTED, got %s", drained[0].ExecutionState)
+	}
+	if drained[1].ExecutionState != sagaContracts.StepStateUnknown {
+		t.Fatalf("expected in-flight DISPATCHED to become UNKNOWN, got %s", drained[1].ExecutionState)
+	}
+	if !compSet["step_dispatched_in_flight"] || !compSet["step_succeeded"] {
+		t.Fatalf("expected step_dispatched_in_flight and step_succeeded in compensationSet, got %v", compSet)
+	}
+	if compSet["step_pending"] {
+		t.Fatalf("step_pending must NOT be in compensationSet")
+	}
+}
+
+func TestRules_EvaluatePostCompensationState(t *testing.T) {
+	if s := sagaRules.EvaluatePostCompensationState(true); s != sagaContracts.SagaStateFailedCompensated {
+		t.Fatalf("expected FAILED_COMPENSATED, got %s", s)
+	}
+	if s := sagaRules.EvaluatePostCompensationState(false); s != sagaContracts.SagaStateCompensationStuck {
+		t.Fatalf("expected COMPENSATION_STUCK, got %s", s)
+	}
+}
+
+func TestRules_ValidateSagaTransition(t *testing.T) {
+	if err := sagaRules.ValidateSagaTransition(sagaContracts.SagaStateCreated, sagaContracts.SagaStateRunning); err != nil {
+		t.Fatalf("expected valid transition from CREATED to RUNNING, got %v", err)
+	}
+	if err := sagaRules.ValidateSagaTransition(sagaContracts.SagaStateRunning, sagaContracts.SagaStateCompleted); err != nil {
+		t.Fatalf("expected valid transition from RUNNING to COMPLETED, got %v", err)
+	}
+	if err := sagaRules.ValidateSagaTransition(sagaContracts.SagaStateCompleted, sagaContracts.SagaStateRunning); err == nil {
+		t.Fatalf("expected error on transition from terminal COMPLETED to RUNNING")
 	}
 }

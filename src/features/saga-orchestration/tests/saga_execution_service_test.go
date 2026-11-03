@@ -17,6 +17,7 @@ import (
 type MockStepDispatcher struct {
 	failOnStepID        string
 	failWithAmbiguous   bool
+	failOnCompStepID    string
 	executedSteps       []string
 	compensatedSteps    []string
 	recordedFwdKeys     []string
@@ -44,6 +45,9 @@ func (m *MockStepDispatcher) CompensateStep(ctx context.Context, stepDef workflo
 	m.compensatedSteps = append(m.compensatedSteps, stepDef.StepID)
 	m.recordedCompKeys = append(m.recordedCompKeys, idempotencyKey)
 	m.receivedCompOutputs = append(m.receivedCompOutputs, output)
+	if stepDef.StepID == m.failOnCompStepID {
+		return errors.NewInternalError("downstream compensation service unavailable")
+	}
 	return nil
 }
 
@@ -420,5 +424,241 @@ func TestSagaService_DistinctIdempotencyKeysAndOutputPropagation(t *testing.T) {
 	}
 	if dispatcher.receivedCompOutputs[0]["charge_id"] != "ch_mock_123" {
 		t.Fatalf("expected charge_id in compensation output payload, got: %v", dispatcher.receivedCompOutputs[0])
+	}
+}
+
+func TestSagaService_PartialCompensationStallsInCompensationStuck(t *testing.T) {
+	ctx := context.Background()
+	tenantID := "tenant_partial_comp_01"
+
+	workflowRepo := workflowAdapters.NewMemoryWorkflowDefinitionsRepositoryAdapter()
+	wfService := workflowService.NewWorkflowDefinitionsService(workflowRepo)
+
+	_, err := wfService.RegisterWorkflow(ctx, workflowContracts.CreateWorkflowDefinitionInput{
+		TenantID:      tenantID,
+		Name:          "partial-comp-flow",
+		Version:       1,
+		Source:        "TEST",
+		ExternalID:    "ext_partial_wf_001",
+		CorrelationID: "c1000000-0000-0000-0000-000000000088",
+		Steps: []workflowContracts.StepDefinition{
+			{
+				StepID:               "step_flight",
+				StepName:             "Flight",
+				IsPivot:              false,
+				ActionType:           "REST",
+				ActionEndpoint:       "http://flight/hold",
+				CompensationAction:   "RELEASE_FLIGHT",
+				CompensationEndpoint: "http://flight/release",
+				TimeoutSeconds:       30,
+				Dependencies:         []string{},
+			},
+			{
+				StepID:               "step_hotel",
+				StepName:             "Hotel",
+				IsPivot:              false,
+				ActionType:           "REST",
+				ActionEndpoint:       "http://hotel/hold",
+				CompensationAction:   "RELEASE_HOTEL",
+				CompensationEndpoint: "http://hotel/release",
+				TimeoutSeconds:       30,
+				Dependencies:         []string{},
+			},
+			{
+				StepID:               "step_charge",
+				StepName:             "Charge",
+				IsPivot:              true,
+				ActionType:           "REST",
+				ActionEndpoint:       "http://payment/charge",
+				TimeoutSeconds:       30,
+				Dependencies:         []string{"step_flight", "step_hotel"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("workflow registration failed: %v", err)
+	}
+
+	sagaRepo := sagaAdapters.NewMemorySagaRepositoryAdapter()
+	dispatcher := &MockStepDispatcher{
+		failOnStepID:     "step_charge",
+		failOnCompStepID: "step_flight",
+	}
+	svc := sagaService.NewSagaOrchestrationService(sagaRepo, workflowRepo, dispatcher)
+
+	instance, err := svc.ExecuteSaga(ctx, sagaContracts.ExecuteSagaInput{
+		TenantID:        tenantID,
+		WorkflowName:    "partial-comp-flow",
+		WorkflowVersion: 1,
+		Source:          "CHAOS_TEST",
+		ExternalID:      "ext_partial_001",
+		CorrelationID:   "c2000000-0000-0000-0000-000000000088",
+		InitialPayload:  map[string]interface{}{"booking_id": "b_123"},
+	})
+	if err == nil {
+		t.Fatalf("expected step_charge failure")
+	}
+
+	if instance.CurrentState != sagaContracts.SagaStateCompensationStuck {
+		t.Fatalf("expected saga state COMPENSATION_STUCK, got %s", instance.CurrentState)
+	}
+}
+
+func TestSagaService_AsymmetricDiamondDAGWithMixedErrorsAndDrain(t *testing.T) {
+	ctx := context.Background()
+	tenantID := "tenant_diamond_01"
+
+	workflowRepo := workflowAdapters.NewMemoryWorkflowDefinitionsRepositoryAdapter()
+	wfService := workflowService.NewWorkflowDefinitionsService(workflowRepo)
+
+	_, err := wfService.RegisterWorkflow(ctx, workflowContracts.CreateWorkflowDefinitionInput{
+		TenantID:      tenantID,
+		Name:          "diamond-flow",
+		Version:       1,
+		Source:        "TEST",
+		ExternalID:    "ext_diamond_wf_001",
+		CorrelationID: "c1000000-0000-0000-0000-000000000099",
+		Steps: []workflowContracts.StepDefinition{
+			{
+				StepID:               "step_root",
+				StepName:             "Root Step",
+				IsPivot:              false,
+				ActionType:           "REST",
+				ActionEndpoint:       "http://service/root",
+				CompensationAction:   "UNDO_ROOT",
+				CompensationEndpoint: "http://service/undo-root",
+				TimeoutSeconds:       30,
+				Dependencies:         []string{},
+			},
+			{
+				StepID:               "step_branch_fail",
+				StepName:             "Branch Fail Step",
+				IsPivot:              false,
+				ActionType:           "REST",
+				ActionEndpoint:       "http://service/branch-fail",
+				CompensationAction:   "UNDO_BRANCH",
+				CompensationEndpoint: "http://service/undo-branch",
+				TimeoutSeconds:       30,
+				Dependencies:         []string{"step_root"},
+			},
+			{
+				StepID:               "step_terminal_join",
+				StepName:             "Terminal Join",
+				IsPivot:              true,
+				ActionType:           "REST",
+				ActionEndpoint:       "http://service/join",
+				TimeoutSeconds:       30,
+				Dependencies:         []string{"step_branch_fail"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("workflow registration failed: %v", err)
+	}
+
+	sagaRepo := sagaAdapters.NewMemorySagaRepositoryAdapter()
+	dispatcher := &MockStepDispatcher{
+		failOnStepID:      "step_branch_fail",
+		failWithAmbiguous: true,
+	}
+	svc := sagaService.NewSagaOrchestrationService(sagaRepo, workflowRepo, dispatcher)
+
+	instance, err := svc.ExecuteSaga(ctx, sagaContracts.ExecuteSagaInput{
+		TenantID:        tenantID,
+		WorkflowName:    "diamond-flow",
+		WorkflowVersion: 1,
+		Source:          "CHAOS_TEST",
+		ExternalID:      "ext_diamond_001",
+		CorrelationID:   "c2000000-0000-0000-0000-000000000099",
+		InitialPayload:  map[string]interface{}{"order_id": "ord_999"},
+	})
+	if err == nil {
+		t.Fatalf("expected step_branch_fail ambiguous error")
+	}
+
+	if instance.CurrentState != sagaContracts.SagaStateFailedCompensated {
+		t.Fatalf("expected saga state FAILED_COMPENSATED, got %s", instance.CurrentState)
+	}
+
+	var joinStepExec *sagaContracts.SagaStepExecution
+	for i := range instance.Steps {
+		if instance.Steps[i].StepID == "step_terminal_join" {
+			joinStepExec = &instance.Steps[i]
+			break
+		}
+	}
+	if joinStepExec == nil {
+		t.Fatalf("expected step_terminal_join in instance steps")
+	}
+	if joinStepExec.ExecutionState != sagaContracts.StepStateNotStarted {
+		t.Fatalf("expected unreached join step to be NOT_STARTED, got %s", joinStepExec.ExecutionState)
+	}
+}
+
+func TestSagaService_ConflictingPayloadExternalIDRejection(t *testing.T) {
+	ctx := context.Background()
+	tenantID := "tenant_conflict_01"
+
+	workflowRepo := workflowAdapters.NewMemoryWorkflowDefinitionsRepositoryAdapter()
+	wfService := workflowService.NewWorkflowDefinitionsService(workflowRepo)
+
+	_, err := wfService.RegisterWorkflow(ctx, workflowContracts.CreateWorkflowDefinitionInput{
+		TenantID:      tenantID,
+		Name:          "conflict-wf",
+		Version:       1,
+		Source:        "TEST",
+		ExternalID:    "ext_conflict_wf_001",
+		CorrelationID: "c1000000-0000-0000-0000-000000000077",
+		Steps: []workflowContracts.StepDefinition{
+			{
+				StepID:               "simple_step",
+				StepName:             "Simple",
+				IsPivot:              false,
+				ActionType:           "REST",
+				ActionEndpoint:       "http://service/simple",
+				CompensationAction:   "UNDO_SIMPLE",
+				CompensationEndpoint: "http://service/undo-simple",
+				TimeoutSeconds:       30,
+				Dependencies:         []string{},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("workflow registration failed: %v", err)
+	}
+
+	sagaRepo := sagaAdapters.NewMemorySagaRepositoryAdapter()
+	dispatcher := &MockStepDispatcher{}
+	svc := sagaService.NewSagaOrchestrationService(sagaRepo, workflowRepo, dispatcher)
+
+	_, err = svc.ExecuteSaga(ctx, sagaContracts.ExecuteSagaInput{
+		TenantID:        tenantID,
+		WorkflowName:    "conflict-wf",
+		WorkflowVersion: 1,
+		Source:          "CONFLICT_TEST",
+		ExternalID:      "ext_unique_order_555",
+		CorrelationID:   "c2000000-0000-0000-0000-000000000077",
+		InitialPayload:  map[string]interface{}{"price": 100},
+	})
+	if err != nil {
+		t.Fatalf("first execution failed: %v", err)
+	}
+
+	_, conflictErr := svc.ExecuteSaga(ctx, sagaContracts.ExecuteSagaInput{
+		TenantID:        tenantID,
+		WorkflowName:    "conflict-wf",
+		WorkflowVersion: 1,
+		Source:          "CONFLICT_TEST",
+		ExternalID:      "ext_unique_order_555",
+		CorrelationID:   "c2000000-0000-0000-0000-000000000078",
+		InitialPayload:  map[string]interface{}{"price": 99999},
+	})
+	if conflictErr == nil {
+		t.Fatalf("expected conflict error on altered payload with identical external_id")
+	}
+
+	appErr, ok := conflictErr.(*errors.ApplicationError)
+	if !ok || appErr.StatusCode != 409 {
+		t.Fatalf("expected HTTP 409 Conflict, got: %v", conflictErr)
 	}
 }
