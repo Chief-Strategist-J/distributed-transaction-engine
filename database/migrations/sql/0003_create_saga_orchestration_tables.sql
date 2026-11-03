@@ -70,3 +70,4 @@ CREATE TABLE IF NOT EXISTS saga_step_executions (
 CREATE INDEX IF NOT EXISTS idx_saga_instances_state ON saga_instances (tenant_id, current_state);
 CREATE INDEX IF NOT EXISTS idx_saga_instances_workflow ON saga_instances (tenant_id, workflow_definition_id, workflow_version);
 CREATE INDEX IF NOT EXISTS idx_saga_step_executions_state ON saga_step_executions (tenant_id, saga_id, execution_state);
+

@@ -102,3 +102,4 @@ func TestRules_ComputeReverseCompensationChain(t *testing.T) {
 		t.Fatalf("expected reverse topological order [reserve_shipping, reserve_inventory], got %v", compChain)
 	}
 }
+

@@ -132,3 +132,4 @@ func TestEndToEnd_SagaHTTPExecutionLifecycle(t *testing.T) {
 		t.Fatalf("failed to retrieve saga, expected 200 got %d: %s", getRec.Code, getRec.Body.String())
 	}
 }
+

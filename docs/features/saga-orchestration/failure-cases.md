@@ -29,3 +29,4 @@ If Step 3 fails, triggering rollback of Step 2 and Step 1, what happens if the r
   1. The saga stays in `COMPENSATING` state.
   2. The failed compensation step remains in `COMPENSATING` or `FAILED_COMPENSATION` with an incremented attempt counter.
   3. The orchestrator never marks the entire saga as `FAILED` (terminal) until all executed non-pivot steps have confirmed successful compensation.
+

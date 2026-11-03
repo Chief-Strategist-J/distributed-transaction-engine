@@ -92,3 +92,4 @@ func (d *HttpStepDispatcherAdapter) CompensateStep(ctx context.Context, stepDef 
 	}
 	return nil
 }
+

@@ -6,3 +6,4 @@
 
 DROP TABLE IF EXISTS saga_step_executions CASCADE;
 DROP TABLE IF EXISTS saga_instances CASCADE;
+

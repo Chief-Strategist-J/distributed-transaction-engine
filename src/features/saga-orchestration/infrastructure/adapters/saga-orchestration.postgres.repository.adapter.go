@@ -315,3 +315,4 @@ func (a *PostgresSagaRepositoryAdapter) scanSagaWithSteps(ctx context.Context, r
 
 	return &s, nil
 }
+
