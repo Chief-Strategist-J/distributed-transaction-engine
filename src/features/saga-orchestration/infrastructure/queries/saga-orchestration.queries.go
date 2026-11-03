@@ -64,7 +64,7 @@ SET lease_owner = $1, lease_until = $2, fencing_token = fencing_token + 1, updat
 WHERE id = (
     SELECT id FROM saga_instances
     WHERE current_state IN ('CREATED', 'RUNNING', 'ROLLING_FORWARD', 'COMPENSATING')
-      AND (lease_owner = '' OR lease_until IS NULL OR lease_until < $3 OR lease_owner = $1)
+      AND (lease_owner = '' OR lease_until IS NULL OR lease_owner = $1)
     ORDER BY created_at ASC
     FOR UPDATE SKIP LOCKED
     LIMIT 1

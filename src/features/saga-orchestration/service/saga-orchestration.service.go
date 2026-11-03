@@ -444,6 +444,16 @@ func (s *SagaOrchestrationService) CancelSaga(ctx context.Context, tenantID stri
 		}
 	}
 
+	if instance.CurrentState == sagaContracts.SagaStateCreated {
+		_ = s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCancelled)
+		_ = s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken)
+		s.logger.Info(ctx, "saga successfully cancelled before execution started",
+			observability.String("saga_id", instance.PublicID),
+			observability.String("tenant_id", instance.TenantID),
+		)
+		return instance, nil
+	}
+
 	_ = s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCompensating)
 
 	drainedSteps, compSet := sagaRules.DeriveDrainPlan(instance.Steps, map[string]bool{})

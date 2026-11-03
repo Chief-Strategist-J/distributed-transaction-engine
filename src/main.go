@@ -14,8 +14,13 @@ import (
 
 	_ "github.com/lib/pq"
 
+	"github.com/google/uuid"
+
 	"distributed-transaction-engine/src/api/rest/v1/handlers"
 	"distributed-transaction-engine/src/api/rest/v1/routers"
+	crashRecovery "distributed-transaction-engine/src/features/crash-recovery"
+	crashRecoveryContracts "distributed-transaction-engine/src/features/crash-recovery/contracts"
+	crashRecoveryRules "distributed-transaction-engine/src/features/crash-recovery/domain/rules"
 	sagaAdapters "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/adapters"
 	sagaPorts "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/ports"
 	sagaService "distributed-transaction-engine/src/features/saga-orchestration/service"
@@ -89,7 +94,7 @@ func initSagaFeature(
 	cfg *config.AppConfig,
 	repo sagaPorts.SagaRepositoryPort,
 	workflowRepo workflowPorts.WorkflowDefinitionsRepositoryPort,
-) *routers.SagaRouter {
+) (*routers.SagaRouter, *sagaService.SagaOrchestrationService) {
 	dispatcher := sagaAdapters.NewHttpStepDispatcherAdapter()
 	svc := sagaService.NewSagaOrchestrationService(repo, workflowRepo, dispatcher)
 	handler := handlers.NewSagaHandler(svc)
@@ -98,7 +103,32 @@ func initSagaFeature(
 	poller := sagaService.NewSagaPoller(repo, svc, cfg.Poller.WorkerID, cfg.LeaseDuration())
 	go poller.Start(ctx, cfg.PollInterval())
 
-	return router
+	return router, svc
+}
+
+func initCrashRecoveryFeature(
+	ctx context.Context,
+	cfg *config.AppConfig,
+	db *sql.DB,
+	sagaSvc *sagaService.SagaOrchestrationService,
+) {
+	if db == nil {
+		return
+	}
+	bootUUID := uuid.New().String()
+	recoveryCfg := crashRecoveryContracts.CrashRecoveryConfig{
+		IncarnationID:      crashRecoveryRules.BuildIncarnationID(cfg.Poller.WorkerID, bootUUID),
+		ScanInterval:       2 * time.Second,
+		BatchSize:          50,
+		LeaseDuration:      cfg.LeaseDuration(),
+		MaxTakeovers:       5,
+		HeartbeatInterval:  10 * time.Second,
+		SelfFenceMargin:    5 * time.Second,
+		MaxConcurrentOwned: 100,
+	}
+	repo := crashRecovery.NewPostgresAdapter(db)
+	recoverySvc := crashRecovery.NewService(recoveryCfg, repo, sagaSvc)
+	go recoverySvc.Start(ctx)
 }
 
 func buildAdminServer(cfg *config.AppConfig, db *sql.DB) *http.Server {
@@ -212,7 +242,8 @@ func main() {
 	db, sagaRepo := initDatabase(rootCtx, cfg)
 	workflowRepo, workflowRouter := initWorkflowFeature(db)
 	stateRouter := initStateFeature(db)
-	sagaRouter := initSagaFeature(rootCtx, cfg, sagaRepo, workflowRepo)
+	sagaRouter, sagaSvc := initSagaFeature(rootCtx, cfg, sagaRepo, workflowRepo)
+	initCrashRecoveryFeature(rootCtx, cfg, db, sagaSvc)
 
 	adminServer := buildAdminServer(cfg, db)
 	publicServer := buildPublicServer(cfg, sagaRouter, stateRouter, workflowRouter)

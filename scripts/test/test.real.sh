@@ -611,3 +611,101 @@ if [[ "${CANCEL_FINAL_STATE}" != "CANCELLED" ]]; then
     exit 1
 fi
 echo "[PASS] Saga successfully cancelled and transitioned to CANCELLED state (HTTP 200)"
+
+echo "================================================================"
+echo " 10. SCENARIO 7: CRASH RECOVERY & EXPIRED LEASE TAKEOVER"
+echo "================================================================"
+RECOVER_WF_NAME="recovery_flow_${TIMESTAMP}"
+RECOVER_WF_CORR_ID=$(generate_uuid)
+RECOVER_WF_PAYLOAD=$(cat << EOF
+{
+  "tenantId": "default",
+  "name": "${RECOVER_WF_NAME}",
+  "version": 1,
+  "source": "ci_recovery_test",
+  "externalId": "ext_rec_wf_${TIMESTAMP}",
+  "correlationId": "${RECOVER_WF_CORR_ID}",
+  "steps": [
+    {
+      "stepId": "book_flight",
+      "stepName": "Book Flight Ticket",
+      "isPivot": true,
+      "actionType": "HTTP",
+      "actionEndpoint": "http://${DOWNSTREAM_HOST}:${MOCK_PORT}/reserve",
+      "timeoutSeconds": 30,
+      "maxRetries": 1,
+      "dependencies": []
+    }
+  ]
+}
+EOF
+)
+
+RECOVER_WF_RESP=$(curl -s -w "\n%{http_code}" -X POST "http://127.0.0.1:${PORT}/api/v1/workflow-definitions" \
+    -H "Content-Type: application/json" \
+    -d "${RECOVER_WF_PAYLOAD}")
+RECOVER_WF_CODE=$(echo "${RECOVER_WF_RESP}" | tail -n1)
+if [[ "${RECOVER_WF_CODE}" != "201" ]]; then
+    echo "FAIL: Recovery workflow registration returned HTTP ${RECOVER_WF_CODE}"
+    exit 1
+fi
+
+RECOVER_SAGA_CORR_ID=$(generate_uuid)
+EXEC_RECOVER_PAYLOAD=$(cat << EOF
+{
+  "tenantId": "default",
+  "workflowName": "${RECOVER_WF_NAME}",
+  "workflowVersion": 1,
+  "source": "ci_recovery_test",
+  "externalId": "ext_rec_saga_${TIMESTAMP}",
+  "correlationId": "${RECOVER_SAGA_CORR_ID}",
+  "initialPayload": {"passenger": "Alice"}
+}
+EOF
+)
+
+EXEC_RECOVER_RESP=$(curl -s -i -X POST "http://127.0.0.1:${PORT}/api/v1/sagas/execute" \
+    -H "Content-Type: application/json" \
+    -d "${EXEC_RECOVER_PAYLOAD}")
+RECOVER_LOCATION=$(echo "${EXEC_RECOVER_RESP}" | grep -i "^Location:" | tr -d '\r' | awk '{print $2}')
+RECOVER_SAGA_ID=$(basename "${RECOVER_LOCATION}")
+
+echo "[PASS] Submitted saga for crash recovery test: ${RECOVER_SAGA_ID}"
+
+# Artificially simulate dead worker crash by setting expired lease in Postgres
+docker exec dist_tx-db-1 psql -U "${DB_USER}" -d "${DB_NAME}" -c \
+    "UPDATE saga_instances SET lease_owner = 'crashed_pod_dead_999', lease_until = NOW() - INTERVAL '10 seconds', current_state = 'RUNNING' WHERE public_id = '${RECOVER_SAGA_ID}';" >/dev/null 2>&1 || true
+
+echo -n "Waiting for CrashRecoveryService to sweep and reclaim orphaned saga..."
+RECOVERED=0
+for _ in $(seq 1 30); do
+    STATUS_RESP=$(curl -s "http://127.0.0.1:${PORT}/api/v1/sagas/${RECOVER_SAGA_ID}?tenantId=default")
+    REC_STATE=$(echo "${STATUS_RESP}" | json_extract "['data']['currentState']" 2>/dev/null || echo "UNKNOWN")
+    if [[ "${REC_STATE}" == "COMPLETED" ]]; then
+        RECOVERED=1
+        echo " Reclaimed and Completed."
+        break
+    fi
+    sleep 1
+done
+
+if [[ ${RECOVERED} -ne 1 ]]; then
+    echo " TIMEOUT waiting for crash recovery! Final state: ${REC_STATE}"
+    tail -n 50 "${TMP_DIR}/engine.log"
+    exit 1
+fi
+
+RECOVERY_DB_CHECK=$(docker exec dist_tx-db-1 psql -U "${DB_USER}" -d "${DB_NAME}" -t -A -c \
+    "SELECT current_state, takeover_count, fencing_token FROM saga_instances WHERE public_id = '${RECOVER_SAGA_ID}';" 2>/dev/null || echo "")
+
+if [[ -n "${RECOVERY_DB_CHECK}" ]]; then
+    REC_DB_STATE=$(echo "${RECOVERY_DB_CHECK}" | cut -d '|' -f 1)
+    REC_TAKEOVER=$(echo "${RECOVERY_DB_CHECK}" | cut -d '|' -f 2)
+    REC_FENCING=$(echo "${RECOVERY_DB_CHECK}" | cut -d '|' -f 3)
+    if [[ "${REC_DB_STATE}" == "COMPLETED" && ${REC_TAKEOVER} -ge 1 ]]; then
+        echo "[PASS] PostgreSQL direct assertion verified: state=COMPLETED, takeoverCount=${REC_TAKEOVER}, fencingToken=${REC_FENCING} (reclaimed from crashed worker)"
+    else
+        echo "FAIL: Crash recovery DB check mismatch: state=${REC_DB_STATE}, takeoverCount=${REC_TAKEOVER}, fencing=${REC_FENCING}"
+        exit 1
+    fi
+fi
