@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"strings"
 
 	contracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
 	"distributed-transaction-engine/src/shared/errors"
@@ -73,9 +74,10 @@ func ValidateDAGTopology(steps []contracts.StepDefinition) ValidationResult {
 	}
 
 	if len(topologicalOrder) != len(steps) {
+		cyclePath := extractCyclePath(steps, adjList, inDegree)
 		return ValidationResult{
 			IsValid: false,
-			Error:   errors.NewConflictError("cyclic dependency detected in workflow DAG definition"),
+			Error:   errors.NewConflictError(fmt.Sprintf("cyclic dependency detected in workflow DAG definition: %s", cyclePath)),
 		}
 	}
 
@@ -91,6 +93,67 @@ func ValidateDAGTopology(steps []contracts.StepDefinition) ValidationResult {
 		TopologicalOrder: topologicalOrder,
 		Error:            nil,
 	}
+}
+
+func extractCyclePath(steps []contracts.StepDefinition, adjList map[string][]string, inDegree map[string]int) string {
+	cycleCandidates := make(map[string]bool)
+	for stepID, deg := range inDegree {
+		if deg > 0 {
+			cycleCandidates[stepID] = true
+		}
+	}
+
+	visited := make(map[string]int)
+	parent := make(map[string]string)
+	var cycleStart, cycleEnd string
+
+	var dfs func(u string) bool
+	dfs = func(u string) bool {
+		visited[u] = 1
+		for _, v := range adjList[u] {
+			if !cycleCandidates[v] {
+				continue
+			}
+			if visited[v] == 1 {
+				cycleStart = v
+				cycleEnd = u
+				return true
+			}
+			if visited[v] == 0 {
+				parent[v] = u
+				if dfs(v) {
+					return true
+				}
+			}
+		}
+		visited[u] = 2
+		return false
+	}
+
+	for stepID := range cycleCandidates {
+		if visited[stepID] == 0 {
+			if dfs(stepID) {
+				break
+			}
+		}
+	}
+
+	if cycleStart == "" {
+		return "cycle detected"
+	}
+
+	var path []string
+	curr := cycleEnd
+	path = append(path, curr)
+	for curr != cycleStart && curr != "" {
+		curr = parent[curr]
+		if curr != "" {
+			path = append([]string{curr}, path...)
+		}
+	}
+	path = append(path, cycleStart)
+
+	return fmt.Sprintf("[%s]", strings.Join(path, " -> "))
 }
 
 func countWeaklyConnectedComponents(steps []contracts.StepDefinition, undirectedAdj map[string][]string) int {

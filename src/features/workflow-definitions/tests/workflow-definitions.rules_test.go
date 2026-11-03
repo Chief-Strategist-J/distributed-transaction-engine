@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"strings"
 	"testing"
 
 	contracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
@@ -218,5 +219,83 @@ func TestWorkflowRules_MultiplePivotsRejected(t *testing.T) {
 	err := contracts.ValidateCreateWorkflowDefinitionInput(input)
 	if err == nil {
 		t.Fatalf("expected multiple pivots rejection, got nil")
+	}
+}
+
+func TestWorkflowRules_CyclePathDetailedReporting(t *testing.T) {
+	steps := []contracts.StepDefinition{
+		{
+			StepID:               "step_alpha",
+			StepName:             "Alpha",
+			IsPivot:              false,
+			ActionType:           "REST",
+			ActionEndpoint:       "http://service/alpha",
+			CompensationAction:   "UNDO_ALPHA",
+			CompensationEndpoint: "http://service/undo_alpha",
+			TimeoutSeconds:       30,
+			Dependencies:         []string{"step_beta"},
+		},
+		{
+			StepID:               "step_beta",
+			StepName:             "Beta",
+			IsPivot:              false,
+			ActionType:           "REST",
+			ActionEndpoint:       "http://service/beta",
+			CompensationAction:   "UNDO_BETA",
+			CompensationEndpoint: "http://service/undo_beta",
+			TimeoutSeconds:       30,
+			Dependencies:         []string{"step_alpha"},
+		},
+	}
+
+	result := rules.ValidateDAGTopology(steps)
+	if result.IsValid {
+		t.Fatalf("expected cycle error, but result was valid")
+	}
+
+	errMsg := result.Error.Error()
+	if !strings.Contains(errMsg, "step_alpha") || !strings.Contains(errMsg, "step_beta") {
+		t.Fatalf("expected error message to contain cycle participants, got: %s", errMsg)
+	}
+}
+
+func TestWorkflowRules_SSRFRejection(t *testing.T) {
+	cases := []struct {
+		name     string
+		endpoint string
+	}{
+		{name: "localhost", endpoint: "http://localhost:8080/charge"},
+		{name: "127.0.0.1 loopback", endpoint: "http://127.0.0.1:9090/charge"},
+		{name: "AWS metadata link-local", endpoint: "http://169.254.169.254/latest/meta-data"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := contracts.CreateWorkflowDefinitionInput{
+				TenantID:      "tenant_test",
+				Name:          "ssrf-flow",
+				Version:       1,
+				Source:        "TEST",
+				ExternalID:    "ext_1",
+				CorrelationID: "c0000000-0000-0000-0000-000000000001",
+				Steps: []contracts.StepDefinition{
+					{
+						StepID:               "step_charge",
+						StepName:             "Charge",
+						IsPivot:              false,
+						ActionType:           "REST",
+						ActionEndpoint:       tc.endpoint,
+						CompensationAction:   "UNDO",
+						CompensationEndpoint: "http://service/undo",
+						TimeoutSeconds:       30,
+						Dependencies:         []string{},
+					},
+				},
+			}
+			err := contracts.ValidateCreateWorkflowDefinitionInput(input)
+			if err == nil {
+				t.Fatalf("expected SSRF error for %s, got nil", tc.endpoint)
+			}
+		})
 	}
 }

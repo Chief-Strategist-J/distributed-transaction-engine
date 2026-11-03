@@ -11,6 +11,7 @@ import (
 	"distributed-transaction-engine/src/api/rest/v1/routers"
 	workflowDefinitions "distributed-transaction-engine/src/features/workflow-definitions"
 	contracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
+	"distributed-transaction-engine/src/infra/observability"
 )
 
 func TestEndToEnd_WorkflowDefinitionsHTTPProtocolLifecycle(t *testing.T) {
@@ -21,6 +22,7 @@ func TestEndToEnd_WorkflowDefinitionsHTTPProtocolLifecycle(t *testing.T) {
 
 	mux := http.NewServeMux()
 	router.RegisterRoutes(mux)
+	wrappedMux := observability.ObservabilityMiddleware("workflow-definitions-test", mux)
 
 	tenantID := "tenant_e2e_01"
 	correlationID := "c2000000-0000-0000-0000-000000000001"
@@ -79,12 +81,19 @@ func TestEndToEnd_WorkflowDefinitionsHTTPProtocolLifecycle(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-tenant-id", tenantID)
 	req.Header.Set("x-correlation-id", correlationID)
+	req.Header.Set("Idempotency-Key", "idemp_test_key_001")
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	wrappedMux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected HTTP 201 Created, got %d: %s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("X-Trace-Id") == "" {
+		t.Fatalf("expected X-Trace-Id header in response")
+	}
+	if w.Header().Get("X-Span-Id") == "" {
+		t.Fatalf("expected X-Span-Id header in response")
 	}
 
 	var createResp contracts.WorkflowDefinitionResponse
@@ -94,13 +103,16 @@ func TestEndToEnd_WorkflowDefinitionsHTTPProtocolLifecycle(t *testing.T) {
 	if !createResp.Success || createResp.Data == nil {
 		t.Fatalf("create failed in envelope: %+v", createResp)
 	}
+	if createResp.Meta["idempotencyKey"] != "idemp_test_key_001" {
+		t.Fatalf("expected idempotencyKey in response meta, got %v", createResp.Meta["idempotencyKey"])
+	}
 	createdID := createResp.Data.ID
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/workflow-definitions/"+createdID, nil)
 	getReq.Header.Set("x-tenant-id", tenantID)
 
 	getRecorder := httptest.NewRecorder()
-	mux.ServeHTTP(getRecorder, getReq)
+	wrappedMux.ServeHTTP(getRecorder, getReq)
 
 	if getRecorder.Code != http.StatusOK {
 		t.Fatalf("expected HTTP 200 OK on GET, got %d: %s", getRecorder.Code, getRecorder.Body.String())
@@ -110,7 +122,7 @@ func TestEndToEnd_WorkflowDefinitionsHTTPProtocolLifecycle(t *testing.T) {
 	listReq.Header.Set("x-tenant-id", tenantID)
 
 	listRecorder := httptest.NewRecorder()
-	mux.ServeHTTP(listRecorder, listReq)
+	wrappedMux.ServeHTTP(listRecorder, listReq)
 
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("expected HTTP 200 OK on List, got %d: %s", listRecorder.Code, listRecorder.Body.String())
@@ -125,6 +137,7 @@ func TestEndToEnd_HTTPRejectionOnCyclicPayload(t *testing.T) {
 
 	mux := http.NewServeMux()
 	router.RegisterRoutes(mux)
+	wrappedMux := observability.ObservabilityMiddleware("workflow-definitions-test", mux)
 
 	cyclicPayload := contracts.CreateWorkflowDefinitionInput{
 		TenantID:      "tenant_cycle_http",
@@ -164,10 +177,13 @@ func TestEndToEnd_HTTPRejectionOnCyclicPayload(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	mux.ServeHTTP(w, req)
+	wrappedMux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusConflict {
 		t.Fatalf("expected HTTP 409 Conflict for cyclic DAG, got %d: %s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("X-Trace-Id") == "" {
+		t.Fatalf("expected X-Trace-Id header on rejection response")
 	}
 }
 

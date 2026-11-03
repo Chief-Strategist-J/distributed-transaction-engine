@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -55,6 +57,9 @@ func ValidateCreateWorkflowDefinitionInput(input CreateWorkflowDefinitionInput) 
 		if strings.TrimSpace(step.ActionType) == "" || strings.TrimSpace(step.ActionEndpoint) == "" {
 			return errors.NewValidationError(fmt.Sprintf("actionType and actionEndpoint required for step: %s", step.StepID))
 		}
+		if err := validateEndpointSecurity(step.ActionEndpoint); err != nil {
+			return err
+		}
 		if step.TimeoutSeconds < 1 || step.TimeoutSeconds > 86400 {
 			return errors.NewValidationError(fmt.Sprintf("timeoutSeconds must be between 1 and 86400 for step: %s", step.StepID))
 		}
@@ -71,6 +76,9 @@ func ValidateCreateWorkflowDefinitionInput(input CreateWorkflowDefinitionInput) 
 			if strings.TrimSpace(step.CompensationAction) == "" || strings.TrimSpace(step.CompensationEndpoint) == "" {
 				return errors.NewValidationError(fmt.Sprintf("non-pivot step %s must declare compensation action and endpoint", step.StepID))
 			}
+			if err := validateEndpointSecurity(step.CompensationEndpoint); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -78,6 +86,30 @@ func ValidateCreateWorkflowDefinitionInput(input CreateWorkflowDefinitionInput) 
 		return errors.NewValidationError("workflow cannot declare more than one pivot step")
 	}
 
+	return nil
+}
+
+func validateEndpointSecurity(endpoint string) error {
+	trimmed := strings.TrimSpace(endpoint)
+	if trimmed == "" {
+		return nil
+	}
+	if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
+		u, err := url.Parse(trimmed)
+		if err != nil {
+			return errors.NewValidationError(fmt.Sprintf("malformed endpoint URL: %s", trimmed))
+		}
+		host := strings.ToLower(u.Hostname())
+		if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "169.254.169.254" {
+			return errors.NewValidationError(fmt.Sprintf("prohibited loopback or link-local address in endpoint: %s", trimmed))
+		}
+		ip := net.ParseIP(host)
+		if ip != nil {
+			if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+				return errors.NewValidationError(fmt.Sprintf("prohibited loopback or link-local IP in endpoint: %s", trimmed))
+			}
+		}
+	}
 	return nil
 }
 
@@ -95,4 +127,3 @@ func ComputeSpecHash(name string, steps []StepDefinition) (string, error) {
 	hash := sha256.Sum256(canonicalData)
 	return hex.EncodeToString(hash[:]), nil
 }
-

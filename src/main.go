@@ -17,6 +17,7 @@ import (
 	sagaService "distributed-transaction-engine/src/features/saga-orchestration/service"
 	transactionStateMachine "distributed-transaction-engine/src/features/transaction-state-machine"
 	workflowDefinitions "distributed-transaction-engine/src/features/workflow-definitions"
+	"distributed-transaction-engine/src/infra/observability"
 )
 
 type Config struct {
@@ -81,9 +82,11 @@ func main() {
 	stateRouter.RegisterRoutes(publicMux)
 	workflowRouter.RegisterRoutes(publicMux)
 
+	publicHandler := observability.ObservabilityMiddleware("distributed-transaction-engine", publicMux)
+
 	publicServer := &http.Server{
 		Addr:         cfg.PublicAddr,
-		Handler:      publicMux,
+		Handler:      publicHandler,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  75 * time.Second,
