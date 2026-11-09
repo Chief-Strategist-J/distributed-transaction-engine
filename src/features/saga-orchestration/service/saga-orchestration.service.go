@@ -257,6 +257,25 @@ func (s *SagaOrchestrationService) ProcessSaga(ctx context.Context, instance *sa
 		for _, stepID := range executable {
 			stepDef := stepMap[stepID]
 			stepExec := s.findStepExecution(instance, stepID)
+			if stepExec == nil {
+				now := time.Now().UTC()
+				newExec := sagaContracts.SagaStepExecution{
+					ID:             uuid.New().String(),
+					PublicID:       "stx_" + generateRandomAlpha(26),
+					TenantID:       instance.TenantID,
+					SagaID:         instance.ID,
+					StepID:         stepID,
+					ExecutionState: sagaContracts.StepStatePending,
+					AttemptCount:   0,
+					StepInput:      instance.InitialPayload,
+					StepOutput:     make(map[string]interface{}),
+					IdempotencyKey: fmt.Sprintf("%s:%s:1", instance.ID, stepID),
+					CreatedAt:      now.Format(time.RFC3339),
+					UpdatedAt:      now.Format(time.RFC3339),
+				}
+				instance.Steps = append(instance.Steps, newExec)
+				stepExec = &instance.Steps[len(instance.Steps)-1]
+			}
 
 			if !sagaRules.IsRetryEligible(stepExec.NextAttemptAt) {
 				continue

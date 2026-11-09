@@ -46,6 +46,10 @@ func (s *CrashRecoveryService) GetOrphans(ctx context.Context, limit int) ([]con
 		limit = s.cfg.BatchSize
 	}
 
+	if s.repo == nil {
+		return []contracts.OrphanCandidate{}, nil
+	}
+
 	orphans, err := s.repo.FindExpiredLeases(ctx, limit)
 	if err != nil {
 		observability.RecordError(span, err)
@@ -87,6 +91,10 @@ func (s *CrashRecoveryService) Start(ctx context.Context) {
 func (s *CrashRecoveryService) SweepAndReclaim(ctx context.Context) (int, error) {
 	ctx, span := s.tracer.StartSpan(ctx, "crash_recovery.sweep")
 	defer span.End()
+
+	if s.repo == nil {
+		return 0, nil
+	}
 
 	orphans, err := s.repo.FindExpiredLeases(ctx, s.cfg.BatchSize)
 	if err != nil {

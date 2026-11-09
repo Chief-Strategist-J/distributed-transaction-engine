@@ -3,6 +3,194 @@ info:
   title: distributed-transaction-engine API
   version: 1.0.0
 paths:
+  /api/v1/compensation/trigger:
+    post:
+      summary: Trigger saga compensation workflow and generate execution plan
+      operationId: triggerCompensation
+      parameters:
+        - name: traceparent
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-tenant-id
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - id
+                - publicId
+                - tenantId
+                - sagaId
+                - reason
+                - forwardSteps
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                publicId:
+                  type: string
+                tenantId:
+                  type: string
+                sagaId:
+                  type: string
+                  format: uuid
+                reason:
+                  type: string
+                forwardSteps:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required:
+                      - stepId
+                      - stepName
+                      - isPivot
+                      - forwardExecutionId
+                      - forwardOutcome
+                      - forwardOutput
+                      - compensationAction
+                      - executionOrder
+                    properties:
+                      stepId:
+                        type: string
+                      stepName:
+                        type: string
+                      isPivot:
+                        type: boolean
+                      forwardExecutionId:
+                        type: string
+                      forwardOutcome:
+                        type: string
+                      forwardOutput:
+                        type: object
+                      compensationAction:
+                        type: string
+                      executionOrder:
+                        type: integer
+      responses:
+        '201':
+          description: Compensation plan created and dispatched
+        '400':
+          description: Validation error or pivot step violation
+        '409':
+          description: Conflict or duplicate compensation plan
+
+  /api/v1/compensation/step-complete:
+    post:
+      summary: Report completion or failure outcome for an individual step compensation
+      operationId: completeStepCompensation
+      parameters:
+        - name: traceparent
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-tenant-id
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - tenantId
+                - planId
+                - stepId
+                - outcomeStatus
+              properties:
+                tenantId:
+                  type: string
+                planId:
+                  type: string
+                  format: uuid
+                stepId:
+                  type: string
+                outcomeStatus:
+                  type: string
+                  enum: [COMPENSATED, NOT_COMPENSABLE, PARTIALLY_COMPENSATED, FAILED_RETRYABLE, NEEDS_ATTENTION]
+                residualPayload:
+                  type: object
+                errorMessage:
+                  type: string
+      responses:
+        '200':
+          description: Step compensation outcome recorded
+        '400':
+          description: Validation error
+        '404':
+          description: Compensation plan or step not found
+
+  /api/v1/compensation/plan/{sagaId}:
+    get:
+      summary: Fetch compensation plan and step execution status by saga identifier
+      operationId: getCompensationPlan
+      parameters:
+        - name: sagaId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: traceparent
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-tenant-id
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Compensation plan details retrieved
+        '404':
+          description: Plan not found
+
   /api/v1/sagas:
     post:
       summary: Initialize or create a new saga transaction
@@ -138,6 +326,807 @@ paths:
           description: Saga not found
         '409':
           description: Optimistic concurrency or illegal state transition conflict
+  /api/v1/sagas/sequential/start:
+    post:
+      summary: Start a sequential saga execution pipeline
+      operationId: startSequentialSaga
+      parameters:
+        - name: traceparent
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-tenant-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - id
+                - publicId
+                - tenantId
+                - workflowDefinitionId
+                - source
+                - externalId
+                - correlationId
+                - payload
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                publicId:
+                  type: string
+                  pattern: "^seq_[0-9a-zA-Z]{26}$"
+                tenantId:
+                  type: string
+                workflowDefinitionId:
+                  type: string
+                  format: uuid
+                source:
+                  type: string
+                externalId:
+                  type: string
+                correlationId:
+                  type: string
+                  format: uuid
+                payload:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '201':
+          description: Sequential saga started successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SequentialExecutionResponse'
+        '400':
+          description: Validation error
+        '409':
+          description: Conflict or duplicate saga instance
+        '500':
+          description: Internal execution error
+  /api/v1/sagas/sequential/{id}/resume:
+    post:
+      summary: Resume a paused or waiting sequential saga
+      operationId: resumeSequentialSaga
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: traceparent
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-tenant-id
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - tenantId
+                - expectedVersion
+                - ownerEpoch
+              properties:
+                tenantId:
+                  type: string
+                expectedVersion:
+                  type: integer
+                ownerEpoch:
+                  type: integer
+      responses:
+        '200':
+          description: Sequential saga resumed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SequentialExecutionResponse'
+        '404':
+          description: Saga not found
+        '409':
+          description: Concurrency conflict
+  /api/v1/sagas/parallel/start:
+    post:
+      summary: Start a fork/join parallel saga group execution
+      operationId: startParallelSaga
+      parameters:
+        - name: traceparent
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-tenant-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - id
+                - publicId
+                - tenantId
+                - sagaId
+                - joinPolicy
+                - branches
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                publicId:
+                  type: string
+                  pattern: "^par_[0-9a-zA-Z]{26}$"
+                tenantId:
+                  type: string
+                sagaId:
+                  type: string
+                  format: uuid
+                joinPolicy:
+                  type: string
+                  enum: [ALL_REQUIRED, FIRST_SUCCESS, N_OF_M, ALL_SETTLED]
+                quorumCount:
+                  type: integer
+                branches:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required:
+                      - branchId
+                      - name
+                      - role
+                      - effectType
+                      - payload
+                    properties:
+                      branchId:
+                        type: string
+                      name:
+                        type: string
+                      role:
+                        type: string
+                        enum: [REQUIRED, OPTIONAL, ALTERNATIVE]
+                      effectType:
+                        type: string
+                        enum: [HOLD, COMPENSABLE]
+                      payload:
+                        type: object
+                        additionalProperties: true
+      responses:
+        '201':
+          description: Parallel group started successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParallelGroupResponse'
+        '400':
+          description: Validation error
+        '409':
+          description: Conflict
+  /api/v1/inbox/ingest:
+    post:
+      summary: Ingest and deduplicate an incoming message or reply event
+      operationId: ingestInboxMessage
+      parameters:
+        - name: traceparent
+          in: header
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          schema:
+            type: string
+        - name: x-tenant-id
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id
+                - publicId
+                - tenantId
+                - source
+                - externalId
+                - correlationId
+                - handlerName
+                - handlerGeneration
+                - producerEventTime
+                - payload
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                publicId:
+                  type: string
+                  pattern: '^inb_[0-9a-zA-Z]{26}$'
+                tenantId:
+                  type: string
+                source:
+                  type: string
+                externalId:
+                  type: string
+                correlationId:
+                  type: string
+                  format: uuid
+                handlerName:
+                  type: string
+                handlerGeneration:
+                  type: integer
+                producerEventTime:
+                  type: string
+                  format: date-time
+                payload:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Duplicate message safely absorbed
+        '201':
+          description: Message ingested and applied successfully
+        '400':
+          description: Validation error
+        '409':
+          description: Integrity mismatch or conflict
+  /api/v1/idempotency/acquire:
+    post:
+      summary: Acquire or evaluate authoritative idempotency key
+      operationId: acquireIdempotencyKey
+      parameters:
+        - name: traceparent
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id
+                - publicId
+                - tenantId
+                - source
+                - externalId
+                - correlationId
+                - principalId
+                - operationId
+                - idempotencyKey
+                - payload
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                publicId:
+                  type: string
+                  pattern: '^idk_[0-9a-zA-Z]{26}$'
+                tenantId:
+                  type: string
+                source:
+                  type: string
+                externalId:
+                  type: string
+                correlationId:
+                  type: string
+                  format: uuid
+                principalId:
+                  type: string
+                operationId:
+                  type: string
+                idempotencyKey:
+                  type: string
+                  maxLength: 128
+                payload:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Key replayed from stored snapshot
+          headers:
+            Idempotent-Replayed:
+              schema:
+                type: string
+                example: 'true'
+        '201':
+          description: Key acquired fresh for in-flight execution
+        '400':
+          description: Validation error
+        '409':
+          description: Operation in progress or payload fingerprint mismatch
+  /api/v1/idempotency/commit:
+    post:
+      summary: Commit final response snapshot to authoritative idempotency key
+      operationId: commitIdempotencyOutcome
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tenantId
+                - id
+                - state
+                - snapshot
+              properties:
+                tenantId:
+                  type: string
+                id:
+                  type: string
+                  format: uuid
+                state:
+                  type: string
+                  enum: [COMPLETED, REJECTED_FINAL]
+                snapshot:
+                  type: object
+                  required:
+                    - statusCode
+                  properties:
+                    statusCode:
+                      type: integer
+                    headers:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    body:
+                      type: object
+                      additionalProperties: true
+                resourceReference:
+                  type: string
+      responses:
+        '200':
+          description: Snapshot committed successfully
+        '400':
+          description: Validation error
+        '409':
+          description: Record not found or update conflict
+  /api/v1/retry-policies/evaluate:
+    post:
+      summary: Evaluate step failure against retry policy and circuit breaker
+      operationId: evaluateRetryPolicy
+      parameters:
+        - name: traceparent
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tenantId
+                - sagaId
+                - stepId
+                - attemptNumber
+                - statusCode
+                - capability
+                - position
+                - firstAttemptTime
+                - policy
+              properties:
+                tenantId:
+                  type: string
+                sagaId:
+                  type: string
+                  format: uuid
+                stepId:
+                  type: string
+                attemptNumber:
+                  type: integer
+                statusCode:
+                  type: integer
+                errorMessage:
+                  type: string
+                retryAfterHeader:
+                  type: string
+                dependencyId:
+                  type: string
+                firstAttemptTime:
+                  type: string
+                  format: date-time
+                effectiveDeadline:
+                  type: string
+                  format: date-time
+                fingerprintHistory:
+                  type: array
+                  items:
+                    type: string
+                capability:
+                  type: object
+                  properties:
+                    idempotentByKey:
+                      type: boolean
+                    statusQuery:
+                      type: boolean
+                    effectType:
+                      type: string
+                position:
+                  type: string
+                  enum: [COMPENSABLE, PIVOT, RETRIABLE]
+                policy:
+                  type: object
+                  properties:
+                    maxAttempts:
+                      type: integer
+                    maxElapsedSeconds:
+                      type: integer
+                    baseIntervalMillis:
+                      type: integer
+                    maxIntervalMillis:
+                      type: integer
+                    algorithm:
+                      type: string
+                      enum: [EXPONENTIAL_FULL_JITTER, EXPONENTIAL_EQUAL_JITTER, LINEAR_BACKOFF]
+      responses:
+        '200':
+          description: Retry decision evaluated successfully
+        '400':
+          description: Validation error
+  /api/v1/retry-policies/breaker/status:
+    get:
+      summary: Get dependency circuit breaker state
+      operationId: getBreakerStatus
+      parameters:
+        - name: dependencyId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Circuit breaker status returned successfully
+        '400':
+          description: Missing dependencyId query param
+  /api/v1/fencing/acquire:
+    post:
+      summary: Acquire or takeover a distributed lease with monotonically increasing epoch token
+      operationId: acquireFencingLease
+      parameters:
+        - name: traceparent
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - tenantId
+                - resourceId
+                - holderId
+                - leaseDurationMs
+              properties:
+                tenantId:
+                  type: string
+                resourceId:
+                  type: string
+                holderId:
+                  type: string
+                leaseDurationMs:
+                  type: integer
+                  minimum: 1000
+      responses:
+        '201':
+          description: Lease acquired or taken over with incremented epoch token
+        '400':
+          description: Validation error
+        '409':
+          description: Lease currently held by another active holder
+  /api/v1/fencing/renew:
+    post:
+      summary: Heartbeat renewal of an existing active lease keeping epoch constant
+      operationId: renewFencingLease
+      parameters:
+        - name: traceparent
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - tenantId
+                - resourceId
+                - holderId
+                - epoch
+                - leaseDurationMs
+              properties:
+                tenantId:
+                  type: string
+                resourceId:
+                  type: string
+                holderId:
+                  type: string
+                epoch:
+                  type: integer
+                  minimum: 1
+                leaseDurationMs:
+                  type: integer
+                  minimum: 1000
+      responses:
+        '200':
+          description: Lease renewed successfully
+        '400':
+          description: Validation error
+        '409':
+          description: Renewal rejected (expired or epoch mismatch)
+  /api/v1/fencing/release:
+    post:
+      summary: Graceful release of active lease
+      operationId: releaseFencingLease
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - tenantId
+                - resourceId
+                - holderId
+                - epoch
+              properties:
+                tenantId:
+                  type: string
+                resourceId:
+                  type: string
+                holderId:
+                  type: string
+                epoch:
+                  type: integer
+                  minimum: 1
+      responses:
+        '200':
+          description: Lease released successfully
+        '400':
+          description: Validation error
+        '409':
+          description: Cannot release lease owned by another holder or epoch
+  /api/v1/fencing/barrier:
+    post:
+      summary: Statement 1 mutation barrier checking token >= stored_token
+      operationId: validateFencedBarrier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - tenantId
+                - resourceId
+                - token
+              properties:
+                tenantId:
+                  type: string
+                resourceId:
+                  type: string
+                token:
+                  type: integer
+                  minimum: 1
+      responses:
+        '200':
+          description: Fencing check passed
+        '400':
+          description: Validation error
+        '409':
+          description: Stale fencing token (zombie write suppressed)
+  /api/v1/fencing/audits:
+    get:
+      summary: Retrieve fencing violation audit records
+      operationId: getFencingAudits
+      parameters:
+        - name: tenantId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: resourceId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Audits retrieved successfully
+        '400':
+          description: Missing resourceId query param
+  /api/v1/compensation-retry/evaluate:
+    post:
+      summary: Evaluate step failure against compensation retry policies
+      operationId: evaluateCompensationRetry
+      responses:
+        '200':
+          description: Decision evaluated successfully
+        '400':
+          description: Bad request
+  /api/v1/compensation-retry/record:
+    get:
+      summary: Get compensation retry record
+      operationId: getCompensationRetryRecord
+      parameters:
+        - name: tenantId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: sagaId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: stepId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Record retrieved
+        '404':
+          description: Record not found
+  /api/v1/compensation-retry/pause-step-type:
+    post:
+      summary: Pause compensations for a step type
+      operationId: pauseCompensationStepType
+      parameters:
+        - name: stepType
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: tenantId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Step type paused
+  /api/v1/compensation-retry/resume-step-type:
+    post:
+      summary: Resume compensations for a step type
+      operationId: resumeCompensationStepType
+      parameters:
+        - name: stepType
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: tenantId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Step type resumed
   /api/v1/workflow-definitions:
     post:
       summary: Register and validate a new workflow DAG definition
@@ -541,6 +1530,100 @@ components:
             reclaimedCount:
               type: integer
             timestamp:
+              type: string
+              format: date-time
+        meta:
+          type: object
+    SequentialExecutionResponse:
+      type: object
+      required:
+        - success
+        - statusCode
+        - meta
+      properties:
+        success:
+          type: boolean
+        statusCode:
+          type: integer
+        data:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            publicId:
+              type: string
+            tenantId:
+              type: string
+            workflowDefinitionId:
+              type: string
+              format: uuid
+            currentState:
+              type: string
+            currentStepIndex:
+              type: integer
+            totalSteps:
+              type: integer
+            phase:
+              type: string
+              enum: [FORWARD, COMPENSATING, ROLL_FORWARD]
+            pivotReached:
+              type: boolean
+            version:
+              type: integer
+            ownerEpoch:
+              type: integer
+            finalOutput:
+              type: object
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+        meta:
+          type: object
+    ParallelGroupResponse:
+      type: object
+      required:
+        - success
+        - statusCode
+        - meta
+      properties:
+        success:
+          type: boolean
+        statusCode:
+          type: integer
+        data:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            publicId:
+              type: string
+            tenantId:
+              type: string
+            sagaId:
+              type: string
+              format: uuid
+            joinPolicy:
+              type: string
+            state:
+              type: string
+              enum: [FANOUT_ACTIVE, JOIN_SUCCEEDED, JOIN_FAILED, COMPENSATED]
+            totalBranches:
+              type: integer
+            succeededBranches:
+              type: integer
+            failedBranches:
+              type: integer
+            version:
+              type: integer
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
               type: string
               format: date-time
         meta:

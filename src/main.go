@@ -16,10 +16,25 @@ import (
 	sagaAdapters "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/adapters"
 	sagaPorts "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/ports"
 	sagaService "distributed-transaction-engine/src/features/saga-orchestration/service"
+	sequentialExecution "distributed-transaction-engine/src/features/sequential-execution"
+	sequentialMachines "distributed-transaction-engine/src/features/sequential-execution/domain/machines"
+	parallelExecution "distributed-transaction-engine/src/features/parallel-execution"
+	parallelMachines "distributed-transaction-engine/src/features/parallel-execution/domain/machines"
+	inboxDeduplication "distributed-transaction-engine/src/features/inbox-deduplication"
+	inboxAdapters "distributed-transaction-engine/src/features/inbox-deduplication/infrastructure/adapters"
+	idempotencyKeys "distributed-transaction-engine/src/features/idempotency-keys"
+	retryPolicies "distributed-transaction-engine/src/features/retry-policies"
+	fencingTokens "distributed-transaction-engine/src/features/fencing-tokens"
+	compensationRetry "distributed-transaction-engine/src/features/compensation-retry"
+	transactionalOutbox "distributed-transaction-engine/src/features/transactional-outbox"
+	outboxMachines "distributed-transaction-engine/src/features/transactional-outbox/domain/machines"
+	compensationEngine "distributed-transaction-engine/src/features/compensation-engine"
+	compensationMachines "distributed-transaction-engine/src/features/compensation-engine/domain/machines"
 	transactionStateMachine "distributed-transaction-engine/src/features/transaction-state-machine"
 	workflowDefinitions "distributed-transaction-engine/src/features/workflow-definitions"
 	workflowPorts "distributed-transaction-engine/src/features/workflow-definitions/infrastructure/ports"
 	"distributed-transaction-engine/src/infra/chassis"
+	"distributed-transaction-engine/src/infra/observability"
 )
 
 func main() {
@@ -90,18 +105,151 @@ func describeService() chassis.ServiceSpec {
 			recoveryHandler := handlers.NewCrashRecoveryHandler(recoverySvc)
 			recoveryRouter := routers.NewCrashRecoveryRouter(recoveryHandler)
 
+			var seqRepo sequentialExecution.RepositoryPort = sequentialExecution.NewMemoryAdapter()
+			if deps.DB != nil {
+				seqRepo = sequentialExecution.NewPostgresAdapter(deps.DB)
+			}
+			seqDispatcher := sequentialExecution.NewMemoryDispatcher()
+			seqSvc := sequentialExecution.NewService(sequentialExecution.ServiceDeps{
+				Repo:         seqRepo,
+				WorkflowRepo: workflowRepo,
+				Dispatcher:   seqDispatcher,
+				Machine:      sequentialMachines.NewSequentialExecutionMachine(),
+				Tracer:       observability.NewTracer("sequential-execution"),
+			})
+			seqHandler := handlers.NewSequentialExecutionHandler(seqSvc)
+			seqRouter := routers.NewSequentialExecutionRouter(seqHandler)
+
+			var parRepo parallelExecution.RepositoryPort = parallelExecution.NewMemoryAdapter()
+			if deps.DB != nil {
+				parRepo = parallelExecution.NewPostgresAdapter(deps.DB)
+			}
+			parDispatcher := parallelExecution.NewMemoryDispatcher()
+			parSvc := parallelExecution.NewService(parallelExecution.ServiceDeps{
+				Repo:       parRepo,
+				Dispatcher: parDispatcher,
+				Machine:    parallelMachines.NewParallelExecutionMachine(),
+				Tracer:     observability.NewTracer("parallel-execution"),
+			})
+			parHandler := handlers.NewParallelExecutionHandler(parSvc)
+			parRouter := routers.NewParallelExecutionRouter(parHandler)
+
+			var inbRepo inboxDeduplication.RepositoryPort = inboxDeduplication.NewMemoryAdapter()
+			if deps.DB != nil {
+				inbRepo = inboxAdapters.NewPostgresInboxDeduplicationRepositoryAdapter(deps.DB)
+			}
+			inbSvc := inboxDeduplication.NewService(inboxDeduplication.ServiceDeps{
+				Repo:   inbRepo,
+				Tracer: observability.NewTracer("inbox-deduplication"),
+			})
+			inbHandler := handlers.NewInboxDeduplicationHandler(inbSvc)
+			inbRouter := routers.NewInboxDeduplicationRouter(inbHandler)
+
+			var idkRepo idempotencyKeys.RepositoryPort = idempotencyKeys.NewMemoryAdapter()
+			if deps.DB != nil {
+				idkRepo = idempotencyKeys.NewPostgresAdapter(deps.DB)
+			}
+			idkSvc := idempotencyKeys.NewService(idempotencyKeys.ServiceDeps{
+				Repo:   idkRepo,
+				Tracer: observability.NewTracer("idempotency-keys"),
+			})
+			idkHandler := handlers.NewIdempotencyKeysHandler(idkSvc)
+			idkRouter := routers.NewIdempotencyKeysRouter(idkHandler)
+
+			var retryRepo retryPolicies.RepositoryPort = retryPolicies.NewMemoryAdapter()
+			if deps.DB != nil {
+				retryRepo = retryPolicies.NewPostgresAdapter(deps.DB)
+			}
+			retrySvc := retryPolicies.NewService(retryPolicies.ServiceDeps{
+				Repo:    retryRepo,
+				Breaker: retryPolicies.NewCircuitBreakerManager(),
+				Tracer:  observability.NewTracer("retry-policies"),
+			})
+			retryHandler := handlers.NewRetryPoliciesHandler(retrySvc)
+			retryRouter := routers.NewRetryPoliciesRouter(retryHandler)
+
+			var outboxRepo transactionalOutbox.RepositoryPort = transactionalOutbox.NewMemoryAdapter()
+			if deps.DB != nil {
+				outboxRepo = transactionalOutbox.NewPostgresAdapter(deps.DB)
+			}
+			var outboxPublisher transactionalOutbox.PublisherPort = transactionalOutbox.NewMemoryPublisher()
+			kafkaBrokers := deps.Config.Kafka.Brokers
+			if kafkaBrokers == "" {
+				kafkaBrokers = os.Getenv("KAFKA_BROKERS")
+			}
+			if kafkaBrokers != "" {
+				outboxPublisher = transactionalOutbox.NewKafkaPublisher(kafkaBrokers)
+			}
+			outboxSvc := transactionalOutbox.NewService(transactionalOutbox.ServiceDeps{
+				Repo:      outboxRepo,
+				Publisher: outboxPublisher,
+				Machine:   outboxMachines.NewOutboxStateMachine(),
+				Tracer:    observability.NewTracer("transactional-outbox"),
+			})
+			outboxHandler := handlers.NewOutboxHandler(outboxSvc)
+			outboxRouter := routers.NewOutboxRouter(outboxHandler)
+
+			var compRepo compensationEngine.RepositoryPort = compensationEngine.NewMemoryAdapter()
+			if deps.DB != nil {
+				compRepo = compensationEngine.NewPostgresAdapter(deps.DB)
+			}
+			compDispatcher := compensationEngine.NewMemoryDispatcher()
+			compSvc := compensationEngine.NewService(compensationEngine.ServiceDeps{
+				Repo:       compRepo,
+				Dispatcher: compDispatcher,
+				Machine:    compensationMachines.NewCompensationStateMachine(),
+				Tracer:     observability.NewTracer("compensation-engine"),
+			})
+			compHandler := handlers.NewCompensationHandler(compSvc)
+			compRouter := routers.NewCompensationRouter(compHandler)
+
+			var fencingRepo fencingTokens.RepositoryPort = fencingTokens.NewMemoryAdapter()
+			if deps.DB != nil {
+				fencingRepo = fencingTokens.NewPostgresAdapter(deps.DB)
+			}
+			fencingSvc := fencingTokens.NewService(fencingTokens.ServiceDeps{
+				Repo:    fencingRepo,
+				Rules:   fencingTokens.NewFencingRules(),
+				Machine: fencingTokens.NewFencingLeaseMachine(),
+				Tracer:  observability.NewTracer("fencing-tokens"),
+			})
+			fencingHandler := handlers.NewFencingTokensHandler(fencingSvc)
+			fencingRouter := routers.NewFencingTokensRouter(fencingHandler)
+
+			var compRetryRepo compensationRetry.RepositoryPort = compensationRetry.NewMemoryAdapter()
+			if deps.DB != nil {
+				compRetryRepo = compensationRetry.NewPostgresAdapter(deps.DB)
+			}
+			compRetrySvc := compensationRetry.NewService(compensationRetry.ServiceDeps{
+				Repo:    compRetryRepo,
+				Rules:   compensationRetry.NewCompensationRetryRules(),
+				Machine: compensationRetry.NewCompensationRetryMachine(),
+				Tracer:  observability.NewTracer("compensation-retry"),
+			})
+			compRetryHandler := handlers.NewCompensationRetryHandler(compRetrySvc)
+			compRetryRouter := routers.NewCompensationRetryRouter(compRetryHandler)
+
 			poller := sagaService.NewSagaPoller(sagaRepo, sagaSvc, deps.Config.Poller.WorkerID, deps.Config.LeaseDuration())
 
 			return chassis.Services{
 				Instances: map[string]any{
-					"workflowRouter": workflowRouter,
-					"stateRouter":    stateRouter,
-					"sagaRouter":     sagaRouter,
-					"recoveryRouter": recoveryRouter,
-					"poller":         poller,
-					"recoverySvc":    recoverySvc,
-					"pollInterval":   deps.Config.PollInterval(),
-					"hasDB":          deps.DB != nil,
+					"workflowRouter":          workflowRouter,
+					"stateRouter":             stateRouter,
+					"sagaRouter":              sagaRouter,
+					"recoveryRouter":          recoveryRouter,
+					"sequentialRouter":        seqRouter,
+					"parallelRouter":          parRouter,
+					"inboxRouter":             inbRouter,
+					"idempotencyRouter":       idkRouter,
+					"retryRouter":             retryRouter,
+					"outboxRouter":            outboxRouter,
+					"compensationRouter":      compRouter,
+					"fencingRouter":           fencingRouter,
+					"compensationRetryRouter": compRetryRouter,
+					"poller":                  poller,
+					"recoverySvc":             recoverySvc,
+					"pollInterval":            deps.Config.PollInterval(),
+					"hasDB":                   deps.DB != nil,
 				},
 			}, nil
 		},
@@ -117,6 +265,33 @@ func describeService() chassis.ServiceSpec {
 			}
 			if rr, ok := services.Instances["recoveryRouter"].(*routers.CrashRecoveryRouter); ok && rr != nil {
 				rr.RegisterRoutes(router)
+			}
+			if sqr, ok := services.Instances["sequentialRouter"].(*routers.SequentialExecutionRouter); ok && sqr != nil {
+				sqr.RegisterRoutes(router)
+			}
+			if parR, ok := services.Instances["parallelRouter"].(*routers.ParallelExecutionRouter); ok && parR != nil {
+				parR.RegisterRoutes(router)
+			}
+			if inbR, ok := services.Instances["inboxRouter"].(*routers.InboxDeduplicationRouter); ok && inbR != nil {
+				inbR.RegisterRoutes(router)
+			}
+			if idkR, ok := services.Instances["idempotencyRouter"].(*routers.IdempotencyKeysRouter); ok && idkR != nil {
+				idkR.RegisterRoutes(router)
+			}
+			if rtr, ok := services.Instances["retryRouter"].(*routers.RetryPoliciesRouter); ok && rtr != nil {
+				rtr.RegisterRoutes(router)
+			}
+			if oxR, ok := services.Instances["outboxRouter"].(*routers.OutboxRouter); ok && oxR != nil {
+				oxR.RegisterRoutes(router)
+			}
+			if cmpR, ok := services.Instances["compensationRouter"].(*routers.CompensationRouter); ok && cmpR != nil {
+				cmpR.RegisterRoutes(router)
+			}
+			if fnR, ok := services.Instances["fencingRouter"].(*routers.FencingTokensRouter); ok && fnR != nil {
+				fnR.RegisterRoutes(router)
+			}
+			if crR, ok := services.Instances["compensationRetryRouter"].(*routers.CompensationRetryRouter); ok && crR != nil {
+				crR.RegisterRoutes(router)
 			}
 		},
 		Jobs: func(services chassis.Services) []chassis.JobSpec {
