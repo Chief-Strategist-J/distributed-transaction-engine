@@ -1,0 +1,110 @@
+package service
+
+import (
+	"context"
+	"time"
+
+	contracts "distributed-transaction-engine/src/features/inbox-deduplication/contracts"
+	rules "distributed-transaction-engine/src/features/inbox-deduplication/domain/rules"
+	ports "distributed-transaction-engine/src/features/inbox-deduplication/infrastructure/ports"
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
+)
+
+type InboxDeduplicationServiceDeps struct {
+	Repo   ports.InboxDeduplicationRepositoryPort
+	Tracer *observability.DefaultTracer
+}
+
+type InboxDeduplicationService struct {
+	repo   ports.InboxDeduplicationRepositoryPort
+	tracer *observability.DefaultTracer
+}
+
+func NewInboxDeduplicationService(deps InboxDeduplicationServiceDeps) *InboxDeduplicationService {
+	return &InboxDeduplicationService{
+		repo:   deps.Repo,
+		tracer: deps.Tracer,
+	}
+}
+
+func (s *InboxDeduplicationService) ProcessIncomingMessage(
+	ctx context.Context,
+	input *contracts.IngestMessageInput,
+) (*contracts.IngestDecision, error) {
+	_, span := s.tracer.StartSpan(ctx, "ProcessIncomingMessage")
+	defer span.End()
+
+	if err := contracts.ValidateIngestMessageInput(input); err != nil {
+		return nil, err
+	}
+
+	incomingHash, err := contracts.ComputeCanonicalPayloadHash(input.Payload)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	msg := &contracts.InboxMessage{
+		ID:                input.ID,
+		PublicID:          input.PublicID,
+		TenantID:          input.TenantID,
+		Source:            input.Source,
+		ExternalID:        input.ExternalID,
+		CorrelationID:     input.CorrelationID,
+		HandlerName:       input.HandlerName,
+		HandlerGeneration: input.HandlerGeneration,
+		ContentHash:       incomingHash,
+		Status:            contracts.StatusApplied,
+		AttemptCount:      1,
+		ProducerEventTime: input.ProducerEventTime,
+		Payload:           input.Payload,
+		Version:           1,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+
+	inserted, err := s.repo.InsertInboxRecord(ctx, msg)
+	if err != nil {
+		return nil, err
+	}
+
+	if inserted {
+		return &contracts.IngestDecision{
+			Outcome:      contracts.OutcomeApplied,
+			StoredHash:   incomingHash,
+			IncomingHash: incomingHash,
+		}, nil
+	}
+
+	existing, err := s.repo.GetInboxRecord(ctx, input.TenantID, input.HandlerName, input.HandlerGeneration, input.ExternalID)
+	if err != nil {
+		return nil, err
+	}
+
+	outcome := rules.EvaluateDuplicateContent(existing.ContentHash, incomingHash)
+	if outcome == contracts.OutcomeIntegrityMismatch {
+		_ = s.repo.MarkQuarantined(ctx, input.TenantID, existing.ID, "content hash mismatch detected")
+		return nil, errors.NewConflictError("inbox message integrity failure: event id reused with mismatched payload")
+	}
+
+	return &contracts.IngestDecision{
+		Outcome:      outcome,
+		StoredHash:   existing.ContentHash,
+		IncomingHash: incomingHash,
+	}, nil
+}
+
+func (s *InboxDeduplicationService) GetRecord(
+	ctx context.Context,
+	tenantID string,
+	handlerName string,
+	handlerGen int,
+	externalID string,
+) (*contracts.InboxMessage, error) {
+	_, span := s.tracer.StartSpan(ctx, "GetRecord")
+	defer span.End()
+
+	return s.repo.GetInboxRecord(ctx, tenantID, handlerName, handlerGen, externalID)
+}
+

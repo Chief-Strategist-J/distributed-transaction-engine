@@ -1,2 +1,33 @@
 feature: inbox-deduplication
 mode: stateless_hexagonal
+owner: distributed-transaction-core
+boundary:
+  - idempotent_message_ingestion
+  - content_hash_integrity_verification
+  - duplicate_reply_absorption
+identifiers:
+  id: uuidv7
+  public_id: inb_[0-9a-zA-Z]{26}
+  tenant_id: string
+  source: string
+  external_id: string
+  correlation_id: uuid
+tables:
+  - inbox_messages
+ports:
+  driving:
+    - InboxDeduplicationService
+  driven:
+    - InboxDeduplicationRepositoryPort
+linearization:
+  - contracts/inbox-deduplication.types.go
+  - contracts/inbox-deduplication.schema.go
+  - domain/rules/inbox-deduplication.rules.go
+  - infrastructure/ports/inbox-deduplication.repository.port.go
+  - infrastructure/queries/inbox-deduplication.queries.go
+  - infrastructure/adapters/inbox-deduplication.memory.repository.adapter.go
+  - infrastructure/adapters/inbox-deduplication.postgres.repository.adapter.go
+  - service/inbox-deduplication.service.go
+  - index.go
+  - tests/inbox-deduplication.rules_test.go
+  - tests/inbox-deduplication.integration_test.go
