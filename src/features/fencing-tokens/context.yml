@@ -1,2 +1,118 @@
 feature: fencing-tokens
 mode: stateless_hexagonal
+owner: core-platform-guild
+entity: fencing_leases
+fields:
+  - name: id
+    type: uuid
+    null: no
+    default: gen_random_uuid()
+    constraint: PK, UNIQUE(tenant_id, id), immutable
+  - name: public_id
+    type: text
+    null: no
+    constraint: UNIQUE, immutable, format 'fnl_' + 26 chars
+  - name: tenant_id
+    type: text
+    null: no
+    constraint: immutable, leads composite unique keys
+  - name: source
+    type: text
+    null: no
+    default: 'ENGINE_LEASING'
+    constraint: immutable
+  - name: external_id
+    type: text
+    null: no
+    constraint: immutable
+  - name: correlation_id
+    type: text
+    null: no
+    constraint: immutable
+  - name: resource_id
+    type: text
+    null: no
+    constraint: UNIQUE(tenant_id, resource_id), CHECK (resource_id = btrim(resource_id) AND resource_id <> '')
+  - name: holder_id
+    type: text
+    null: no
+    constraint: CHECK (holder_id = btrim(holder_id) AND holder_id <> '')
+  - name: epoch
+    type: bigint
+    null: no
+    default: 1
+    constraint: CHECK (epoch >= 1)
+  - name: lease_duration_ms
+    type: integer
+    null: no
+    default: 15000
+    constraint: CHECK (lease_duration_ms >= 1000)
+  - name: acquired_at
+    type: timestamptz
+    null: no
+    default: NOW()
+  - name: expires_at
+    type: timestamptz
+    null: no
+  - name: released_at
+    type: timestamptz
+    null: yes
+  - name: created_at
+    type: timestamptz
+    null: no
+  - name: updated_at
+    type: timestamptz
+    null: no
+invariants:
+  - atomic increment of epoch on acquisition or takeover
+  - epoch is constant during renewals
+  - expiry judged exclusively by database NOW()
+  - lease rows are never deleted
+pii: [none]
+source_of_truth: db
+
+secondary_entities:
+  - entity: fencing_audits
+    owner: core-platform-guild
+    description: Internal security and partition audit journal recording intercepted zombie worker attempts.
+    dropped_roles:
+      - role: source + external_id
+        reason: "Internal immutable security event log. Identity is surrogate UUID + public ID."
+      - role: correlation_id
+        reason: "Captured directly in audit payload alongside resource_id and rejected holder identifier."
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        default: gen_random_uuid()
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'fnv_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leads composite unique keys
+      - name: resource_id
+        type: text
+        null: no
+      - name: attempted_token
+        type: bigint
+        null: no
+      - name: current_token
+        type: bigint
+        null: no
+      - name: rejected_holder
+        type: text
+        null: no
+      - name: violation_type
+        type: text
+        null: no
+        constraint: CHECK (violation_type IN ('STALE_TOKEN', 'LEASE_EXPIRED', 'UNAUTHORIZED_HOLDER'))
+      - name: recorded_at
+        type: timestamptz
+        null: no
+        default: NOW()
+    invariants:
+      - immutable append-only audit trail
