@@ -1,2 +1,136 @@
 feature: retry-policies
 mode: stateless_hexagonal
+owner: core-platform-guild
+entity: retry_policies
+fields:
+  - name: id
+    type: uuid
+    null: no
+    default: gen_random_uuid()
+    constraint: PK, UNIQUE(tenant_id, id), immutable
+  - name: public_id
+    type: text
+    null: no
+    constraint: UNIQUE, immutable, format 'rtp_' + 26 chars
+  - name: tenant_id
+    type: text
+    null: no
+    constraint: immutable, leads composite unique keys
+  - name: source
+    type: text
+    null: no
+    default: 'ENGINE_CONFIG'
+    constraint: immutable
+  - name: external_id
+    type: text
+    null: no
+    constraint: immutable
+  - name: correlation_id
+    type: text
+    null: no
+    constraint: immutable
+  - name: policy_name
+    type: text
+    null: no
+    constraint: UNIQUE(tenant_id, policy_name)
+  - name: max_attempts
+    type: integer
+    null: no
+    default: 5
+    constraint: CHECK (max_attempts >= 1 AND max_attempts <= 100)
+  - name: max_elapsed_seconds
+    type: integer
+    null: no
+    default: 300
+    constraint: CHECK (max_elapsed_seconds >= 1)
+  - name: base_interval_millis
+    type: integer
+    null: no
+    default: 200
+    constraint: CHECK (base_interval_millis >= 10)
+  - name: max_interval_millis
+    type: integer
+    null: no
+    default: 30000
+    constraint: CHECK (max_interval_millis >= base_interval_millis)
+  - name: backoff_algorithm
+    type: text
+    null: no
+    default: 'EXPONENTIAL_FULL_JITTER'
+    constraint: CHECK (backoff_algorithm IN ('EXPONENTIAL_FULL_JITTER', 'EXPONENTIAL_EQUAL_JITTER', 'LINEAR_BACKOFF'))
+  - name: created_at
+    type: timestamptz
+    null: no
+  - name: updated_at
+    type: timestamptz
+    null: no
+invariants:
+  - composite uniqueness on (tenant_id, policy_name)
+  - floor is guaranteed to be >= base_interval / 2
+  - max attempts is bounded
+pii: [none]
+source_of_truth: db
+
+secondary_entities:
+  - entity: step_retries
+    owner: core-platform-guild
+    description: Internal execution journal recording individual step retry attempts and backoff intervals.
+    dropped_roles:
+      - role: source + external_id
+        reason: "Internal journal row subordinate to saga_instance. Identity is derived directly from (tenant_id, saga_id, step_id, attempt_number)."
+      - role: correlation_id
+        reason: "Correlation tracking is inherited from parent saga execution context via saga_id foreign reference."
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        default: gen_random_uuid()
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'sre_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leads composite unique keys
+      - name: saga_id
+        type: uuid
+        null: no
+        constraint: immutable, references parent saga
+      - name: step_id
+        type: text
+        null: no
+        constraint: immutable
+      - name: attempt_number
+        type: integer
+        null: no
+        constraint: CHECK (attempt_number >= 1)
+      - name: error_class
+        type: text
+        null: no
+      - name: error_message
+        type: text
+        null: no
+        default: ''
+      - name: error_fingerprint
+        type: char(64)
+        null: no
+        default: ''
+      - name: retry_after_seconds
+        type: integer
+        null: no
+        default: 0
+      - name: computed_delay_millis
+        type: integer
+        null: no
+        default: 0
+      - name: next_attempt_at
+        type: timestamptz
+        null: yes
+      - name: created_at
+        type: timestamptz
+        null: no
+    invariants:
+      - UNIQUE(tenant_id, saga_id, step_id, attempt_number)
+
