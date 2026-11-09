@@ -1,2 +1,33 @@
 feature: transactional-outbox
 mode: stateless_hexagonal
+
+entity: outbox_events
+owner: core-platform
+fields:
+  - name: id                  type: uuid        null: no  default: uuidv7()          constraint: PK, immutable
+  - name: public_id           type: text        null: no  default: generated         constraint: UNIQUE, immutable, format 'oxe_' + 26 chars
+  - name: tenant_id           type: text        null: no  normalize: trim            constraint: immutable, length 1..64
+  - name: saga_id             type: uuid        null: no  constraint: FK saga_instances(id) ON DELETE CASCADE, immutable
+  - name: aggregate_type      type: text        null: no  normalize: trim            constraint: length 1..64
+  - name: aggregate_id        type: text        null: no  normalize: trim            constraint: length 1..128
+  - name: aggregate_sequence  type: bigint      null: no  constraint: CHECK > 0, UNIQUE(tenant_id, aggregate_id, aggregate_sequence)
+  - name: destination_topic   type: text        null: no  normalize: trim            constraint: length 1..128
+  - name: partition_key       type: text        null: no  normalize: trim            constraint: length 1..128
+  - name: event_type          type: text        null: no  normalize: trim            constraint: length 1..64
+  - name: payload             type: jsonb       null: no  constraint: CHECK jsonb_typeof(payload) = 'object'
+  - name: headers             type: jsonb       null: no  default: '{}'              constraint: CHECK jsonb_typeof(headers) = 'object'
+  - name: status              type: text        null: no  default: 'PENDING'         constraint: CHECK status IN ('PENDING', 'IN_FLIGHT', 'PUBLISHED', 'PARKED')
+  - name: lease_owner         type: text        null: yes constraint: length 1..128
+  - name: lease_expires_at    type: timestamptz null: yes constraint: timestamptz in UTC
+  - name: attempt_count       type: int         null: no  default: 0                 constraint: CHECK >= 0
+  - name: last_error          type: text        null: yes
+  - name: version             type: bigint      null: no  default: 1                 constraint: CHECK >= 1
+  - name: created_at          type: timestamptz null: no  default: NOW()             constraint: immutable
+  - name: updated_at          type: timestamptz null: no  default: NOW()
+  - name: published_at        type: timestamptz null: yes constraint: CHECK (status = 'PUBLISHED') = (published_at IS NOT NULL)
+invariants:
+  - published events always have published_at timestamp
+  - aggregate sequence is gapless strictly positive per aggregate
+  - payload and headers are valid json objects
+pii: [none]
+source_of_truth: db
