@@ -1,2 +1,93 @@
 feature: idempotency-keys
 mode: stateless_hexagonal
+owner: core-platform-guild
+entity: idempotency_keys
+fields:
+  - name: id
+    type: uuid
+    null: no
+    default: gen_random_uuid()
+    constraint: PK, UNIQUE(tenant_id, id), immutable
+  - name: public_id
+    type: text
+    null: no
+    constraint: UNIQUE, immutable, format 'idk_' + 26 chars
+  - name: tenant_id
+    type: text
+    null: no
+    constraint: immutable, leads composite unique keys
+  - name: source
+    type: text
+    null: no
+    default: 'API_GATEWAY'
+    constraint: immutable
+  - name: external_id
+    type: text
+    null: no
+    constraint: immutable
+  - name: correlation_id
+    type: text
+    null: no
+    constraint: immutable
+  - name: principal_id
+    type: text
+    null: no
+    constraint: immutable
+  - name: operation_id
+    type: text
+    null: no
+    constraint: immutable
+  - name: idempotency_key
+    type: text
+    null: no
+    constraint: immutable, UNIQUE(tenant_id, principal_id, operation_id, idempotency_key)
+  - name: request_fingerprint
+    type: char(64)
+    null: no
+    constraint: immutable, SHA-256
+  - name: current_state
+    type: text
+    null: no
+    constraint: CHECK (current_state IN ('IN_PROGRESS', 'COMPLETED', 'REJECTED_FINAL', 'UNKNOWN'))
+  - name: response_status
+    type: integer
+    null: yes
+    constraint: CHECK (response_status IS NULL OR (response_status >= 100 AND response_status <= 599))
+  - name: response_headers
+    type: jsonb
+    null: yes
+  - name: response_body
+    type: jsonb
+    null: yes
+  - name: resource_reference
+    type: text
+    null: yes
+  - name: lease_owner
+    type: text
+    null: yes
+  - name: lease_until
+    type: timestamptz
+    null: yes
+  - name: recovery_fencing_token
+    type: bigint
+    null: no
+    default: 0
+  - name: created_at
+    type: timestamptz
+    null: no
+  - name: updated_at
+    type: timestamptz
+    null: no
+  - name: completed_at
+    type: timestamptz
+    null: yes
+  - name: expires_at
+    type: timestamptz
+    null: no
+invariants:
+  - composite uniqueness on (tenant_id, principal_id, operation_id, idempotency_key)
+  - fingerprint is immutable sha256 hex
+  - completed or rejected records have response_status and response_body
+  - lease expiration requires in_progress state
+pii: [none]
+source_of_truth: db
