@@ -1,2 +1,49 @@
 feature: compensation-engine
 mode: stateless_hexagonal
+
+entity: saga_compensation_plans
+owner: core-platform
+fields:
+  - name: id                  type: uuid        null: no  default: uuidv7()          constraint: PK, immutable
+  - name: public_id           type: text        null: no  default: generated         constraint: UNIQUE, immutable, format 'cmp_' + 26 chars
+  - name: tenant_id           type: text        null: no  normalize: trim            constraint: immutable, length 1..64
+  - name: saga_id             type: uuid        null: no  constraint: FK saga_instances(id) ON DELETE CASCADE, immutable
+  - name: current_state       type: text        null: no  default: 'COMPENSATING'    constraint: CHECK current_state IN ('COMPENSATING', 'FULLY_COMPENSATED', 'COMPENSATED_WITH_RESIDUALS', 'COMPENSATING_NEEDS_ATTENTION')
+  - name: total_steps         type: int         null: no  default: 0                 constraint: CHECK >= 0
+  - name: compensated_steps   type: int         null: no  default: 0                 constraint: CHECK >= 0
+  - name: failed_steps        type: int         null: no  default: 0                 constraint: CHECK >= 0
+  - name: residuals           type: jsonb       null: no  default: '[]'              constraint: CHECK jsonb_typeof(residuals) = 'array'
+  - name: version             type: bigint      null: no  default: 1                 constraint: CHECK >= 1
+  - name: created_at          type: timestamptz null: no  default: NOW()             constraint: immutable
+  - name: updated_at          type: timestamptz null: no  default: NOW()
+  - name: completed_at        type: timestamptz null: yes
+
+entity: saga_step_compensations
+owner: core-platform
+fields:
+  - name: id                   type: uuid        null: no  default: uuidv7()          constraint: PK, immutable
+  - name: public_id            type: text        null: no  default: generated         constraint: UNIQUE, immutable, format 'cst_' + 26 chars
+  - name: tenant_id            type: text        null: no  normalize: trim            constraint: immutable, length 1..64
+  - name: plan_id              type: uuid        null: no  constraint: FK saga_compensation_plans(id) ON DELETE CASCADE, immutable
+  - name: saga_id              type: uuid        null: no  constraint: immutable
+  - name: step_id              type: text        null: no  normalize: trim            constraint: length 1..128
+  - name: step_name            type: text        null: no  normalize: trim            constraint: length 1..128
+  - name: execution_order      type: int         null: no  constraint: CHECK >= 0
+  - name: status               type: text        null: no  default: 'PENDING'         constraint: CHECK status IN ('PENDING', 'DISPATCHED', 'COMPENSATED', 'NOT_COMPENSABLE', 'PARTIALLY_COMPENSATED', 'FAILED_RETRYABLE', 'NEEDS_ATTENTION')
+  - name: forward_execution_id type: text        null: no  normalize: trim
+  - name: compensation_action  type: text        null: no  normalize: trim
+  - name: compensation_payload type: jsonb       null: no  default: '{}'              constraint: CHECK jsonb_typeof(compensation_payload) = 'object'
+  - name: residual_payload     type: jsonb       null: no  default: '{}'              constraint: CHECK jsonb_typeof(residual_payload) = 'object'
+  - name: idempotency_key      type: text        null: no  normalize: trim
+  - name: attempt_count        type: int         null: no  default: 0                 constraint: CHECK >= 0
+  - name: last_error           type: text        null: yes
+  - name: version              type: bigint      null: no  default: 1                 constraint: CHECK >= 1
+  - name: created_at           type: timestamptz null: no  default: NOW()             constraint: immutable
+  - name: updated_at           type: timestamptz null: no  default: NOW()
+  - name: compensated_at       type: timestamptz null: yes
+invariants:
+  - compensation never starts while any relevant forward outcome is unresolved
+  - compensation never crosses a succeeded pivot step
+  - compensation inputs derive from recorded forward outcomes, not inverted forward inputs
+pii: [none]
+source_of_truth: db
