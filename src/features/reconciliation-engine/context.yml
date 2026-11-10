@@ -1,2 +1,28 @@
+entity: reconciliation_anomalies
+owner: core-platform
+fields:
+  - name: id             type: uuid          null: no   default: uuidv7()            constraint: PK, UNIQUE(tenant_id, id), immutable
+  - name: public_id      type: text          null: no   default: generated          constraint: UNIQUE, immutable, format 'rec_' + 26 chars
+  - name: tenant_id      type: text          null: no   constraint: immutable
+  - name: source         type: text          null: no   constraint: CHECK (source = btrim(source) AND source <> '')
+  - name: external_id    type: text          null: no   normalize: trim            constraint: UNIQUE(tenant_id, source, external_id), length 1..128
+  - name: correlation_id type: uuid          null: no   constraint: immutable, no FK
+  - name: saga_id        type: uuid          null: no   constraint: immutable
+  - name: anomaly_type   type: text          null: no   constraint: CHECK IN ('PHANTOM_SETTLEMENT', 'GHOST_TRANSACTION', 'NUMERICAL_DRIFT', 'STATUS_MISMATCH')
+  - name: status         type: text          null: no   constraint: CHECK IN ('ANOMALY_DETECTED', 'REPAIR_SCHEDULED', 'AUTO_RESOLVED', 'QUARANTINED_FOR_AUDIT', 'MANUAL_DISMISSED')
+  - name: internal_status type: text         null: no   constraint: CHECK <> ''
+  - name: external_status type: text         null: no   constraint: CHECK <> ''
+  - name: internal_amount_cents type: bigint null: no   constraint: CHECK >= 0
+  - name: external_amount_cents type: bigint null: no   constraint: CHECK >= 0
+  - name: currency       type: char(3)       null: no   normalize: upper           constraint: CHECK ~ '^[A-Z]{3}$'
+  - name: discrepancy_reason type: text      null: no   default: ''
+  - name: resolution_action  type: text      null: no   default: ''
+  - name: version        type: bigint        null: no   default: 1
+invariants:
+  - anomaly amount is never negative
+  - public_id follows 'rec_' prefix with 26 characters
+  - terminal states cannot transition backwards
+pii: [none]
+source_of_truth: db
 feature: reconciliation-engine
 mode: stateless_hexagonal
