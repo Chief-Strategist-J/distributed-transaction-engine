@@ -1,2 +1,332 @@
 feature: audit-trail
 mode: stateless_hexagonal
+invariants:
+  - AT-01: Audit capture for state-changing actions commits in the same transaction as the action via audit_outbox
+  - AT-02: Every record has explicit actor and tenant; missing values are quarantined raw and never defaulted
+  - AT-03: Records are never dropped; invalid records are quarantined raw and reconciled
+  - AT-04: Chain order is assigned by a single chainer worker per tenant shard
+  - AT-05: Hash input is canonical, length-prefixed, and keyed with HMAC-SHA256
+  - AT-06: Chain heads are anchored externally as signed checkpoints on a periodic schedule
+  - AT-07: Tamper detection never stops auditing; seals compromised segment and continues on a new segment
+  - AT-08: Duplicates are removed by audit_id before chaining
+  - AT-09: Access to audit data is scoped, masked, and itself audited
+status: implementation_complete
+
+entities:
+  - entity: audit_outbox
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'aob_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        constraint: immutable, CHECK (source = btrim(source) AND source <> '')
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: audit_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, audit_id), CHECK (audit_id = btrim(audit_id) AND audit_id <> '')
+      - name: occurred_at
+        type: timestamptz
+        null: no
+        constraint: immutable
+      - name: action
+        type: text
+        null: no
+        constraint: CHECK (action = btrim(action) AND action <> '')
+      - name: actor_id
+        type: text
+        null: no
+        constraint: CHECK (actor_id = btrim(actor_id) AND actor_id <> '')
+      - name: actor_ip
+        type: text
+        null: no
+        default: ''
+      - name: on_behalf_of
+        type: text
+        null: no
+        default: ''
+      - name: target_resource
+        type: text
+        null: no
+        default: ''
+      - name: payload
+        type: jsonb
+        null: no
+        default: '{}'::jsonb
+        constraint: CHECK (jsonb_typeof(payload) = 'object')
+      - name: status
+        type: text
+        null: no
+        default: 'PENDING'
+        constraint: CHECK (status IN ('PENDING', 'CHAINED', 'FAILED'))
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
+      - name: chained_at
+        type: timestamptz
+        null: yes
+
+  - entity: immutable_audit_log
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'aud_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        constraint: immutable, CHECK (source = btrim(source) AND source <> '')
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: audit_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, audit_id), CHECK (audit_id = btrim(audit_id) AND audit_id <> '')
+      - name: segment_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: sequence_id
+        type: bigint
+        null: no
+        constraint: UNIQUE(tenant_id, segment_id, sequence_id), immutable, CHECK (sequence_id >= 1)
+      - name: key_id
+        type: text
+        null: no
+        constraint: CHECK (key_id = btrim(key_id) AND key_id <> '')
+      - name: actor_id
+        type: text
+        null: no
+        constraint: CHECK (actor_id = btrim(actor_id) AND actor_id <> '')
+      - name: actor_ip
+        type: text
+        null: no
+        default: ''
+      - name: action
+        type: text
+        null: no
+        constraint: CHECK (action = btrim(action) AND action <> '')
+      - name: prev_hash
+        type: char(64)
+        null: no
+        constraint: immutable, CHECK (length(prev_hash) = 64)
+      - name: curr_hash
+        type: char(64)
+        null: no
+        constraint: UNIQUE(tenant_id, curr_hash), immutable, CHECK (length(curr_hash) = 64)
+      - name: raw_payload
+        type: jsonb
+        null: no
+        default: '{}'::jsonb
+        constraint: CHECK (jsonb_typeof(raw_payload) = 'object')
+      - name: occurred_at
+        type: timestamptz
+        null: no
+        constraint: immutable
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
+
+  - entity: audit_quarantine
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'quar_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        constraint: immutable, CHECK (source = btrim(source) AND source <> '')
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: audit_id
+        type: text
+        null: no
+        constraint: CHECK (audit_id = btrim(audit_id) AND audit_id <> '')
+      - name: quarantine_reason
+        type: text
+        null: no
+        constraint: CHECK (quarantine_reason IN ('ATTRIBUTION_MISSING', 'SCHEMA_INVALID', 'PAYLOAD_CORRUPT'))
+      - name: raw_record
+        type: jsonb
+        null: no
+        default: '{}'::jsonb
+        constraint: CHECK (jsonb_typeof(raw_record) = 'object')
+      - name: error_details
+        type: text
+        null: no
+        default: ''
+      - name: resolved
+        type: boolean
+        null: no
+        default: false
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
+
+  - entity: audit_checkpoints
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'ack_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'AUDIT_CHECKPOINT_WORKER'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: segment_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: last_sequence_id
+        type: bigint
+        null: no
+        constraint: CHECK (last_sequence_id >= 1)
+      - name: head_hash
+        type: char(64)
+        null: no
+        constraint: CHECK (length(head_hash) = 64)
+      - name: signature
+        type: text
+        null: no
+        constraint: CHECK (signature = btrim(signature) AND signature <> '')
+      - name: key_id
+        type: text
+        null: no
+        constraint: CHECK (key_id = btrim(key_id) AND key_id <> '')
+      - name: event_count
+        type: int
+        null: no
+        constraint: CHECK (event_count >= 1)
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
+
+  - entity: audit_chain_verifications
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'acv_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'AUDIT_VERIFIER'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: segment_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: verified_up_to_sequence
+        type: bigint
+        null: no
+      - name: total_events_checked
+        type: int
+        null: no
+        constraint: CHECK (total_events_checked >= 0)
+      - name: status
+        type: text
+        null: no
+        default: 'VALID'
+        constraint: CHECK (status IN ('VALID', 'COMPROMISED'))
+      - name: failure_sequence_id
+        type: bigint
+        null: yes
+      - name: failure_reason
+        type: text
+        null: no
+        default: ''
+      - name: verified_by
+        type: text
+        null: no
+        constraint: CHECK (verified_by = btrim(verified_by) AND verified_by <> '')
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
