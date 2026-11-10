@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"time"
 
-	contracts "distributed-transaction-engine/src/features/fencing-tokens/contracts"
 	fencingtokens "distributed-transaction-engine/src/features/fencing-tokens"
+	contracts "distributed-transaction-engine/src/features/fencing-tokens/contracts"
 	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/constants"
 	appErrors "distributed-transaction-engine/src/shared/errors"
@@ -177,7 +177,7 @@ func (h *FencingTokensHandler) setStandardHeaders(w http.ResponseWriter, r *http
 
 func (h *FencingTokensHandler) writeResponse(w http.ResponseWriter, r *http.Request, statusCode int, data any, start time.Time) {
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(types.ApiResponse{
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(types.ApiResponse{
 		Success:    statusCode < 400,
 		StatusCode: statusCode,
 		Data:       data,
@@ -189,7 +189,7 @@ func (h *FencingTokensHandler) writeResponse(w http.ResponseWriter, r *http.Requ
 			ExecutionTimeMs: time.Since(start).Milliseconds(),
 			APIVersion:      "v1",
 		},
-	})
+	}))
 }
 
 func (h *FencingTokensHandler) writeError(w http.ResponseWriter, r *http.Request, err error, start time.Time) {
@@ -204,7 +204,7 @@ func (h *FencingTokensHandler) writeError(w http.ResponseWriter, r *http.Request
 	}
 
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(types.ApiResponse{
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(types.ApiResponse{
 		Success:    false,
 		StatusCode: statusCode,
 		Error: &types.ResponseError{
@@ -220,5 +220,5 @@ func (h *FencingTokensHandler) writeError(w http.ResponseWriter, r *http.Request
 			ExecutionTimeMs: time.Since(start).Milliseconds(),
 			APIVersion:      "v1",
 		},
-	})
+	}))
 }

@@ -1,6 +1,7 @@
 package machines
 
 import (
+	"distributed-transaction-engine/src/infra/observability"
 	appErrors "distributed-transaction-engine/src/shared/errors"
 )
 
@@ -30,7 +31,8 @@ func NewFencingLeaseMachine() *FencingLeaseMachine {
 	return &FencingLeaseMachine{}
 }
 
-func (m *FencingLeaseMachine) Transition(current LeaseState, event LeaseEvent) (LeaseState, error) {
+func (m *FencingLeaseMachine) Transition(current LeaseState, event LeaseEvent) (spanResult0 LeaseState, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	switch current {
 	case LeaseStateUnallocated:
 		if event == LeaseEventAcquire {
@@ -68,9 +70,11 @@ func (m *FencingLeaseMachine) Transition(current LeaseState, event LeaseEvent) (
 }
 
 func (m *FencingLeaseMachine) CanRenew(current LeaseState) bool {
+	defer observability.TraceEnter(nil)()
 	return current == LeaseStateAcquired || current == LeaseStateRenewed
 }
 
 func (m *FencingLeaseMachine) CanRelease(current LeaseState) bool {
+	defer observability.TraceEnter(nil)()
 	return current == LeaseStateAcquired || current == LeaseStateRenewed
 }

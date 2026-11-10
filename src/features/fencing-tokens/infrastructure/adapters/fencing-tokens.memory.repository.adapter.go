@@ -2,16 +2,15 @@ package adapters
 
 import (
 	"context"
+	"distributed-transaction-engine/src/features/fencing-tokens/contracts"
+	"distributed-transaction-engine/src/features/fencing-tokens/infrastructure/ports"
+	"distributed-transaction-engine/src/infra/observability"
+	appErrors "distributed-transaction-engine/src/shared/errors"
 	"fmt"
+	"github.com/google/uuid"
 	"strings"
 	"sync"
 	"time"
-
-	"distributed-transaction-engine/src/features/fencing-tokens/contracts"
-	"distributed-transaction-engine/src/features/fencing-tokens/infrastructure/ports"
-	appErrors "distributed-transaction-engine/src/shared/errors"
-
-	"github.com/google/uuid"
 )
 
 type MemoryFencingRepositoryAdapter struct {
@@ -31,7 +30,8 @@ func NewMemoryFencingRepositoryAdapter() *MemoryFencingRepositoryAdapter {
 	}
 }
 
-func (a *MemoryFencingRepositoryAdapter) AcquireOrTakeover(ctx context.Context, tenantID, resourceID, holderID string, durationMs int) (*contracts.FencingLease, error) {
+func (a *MemoryFencingRepositoryAdapter) AcquireOrTakeover(ctx context.Context, tenantID, resourceID, holderID string, durationMs int) (spanResult0 *contracts.FencingLease, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -76,7 +76,8 @@ func (a *MemoryFencingRepositoryAdapter) AcquireOrTakeover(ctx context.Context, 
 	return &lease, nil
 }
 
-func (a *MemoryFencingRepositoryAdapter) Renew(ctx context.Context, tenantID, resourceID, holderID string, epoch int64, durationMs int) (*contracts.FencingLease, error) {
+func (a *MemoryFencingRepositoryAdapter) Renew(ctx context.Context, tenantID, resourceID, holderID string, epoch int64, durationMs int) (spanResult0 *contracts.FencingLease, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -102,7 +103,8 @@ func (a *MemoryFencingRepositoryAdapter) Renew(ctx context.Context, tenantID, re
 	return &existing, nil
 }
 
-func (a *MemoryFencingRepositoryAdapter) Release(ctx context.Context, tenantID, resourceID, holderID string, epoch int64) error {
+func (a *MemoryFencingRepositoryAdapter) Release(ctx context.Context, tenantID, resourceID, holderID string, epoch int64) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -123,7 +125,8 @@ func (a *MemoryFencingRepositoryAdapter) Release(ctx context.Context, tenantID, 
 	return nil
 }
 
-func (a *MemoryFencingRepositoryAdapter) GetLease(ctx context.Context, tenantID, resourceID string) (*contracts.FencingLease, error) {
+func (a *MemoryFencingRepositoryAdapter) GetLease(ctx context.Context, tenantID, resourceID string) (spanResult0 *contracts.FencingLease, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -135,7 +138,8 @@ func (a *MemoryFencingRepositoryAdapter) GetLease(ctx context.Context, tenantID,
 	return &existing, nil
 }
 
-func (a *MemoryFencingRepositoryAdapter) ExecuteFencedBarrier(ctx context.Context, tenantID, resourceID string, token int64) (*contracts.FencingDecision, error) {
+func (a *MemoryFencingRepositoryAdapter) ExecuteFencedBarrier(ctx context.Context, tenantID, resourceID string, token int64) (spanResult0 *contracts.FencingDecision, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -164,7 +168,8 @@ func (a *MemoryFencingRepositoryAdapter) ExecuteFencedBarrier(ctx context.Contex
 	}, nil
 }
 
-func (a *MemoryFencingRepositoryAdapter) RecordAudit(ctx context.Context, audit contracts.FencingAudit) error {
+func (a *MemoryFencingRepositoryAdapter) RecordAudit(ctx context.Context, audit contracts.FencingAudit) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -172,7 +177,8 @@ func (a *MemoryFencingRepositoryAdapter) RecordAudit(ctx context.Context, audit 
 	return nil
 }
 
-func (a *MemoryFencingRepositoryAdapter) GetAudits(ctx context.Context, tenantID, resourceID string, limit int) ([]contracts.FencingAudit, error) {
+func (a *MemoryFencingRepositoryAdapter) GetAudits(ctx context.Context, tenantID, resourceID string, limit int) (spanResult0 []contracts.FencingAudit, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -187,4 +193,3 @@ func (a *MemoryFencingRepositoryAdapter) GetAudits(ctx context.Context, tenantID
 	}
 	return result, nil
 }
-

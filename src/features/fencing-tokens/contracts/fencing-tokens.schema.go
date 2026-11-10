@@ -1,10 +1,10 @@
 package contracts
 
 import (
+	"distributed-transaction-engine/src/infra/observability"
+	appErrors "distributed-transaction-engine/src/shared/errors"
 	"regexp"
 	"strings"
-
-	appErrors "distributed-transaction-engine/src/shared/errors"
 )
 
 var (
@@ -12,7 +12,8 @@ var (
 	auditPublicIDRegex = regexp.MustCompile(`^fnv_[0-9a-zA-Z]{26}$`)
 )
 
-func ValidateAcquireInput(input AcquireLeaseInput) error {
+func ValidateAcquireInput(input AcquireLeaseInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if strings.TrimSpace(input.TenantID) == "" {
 		return appErrors.NewValidationError("tenantId cannot be empty")
 	}
@@ -28,7 +29,8 @@ func ValidateAcquireInput(input AcquireLeaseInput) error {
 	return nil
 }
 
-func ValidateRenewInput(input RenewLeaseInput) error {
+func ValidateRenewInput(input RenewLeaseInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if strings.TrimSpace(input.TenantID) == "" {
 		return appErrors.NewValidationError("tenantId cannot be empty")
 	}
@@ -47,7 +49,8 @@ func ValidateRenewInput(input RenewLeaseInput) error {
 	return nil
 }
 
-func ValidateReleaseInput(input ReleaseLeaseInput) error {
+func ValidateReleaseInput(input ReleaseLeaseInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if strings.TrimSpace(input.TenantID) == "" {
 		return appErrors.NewValidationError("tenantId cannot be empty")
 	}
@@ -63,7 +66,8 @@ func ValidateReleaseInput(input ReleaseLeaseInput) error {
 	return nil
 }
 
-func ValidateBarrierInput(input FencedBarrierInput) error {
+func ValidateBarrierInput(input FencedBarrierInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if strings.TrimSpace(input.TenantID) == "" {
 		return appErrors.NewValidationError("tenantId cannot be empty")
 	}
@@ -77,10 +81,11 @@ func ValidateBarrierInput(input FencedBarrierInput) error {
 }
 
 func ValidateLeasePublicID(publicID string) bool {
+	defer observability.TraceEnter(nil)()
 	return leasePublicIDRegex.MatchString(publicID)
 }
 
 func ValidateAuditPublicID(publicID string) bool {
+	defer observability.TraceEnter(nil)()
 	return auditPublicIDRegex.MatchString(publicID)
 }
-

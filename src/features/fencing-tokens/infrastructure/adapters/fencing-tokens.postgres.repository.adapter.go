@@ -3,15 +3,14 @@ package adapters
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"strings"
-
 	"distributed-transaction-engine/src/features/fencing-tokens/contracts"
 	"distributed-transaction-engine/src/features/fencing-tokens/infrastructure/ports"
 	"distributed-transaction-engine/src/features/fencing-tokens/infrastructure/queries"
+	"distributed-transaction-engine/src/infra/observability"
 	appErrors "distributed-transaction-engine/src/shared/errors"
-
+	"fmt"
 	"github.com/google/uuid"
+	"strings"
 )
 
 type DBExecutor interface {
@@ -30,7 +29,8 @@ func NewPostgresFencingRepositoryAdapter(db DBExecutor) *PostgresFencingReposito
 	return &PostgresFencingRepositoryAdapter{db: db}
 }
 
-func (a *PostgresFencingRepositoryAdapter) AcquireOrTakeover(ctx context.Context, tenantID, resourceID, holderID string, durationMs int) (*contracts.FencingLease, error) {
+func (a *PostgresFencingRepositoryAdapter) AcquireOrTakeover(ctx context.Context, tenantID, resourceID, holderID string, durationMs int) (spanResult0 *contracts.FencingLease, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	rawUUID := uuid.New()
 	pubID := fmt.Sprintf("fnl_%s", strings.ReplaceAll(rawUUID.String(), "-", "")[:26])
 
@@ -58,7 +58,8 @@ func (a *PostgresFencingRepositoryAdapter) AcquireOrTakeover(ctx context.Context
 	return &lease, nil
 }
 
-func (a *PostgresFencingRepositoryAdapter) Renew(ctx context.Context, tenantID, resourceID, holderID string, epoch int64, durationMs int) (*contracts.FencingLease, error) {
+func (a *PostgresFencingRepositoryAdapter) Renew(ctx context.Context, tenantID, resourceID, holderID string, epoch int64, durationMs int) (spanResult0 *contracts.FencingLease, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	var lease contracts.FencingLease
 	err := a.db.QueryRowContext(
 		ctx,
@@ -82,7 +83,8 @@ func (a *PostgresFencingRepositoryAdapter) Renew(ctx context.Context, tenantID, 
 	return &lease, nil
 }
 
-func (a *PostgresFencingRepositoryAdapter) Release(ctx context.Context, tenantID, resourceID, holderID string, epoch int64) error {
+func (a *PostgresFencingRepositoryAdapter) Release(ctx context.Context, tenantID, resourceID, holderID string, epoch int64) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	res, err := a.db.ExecContext(ctx, queries.QueryReleaseLease, tenantID, resourceID, holderID, epoch)
 	if err != nil {
 		return appErrors.NewInternalError(err.Error())
@@ -97,7 +99,8 @@ func (a *PostgresFencingRepositoryAdapter) Release(ctx context.Context, tenantID
 	return nil
 }
 
-func (a *PostgresFencingRepositoryAdapter) GetLease(ctx context.Context, tenantID, resourceID string) (*contracts.FencingLease, error) {
+func (a *PostgresFencingRepositoryAdapter) GetLease(ctx context.Context, tenantID, resourceID string) (spanResult0 *contracts.FencingLease, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	var lease contracts.FencingLease
 	err := a.db.QueryRowContext(ctx, queries.QueryGetLease, tenantID, resourceID).Scan(
 		&lease.ID, &lease.PublicID, &lease.TenantID, &lease.Source,
@@ -117,7 +120,8 @@ func (a *PostgresFencingRepositoryAdapter) GetLease(ctx context.Context, tenantI
 	return &lease, nil
 }
 
-func (a *PostgresFencingRepositoryAdapter) ExecuteFencedBarrier(ctx context.Context, tenantID, resourceID string, token int64) (*contracts.FencingDecision, error) {
+func (a *PostgresFencingRepositoryAdapter) ExecuteFencedBarrier(ctx context.Context, tenantID, resourceID string, token int64) (spanResult0 *contracts.FencingDecision, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	var updatedToken int64
 	err := a.db.QueryRowContext(ctx, queries.QueryFencedBarrier, token, tenantID, resourceID).Scan(&updatedToken)
 
@@ -149,7 +153,8 @@ func (a *PostgresFencingRepositoryAdapter) ExecuteFencedBarrier(ctx context.Cont
 	return nil, appErrors.NewInternalError(err.Error())
 }
 
-func (a *PostgresFencingRepositoryAdapter) RecordAudit(ctx context.Context, audit contracts.FencingAudit) error {
+func (a *PostgresFencingRepositoryAdapter) RecordAudit(ctx context.Context, audit contracts.FencingAudit) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	_, err := a.db.ExecContext(
 		ctx,
 		queries.QueryRecordAudit,
@@ -163,7 +168,8 @@ func (a *PostgresFencingRepositoryAdapter) RecordAudit(ctx context.Context, audi
 	return nil
 }
 
-func (a *PostgresFencingRepositoryAdapter) GetAudits(ctx context.Context, tenantID, resourceID string, limit int) ([]contracts.FencingAudit, error) {
+func (a *PostgresFencingRepositoryAdapter) GetAudits(ctx context.Context, tenantID, resourceID string, limit int) (spanResult0 []contracts.FencingAudit, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	rows, err := a.db.QueryContext(ctx, queries.QueryGetAudits, tenantID, resourceID, limit)
 	if err != nil {
 		return nil, appErrors.NewInternalError(err.Error())

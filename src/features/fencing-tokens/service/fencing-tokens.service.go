@@ -51,9 +51,12 @@ func NewService(deps ServiceDeps) *FencingTokensService {
 	}
 }
 
-func (s *FencingTokensService) AcquireLease(ctx context.Context, input contracts.AcquireLeaseInput) (*contracts.FencingLease, error) {
+func (s *FencingTokensService) AcquireLease(ctx context.Context, input contracts.AcquireLeaseInput) (spanResult0 *contracts.FencingLease, spanErr error) {
 	ctx, span := s.tracer.StartSpan(ctx, "fencing.service_acquire_lease")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	if err := contracts.ValidateAcquireInput(input); err != nil {
 		return nil, err
@@ -62,9 +65,12 @@ func (s *FencingTokensService) AcquireLease(ctx context.Context, input contracts
 	return s.repo.AcquireOrTakeover(ctx, input.TenantID, input.ResourceID, input.HolderID, input.LeaseDurationMs)
 }
 
-func (s *FencingTokensService) RenewLease(ctx context.Context, input contracts.RenewLeaseInput) (*contracts.FencingLease, error) {
+func (s *FencingTokensService) RenewLease(ctx context.Context, input contracts.RenewLeaseInput) (spanResult0 *contracts.FencingLease, spanErr error) {
 	ctx, span := s.tracer.StartSpan(ctx, "fencing.service_renew_lease")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	if err := contracts.ValidateRenewInput(input); err != nil {
 		return nil, err
@@ -73,9 +79,12 @@ func (s *FencingTokensService) RenewLease(ctx context.Context, input contracts.R
 	return s.repo.Renew(ctx, input.TenantID, input.ResourceID, input.HolderID, input.Epoch, input.LeaseDurationMs)
 }
 
-func (s *FencingTokensService) ReleaseLease(ctx context.Context, input contracts.ReleaseLeaseInput) error {
+func (s *FencingTokensService) ReleaseLease(ctx context.Context, input contracts.ReleaseLeaseInput) (spanErr error) {
 	ctx, span := s.tracer.StartSpan(ctx, "fencing.service_release_lease")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	if err := contracts.ValidateReleaseInput(input); err != nil {
 		return err
@@ -84,16 +93,22 @@ func (s *FencingTokensService) ReleaseLease(ctx context.Context, input contracts
 	return s.repo.Release(ctx, input.TenantID, input.ResourceID, input.HolderID, input.Epoch)
 }
 
-func (s *FencingTokensService) GetLease(ctx context.Context, tenantID, resourceID string) (*contracts.FencingLease, error) {
+func (s *FencingTokensService) GetLease(ctx context.Context, tenantID, resourceID string) (spanResult0 *contracts.FencingLease, spanErr error) {
 	ctx, span := s.tracer.StartSpan(ctx, "fencing.service_get_lease")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	return s.repo.GetLease(ctx, tenantID, resourceID)
 }
 
-func (s *FencingTokensService) ValidateAndFence(ctx context.Context, input contracts.FencedBarrierInput) (*contracts.FencingDecision, error) {
+func (s *FencingTokensService) ValidateAndFence(ctx context.Context, input contracts.FencedBarrierInput) (spanResult0 *contracts.FencingDecision, spanErr error) {
 	ctx, span := s.tracer.StartSpan(ctx, "fencing.service_validate_and_fence")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	if err := contracts.ValidateBarrierInput(input); err != nil {
 		return nil, err
@@ -117,15 +132,18 @@ func (s *FencingTokensService) ValidateAndFence(ctx context.Context, input contr
 			ViolationType:  decision.ViolationType,
 			RecordedAt:     time.Now().UTC(),
 		}
-		_ = s.repo.RecordAudit(ctx, audit)
+		observability.NoteSwallowed(s.repo.RecordAudit(ctx, audit))
 	}
 
 	return decision, nil
 }
 
-func (s *FencingTokensService) GetAudits(ctx context.Context, tenantID, resourceID string, limit int) ([]contracts.FencingAudit, error) {
+func (s *FencingTokensService) GetAudits(ctx context.Context, tenantID, resourceID string, limit int) (spanResult0 []contracts.FencingAudit, spanErr error) {
 	ctx, span := s.tracer.StartSpan(ctx, "fencing.service_get_audits")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	if limit <= 0 {
 		limit = 10
