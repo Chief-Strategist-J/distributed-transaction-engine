@@ -72,7 +72,10 @@ func (s *OCCService) MutateWithOCC(
 	}
 
 	applied, err := s.repo.IsInputApplied(ctx, input.TenantID, input.SagaID, input.InputID)
-	if err == nil && applied {
+	if err != nil {
+		return nil, err
+	}
+	if applied {
 		return &contracts.CASResult{
 			Succeeded:    true,
 			ErrorMessage: "input already applied, skipping redundant mutation",

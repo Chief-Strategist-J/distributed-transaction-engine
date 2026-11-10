@@ -2,17 +2,21 @@ package adapters
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"distributed-transaction-engine/src/features/optimistic-concurrency-control/contracts"
 	"distributed-transaction-engine/src/features/optimistic-concurrency-control/infrastructure/ports"
 	"distributed-transaction-engine/src/features/optimistic-concurrency-control/infrastructure/queries"
 	"distributed-transaction-engine/src/infra/observability"
 	appErrors "distributed-transaction-engine/src/shared/errors"
+	"encoding/hex"
 	"fmt"
 	"github.com/google/uuid"
 	"strings"
 	"time"
 )
+
+const maxInboxExternalIDLength = 128
 
 type PostgresOCCRepositoryAdapter struct {
 	db *sql.DB
@@ -160,24 +164,35 @@ func (a *PostgresOCCRepositoryAdapter) RecordContention(ctx context.Context, ent
 	return nil
 }
 
+func inputExternalID(sagaID uuid.UUID, inputID string) string {
+	external := sagaID.String() + ":" + inputID
+	if len(external) <= maxInboxExternalIDLength {
+		return external
+	}
+	digest := sha256.Sum256([]byte(external))
+	return hex.EncodeToString(digest[:])
+}
+
 func (a *PostgresOCCRepositoryAdapter) IsInputApplied(ctx context.Context, tenantID string, sagaID uuid.UUID, inputID string) (spanResult0 bool, spanErr error) {
 	defer observability.TraceEnter(&spanErr)()
-	var count int
-	query := `SELECT COUNT(*) FROM inbox_messages WHERE tenant_id = $1 AND message_id = $2;`
-	err := a.db.QueryRowContext(ctx, query, tenantID, inputID).Scan(&count)
+	var applied bool
+	err := a.db.QueryRowContext(ctx, queries.QuerySelectInputApplied, tenantID, inputExternalID(sagaID, inputID)).Scan(&applied)
 	if err != nil {
-		return false, nil
+		return false, appErrors.NewInternalError("input dedupe lookup failed")
 	}
-	return count > 0, nil
+	return applied, nil
 }
 
 func (a *PostgresOCCRepositoryAdapter) MarkInputApplied(ctx context.Context, tenantID string, sagaID uuid.UUID, inputID string) (spanErr error) {
 	defer observability.TraceEnter(&spanErr)()
-	query := `INSERT INTO inbox_messages (id, public_id, tenant_id, source, external_id, correlation_id, saga_id, message_id, handler_name, status, created_at, updated_at) VALUES ($1, $2, $3, 'ENGINE_OCC', $4, $5, $6, $7, 'OCC_APPLIED', 'PROCESSED', NOW(), NOW()) ON CONFLICT (tenant_id, message_id) DO NOTHING;`
 	rawUUID := uuid.New()
+	external := inputExternalID(sagaID, inputID)
+	digest := sha256.Sum256([]byte(external))
 	pubID := fmt.Sprintf("inb_%s", strings.ReplaceAll(rawUUID.String(), "-", "")[:26])
-	_, err := a.db.ExecContext(ctx, query, rawUUID, pubID, tenantID, inputID, rawUUID, sagaID, inputID)
-	return err
+	if _, err := a.db.ExecContext(ctx, queries.QueryInsertInputApplied, rawUUID, pubID, tenantID, external, rawUUID, hex.EncodeToString(digest[:])); err != nil {
+		return appErrors.NewInternalError("input dedupe record failed")
+	}
+	return nil
 }
 
 func (a *PostgresOCCRepositoryAdapter) GetRecentContentionCount(ctx context.Context, tenantID string, sagaID uuid.UUID, window time.Duration) (spanResult0 int, spanErr error) {

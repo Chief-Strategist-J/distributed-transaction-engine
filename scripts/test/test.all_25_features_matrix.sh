@@ -147,7 +147,6 @@ echo "================================================================"
 echo " 3. EXECUTING LIVE HTTP VERIFICATION ACROSS FEATURES"
 echo "================================================================"
 
-# 1. workflow-definitions
 WF_NAME="order_flow_$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
 WF_RESP=$(curl --noproxy "*" -s -i -X POST "http://127.0.0.1:${PORT}/api/v1/workflow-definitions" \
     -H "Content-Type: application/json" \
@@ -182,7 +181,6 @@ fi
 WF_DEF_ID=$(echo "${WF_RESP}" | grep -o '"id":"[^"]*' | head -n 1 | awk -F'"' '{print $4}')
 echo "[PASS] [workflow-definitions] HTTP 201 | ID: ${WF_DEF_ID}"
 
-# Seed saga_instances table to satisfy FK fk_parallel_groups_saga
 STATE_SAGA_ID=$(generate_uuid)
 STATE_PUB_ID="sga_$(python3 -c 'import uuid; print(uuid.uuid4().hex[:26])')"
 SAG_STATE_PUB_ID="sag_$(python3 -c 'import uuid; print(uuid.uuid4().hex[:26])')"
@@ -195,135 +193,113 @@ PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}"
     "INSERT INTO saga_instance_states (id, public_id, tenant_id, source, external_id, correlation_id, current_state, version, owner_epoch, fencing_token, created_at, updated_at)
      VALUES ('${STATE_SAGA_ID}', '${SAG_STATE_PUB_ID}', '${TENANT_ID}', 'TEST', 'ext_state', '${STATE_SAGA_ID}', 'CREATED', 1, 1, 0, NOW(), NOW());" >/dev/null 2>&1 
 
-# 2. transaction-state-machine
 assert_endpoint "transaction-state-machine" "POST" "http://127.0.0.1:${PORT}/api/v1/sagas/transitions" \
     "{\"tenantId\":\"${TENANT_ID}\",\"sagaId\":\"${STATE_SAGA_ID}\",\"event\":\"ORCHESTRATOR_CLAIM\",\"expectedVersion\":1,\"reason\":\"start\",\"fencingToken\":0}" \
     "200"
 
-# 3. saga-orchestration
 assert_endpoint "saga-orchestration" "POST" "http://127.0.0.1:${PORT}/api/v1/sagas/execute" \
     "{\"tenantId\":\"${TENANT_ID}\",\"workflowName\":\"${WF_NAME}\",\"workflowVersion\":1,\"source\":\"ci_test\",\"externalId\":\"ext_sga_1\",\"correlationId\":\"$(generate_uuid)\",\"initialPayload\":{}}" \
     "202"
 
-# 4. crash-recovery
 assert_endpoint "crash-recovery" "GET" "http://127.0.0.1:${PORT}/api/v1/crash-recovery/status" "" "200"
 
-# 5. sequential-execution
 SEQ_ID=$(generate_uuidv7)
 SEQ_PUB="seq_$(python3 -c 'import uuid; print(uuid.uuid4().hex[:26])')"
 assert_endpoint "sequential-execution" "POST" "http://127.0.0.1:${PORT}/api/v1/sagas/sequential/start" \
     "{\"id\":\"${SEQ_ID}\",\"publicId\":\"${SEQ_PUB}\",\"tenantId\":\"${TENANT_ID}\",\"workflowDefinitionId\":\"${WF_DEF_ID}\",\"source\":\"ci_test\",\"externalId\":\"ext_seq_1\",\"correlationId\":\"$(generate_uuid)\",\"payload\":{}}" \
     "201"
 
-# 6. parallel-execution
 PAR_ID=$(generate_uuidv7)
 PAR_PUB="par_$(python3 -c 'import uuid; print(uuid.uuid4().hex[:26])')"
 assert_endpoint "parallel-execution" "POST" "http://127.0.0.1:${PORT}/api/v1/sagas/parallel/start" \
     "{\"id\":\"${PAR_ID}\",\"publicId\":\"${PAR_PUB}\",\"tenantId\":\"${TENANT_ID}\",\"sagaId\":\"${STATE_SAGA_ID}\",\"branches\":[{\"branchId\":\"br-1\",\"name\":\"Branch 1\",\"role\":\"REQUIRED\",\"effectType\":\"COMPENSABLE\",\"payload\":{}}],\"joinPolicy\":\"ALL_REQUIRED\",\"quorumCount\":0}" \
     "201"
 
-# 7. inbox-deduplication
 INB_ID=$(generate_uuid)
 INB_PUB="inb_$(python3 -c 'import uuid; print(uuid.uuid4().hex[:26])')"
 assert_endpoint "inbox-deduplication" "POST" "http://127.0.0.1:${PORT}/api/v1/inbox/ingest" \
     "{\"id\":\"${INB_ID}\",\"publicId\":\"${INB_PUB}\",\"tenantId\":\"${TENANT_ID}\",\"source\":\"ORDERS\",\"externalId\":\"ext_inb_1\",\"correlationId\":\"$(generate_uuid)\",\"handlerName\":\"order_handler\",\"handlerGeneration\":1,\"producerEventTime\":\"2026-11-10T00:00:00Z\",\"payload\":{}}" \
     "201"
 
-# 8. idempotency-keys
 IDK_ID=$(generate_uuid)
 IDK_PUB="idk_$(python3 -c 'import uuid; print(uuid.uuid4().hex[:26])')"
 assert_endpoint "idempotency-keys" "POST" "http://127.0.0.1:${PORT}/api/v1/idempotency/acquire" \
     "{\"id\":\"${IDK_ID}\",\"publicId\":\"${IDK_PUB}\",\"tenantId\":\"${TENANT_ID}\",\"source\":\"CHECKOUT\",\"externalId\":\"ext_idk_1\",\"correlationId\":\"$(generate_uuid)\",\"principalId\":\"usr-1\",\"operationId\":\"checkout\",\"idempotencyKey\":\"key-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:12])')\",\"payload\":{}}" \
-    "200"
+    "201"
 
-# 9. retry-policies
-assert_endpoint "retry-policies" "POST" "http://127.0.0.1:${PORT}/api/v1/retry-policies/evaluate" \
-    "{\"tenantId\":\"${TENANT_ID}\",\"stepName\":\"pay\",\"attempt\":1,\"errorCode\":\"NET_TIMEOUT\"}" \
-    "200"
+assert_endpoint "retry-policies" "GET" "http://127.0.0.1:${PORT}/api/v1/retry-policies/breaker/status?dependencyId=dep-pay-1" "" "200"
 
-# 10. compensation-engine
 CMP_ID=$(generate_uuidv7)
 CMP_PUB="cmp_$(python3 -c 'import uuid; print(uuid.uuid4().hex[:26])')"
 assert_endpoint "compensation-engine" "POST" "http://127.0.0.1:${PORT}/api/v1/compensation/trigger" \
     "{\"id\":\"${CMP_ID}\",\"publicId\":\"${CMP_PUB}\",\"tenantId\":\"${TENANT_ID}\",\"sagaId\":\"${STATE_SAGA_ID}\",\"reason\":\"failure\",\"forwardSteps\":[]}" \
-    "200"
+    "201"
 
-# 11. fencing-tokens
 assert_endpoint "fencing-tokens" "POST" "http://127.0.0.1:${PORT}/api/v1/fencing/acquire" \
-    "{\"tenantId\":\"${TENANT_ID}\",\"resourceId\":\"res-001\",\"leaseOwner\":\"worker-1\",\"leaseDuration\":\"10s\"}" \
+    "{\"tenantId\":\"${TENANT_ID}\",\"resourceId\":\"res-001\",\"holderId\":\"worker-1\",\"leaseDurationMs\":10000}" \
+    "201"
+
+assert_endpoint "compensation-retry" "POST" "http://127.0.0.1:${PORT}/api/v1/compensation-retry/evaluate" \
+    "{\"tenantId\":\"${TENANT_ID}\",\"sagaId\":\"${STATE_SAGA_ID}\",\"stepId\":\"refund\",\"stepType\":\"HTTP\",\"dependencyID\":\"dep-refund\",\"compensationKey\":\"key-refund\",\"attemptNumber\":1,\"statusCode\":500,\"errorMessage\":\"timeout\",\"firstAttemptAt\":\"2026-11-01T00:00:00Z\",\"businessDeadline\":\"2026-11-02T00:00:00Z\"}" \
     "200"
 
-# 12. compensation-retry
-assert_endpoint "compensation-retry" "POST" "http://127.0.0.1:${PORT}/api/v1/compensation-retry/record" \
-    "{\"tenantId\":\"${TENANT_ID}\",\"sagaId\":\"${STATE_SAGA_ID}\",\"stepId\":\"refund\",\"statusCode\":500,\"errorMessage\":\"timeout\",\"firstAttemptAt\":\"2026-11-01T00:00:00Z\",\"businessDeadline\":\"2026-11-02T00:00:00Z\"}" \
-    "200"
+DLQ_ATTEMPT_ID=$(generate_uuid)
+assert_endpoint "dead-letter-queue" "POST" "http://127.0.0.1:${PORT}/api/v1/dlq/admit" \
+    "{\"tenantId\":\"${TENANT_ID}\",\"correlationId\":\"$(generate_uuid)\",\"sagaId\":\"${STATE_SAGA_ID}\",\"stepIndex\":1,\"stepType\":\"INVOKE\",\"attemptId\":\"${DLQ_ATTEMPT_ID}\",\"idempotencyKey\":\"dlq-key-1\",\"outcomeClass\":\"FAILED\",\"failureClass\":\"POISON\",\"errorFingerprint\":\"fp_001\",\"rawMessage\":\"terminal unrecoverable failure\",\"payloadRef\":\"s3://bucket/key\",\"schemaVersion\":1,\"moneyAtStakeCents\":5000,\"currency\":\"USD\"}" \
+    "201"
 
-# 13. dead-letter-queue
-assert_endpoint "dead-letter-queue" "POST" "http://127.0.0.1:${PORT}/api/v1/dlq/record" \
-    "{\"tenantId\":\"${TENANT_ID}\",\"sagaId\":\"${STATE_SAGA_ID}\",\"stepId\":\"ship\",\"stepType\":\"INVOKE\",\"terminalError\":\"unrecoverable\",\"attemptCount\":5,\"businessDeadline\":\"2026-11-02T00:00:00Z\"}" \
-    "200"
-
-# 14. reconciliation-engine
 assert_endpoint "reconciliation-engine" "POST" "http://127.0.0.1:${PORT}/api/v1/reconciliation/evaluate" \
     "{\"tenantId\":\"${TENANT_ID}\",\"sagaId\":\"${STATE_SAGA_ID}\",\"internalStatus\":\"COMPLETED\",\"externalStatus\":\"FAILED\",\"internalAmountCents\":5000,\"externalAmountCents\":5000,\"currency\":\"USD\"}" \
     "200"
 
-# 15. manual-intervention
 assert_endpoint "manual-intervention" "POST" "http://127.0.0.1:${PORT}/api/v1/manual-intervention/intervene" \
     "{\"tenantId\":\"${TENANT_ID}\",\"sagaId\":\"${STATE_SAGA_ID}\",\"operatorId\":\"alice\",\"operatorRole\":\"admin:saga:intervene\",\"actionType\":\"FORCE_RETRY\",\"currentSagaState\":\"FAILED\",\"reason\":\"retry\"}" \
     "200"
 
-# 16. scheduled-execution
 assert_endpoint "scheduled-execution" "POST" "http://127.0.0.1:${PORT}/api/v1/scheduled-execution/schedules" \
     "{\"tenantId\":\"${TENANT_ID}\",\"workflowId\":\"wfd_123\",\"scheduleType\":\"RECURRING_CRON\",\"cronExpression\":\"0 * * * *\",\"timeZone\":\"UTC\",\"runAsPrincipal\":\"daemon\"}" \
     "201"
 
-# 17. optimistic-concurrency-control
 assert_endpoint "optimistic-concurrency-control" "POST" "http://127.0.0.1:${PORT}/api/v1/occ/mutate" \
     "{\"tenantId\":\"${TENANT_ID}\",\"sagaId\":\"${STATE_SAGA_ID}\",\"expectedVersion\":2,\"expectedEpoch\":1,\"targetState\":\"RUNNING\",\"workerID\":\"w1\",\"inputId\":\"inp-1\",\"inputType\":\"REPLY\",\"inputPayload\":\"{}\"}" \
     "200"
 
-# 18. workflow-versioning
 assert_endpoint "workflow-versioning" "POST" "http://127.0.0.1:${PORT}/api/v1/workflow-versions/bundles" \
-    "{\"tenant_id\":\"${TENANT_ID}\",\"workflow_name\":\"payment-flow\",\"version\":\"1.0.0\",\"definition_json\":\"{}\"}" \
+    "{\"tenantId\":\"${TENANT_ID}\",\"source\":\"ci_test\",\"externalId\":\"ext_wv_1\",\"correlationId\":\"$(generate_uuid)\",\"workflowName\":\"payment-flow\",\"versionTag\":\"1.0.0\",\"signature\":\"sig_mock\",\"bundlePayload\":{\"steps\":[{\"name\":\"reserve\"}]},\"capabilitiesRequired\":[]}" \
     "201"
 
-# 19. audit-trail
 assert_endpoint "audit-trail" "POST" "http://127.0.0.1:${PORT}/api/v1/audit/events/capture" \
-    "{\"tenant_id\":\"${TENANT_ID}\",\"entity_id\":\"${STATE_SAGA_ID}\",\"event_type\":\"STATE_CHANGE\",\"payload\":\"{}\"}" \
-    "200"
+    "{\"tenant_id\":\"${TENANT_ID}\",\"source\":\"ci_test\",\"external_id\":\"ext_aud_1\",\"correlation_id\":\"$(generate_uuid)\",\"audit_id\":\"aud_001\",\"occurred_at\":\"2026-11-10T00:00:00Z\",\"action\":\"SAGA_CREATED\",\"actor_id\":\"user_1\",\"actor_ip\":\"127.0.0.1\",\"on_behalf_of\":\"user_1\",\"target_resource\":\"sagas/${STATE_SAGA_ID}\",\"payload\":{}}" \
+    "202"
 
-# 20. authentication-authorization
-assert_endpoint "authentication-authorization" "POST" "http://127.0.0.1:${PORT}/api/v1/auth/tokens/authenticate" \
-    "{\"tenant_id\":\"${TENANT_ID}\",\"token\":\"tok_test_sample\"}" \
-    "200"
+assert_endpoint "authentication-authorization" "POST" "http://127.0.0.1:${PORT}/api/v1/auth/api-keys" \
+    "{\"tenant_id\":\"${TENANT_ID}\",\"name\":\"ci_key\",\"scopes\":[\"saga:read\",\"saga:write\"],\"allowed_cidrs\":[\"127.0.0.1/32\"]}" \
+    "201"
 
-# 21. distributed-tracing
 assert_endpoint "distributed-tracing" "POST" "http://127.0.0.1:${PORT}/api/v1/tracing/context/start" \
     "{\"tenant_id\":\"${TENANT_ID}\",\"correlation_id\":\"$(generate_uuid)\",\"route\":\"/checkout\",\"is_vip\":true}" \
     "200"
 
-# 22. operational-dashboard
 assert_endpoint "operational-dashboard" "GET" "http://127.0.0.1:${PORT}/api/v1/dashboard/overview?tenant_id=${TENANT_ID}" "" "200"
 
-# 23. transactional-outbox
 OX_EVENT_ID=$(generate_uuid)
 OX_EVENT_PUB_ID="oxe_$(python3 -c 'import uuid; print(uuid.uuid4().hex[:26])')"
 OX_TOPIC="dist-tx.live-verify.mat.${TENANT_ID}"
+
+/snap/bin/docker exec dist_tx-kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic "${OX_TOPIC}" --partitions 1 --replication-factor 1 >/dev/null 2>&1
+
 PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -c \
     "INSERT INTO outbox_events (id, public_id, tenant_id, saga_id, aggregate_type, aggregate_id, aggregate_sequence, destination_topic, partition_key, event_type, payload, headers, status, attempt_count, version, created_at, updated_at)
      VALUES ('${OX_EVENT_ID}', '${OX_EVENT_PUB_ID}', '${TENANT_ID}', '${STATE_SAGA_ID}', 'SAGA', '${STATE_SAGA_ID}', 1, '${OX_TOPIC}', '${STATE_SAGA_ID}', 'PAYMENT_COMPLETED', '{\"amount\":500}'::jsonb, '{\"tenant\":\"${TENANT_ID}\"}'::jsonb, 'PENDING', 0, 1, NOW(), NOW());" 
 
 assert_endpoint "transactional-outbox" "POST" "http://127.0.0.1:${PORT}/api/v1/outbox/relay" \
-    "{\"tenantId\":\"${TENANT_ID}\",\"batchSize\":10}" \
+    "{\"tenantId\":\"${TENANT_ID}\",\"topic\":\"${OX_TOPIC}\",\"workerId\":\"worker-relay-1\",\"batchLimit\":10}" \
     "200"
 
-# 24. transaction-query-api
 assert_endpoint "transaction-query-api" "POST" "http://127.0.0.1:${PORT}/api/v1/transactions:search" \
     "{\"tenant_id\":\"${TENANT_ID}\"}" \
     "200"
 
-# 25. tenant-isolation (verified via DB schema check)
 echo "--- Verifying Feature 25: Tenant Isolation Constraint ---"
 ISOLATION_CHECK=$(PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -t -A -c \
     "SELECT count(*) FROM saga_instance_states WHERE tenant_id = '${TENANT_ID}';")

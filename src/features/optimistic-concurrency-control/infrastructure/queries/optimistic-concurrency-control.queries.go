@@ -63,5 +63,21 @@ const (
 			$9::jsonb, '{}'::jsonb, 'PENDING', 1, NOW(), NOW()
 		);
 	`
-)
 
+	QuerySelectInputApplied = `
+		SELECT EXISTS (
+			SELECT 1 FROM inbox_messages
+			WHERE tenant_id = $1 AND handler_name = 'OCC_APPLIED' AND handler_generation = 1 AND external_id = $2
+		);
+	`
+
+	QueryInsertInputApplied = `
+		INSERT INTO inbox_messages (
+			id, public_id, tenant_id, source, external_id, correlation_id, handler_name, handler_generation,
+			content_hash, status, attempt_count, producer_event_time, payload, version, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, 'ENGINE_OCC', $4, $5, 'OCC_APPLIED', 1, $6, 'APPLIED', 1, NOW(), '{}'::jsonb, 1, NOW(), NOW()
+		)
+		ON CONFLICT ON CONSTRAINT inbox_messages_dedup_uk DO NOTHING;
+	`
+)
