@@ -3,15 +3,15 @@ package adapters
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"strings"
-	"time"
-
 	"distributed-transaction-engine/src/features/compensation-retry/contracts"
 	"distributed-transaction-engine/src/features/compensation-retry/infrastructure/ports"
 	"distributed-transaction-engine/src/features/compensation-retry/infrastructure/queries"
+	"distributed-transaction-engine/src/infra/observability"
 	appErrors "distributed-transaction-engine/src/shared/errors"
+	"fmt"
 	"github.com/google/uuid"
+	"strings"
+	"time"
 )
 
 type DBExecutor interface {
@@ -53,7 +53,8 @@ func mapDBConstraintError(err error) error {
 	return appErrors.NewInternalError("database operation failed: " + msg)
 }
 
-func (a *PostgresCompensationRetryRepositoryAdapter) UpsertAttempt(ctx context.Context, record contracts.CompensationRetryRecord) (*contracts.CompensationRetryRecord, error) {
+func (a *PostgresCompensationRetryRepositoryAdapter) UpsertAttempt(ctx context.Context, record contracts.CompensationRetryRecord) (spanResult0 *contracts.CompensationRetryRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	var r contracts.CompensationRetryRecord
 	err := a.db.QueryRowContext(
 		ctx,
@@ -80,7 +81,8 @@ func (a *PostgresCompensationRetryRepositoryAdapter) UpsertAttempt(ctx context.C
 	return &r, nil
 }
 
-func (a *PostgresCompensationRetryRepositoryAdapter) GetRecord(ctx context.Context, tenantID string, sagaID uuid.UUID, stepID string) (*contracts.CompensationRetryRecord, error) {
+func (a *PostgresCompensationRetryRepositoryAdapter) GetRecord(ctx context.Context, tenantID string, sagaID uuid.UUID, stepID string) (spanResult0 *contracts.CompensationRetryRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	var r contracts.CompensationRetryRecord
 	err := a.db.QueryRowContext(
 		ctx,
@@ -105,7 +107,8 @@ func (a *PostgresCompensationRetryRepositoryAdapter) GetRecord(ctx context.Conte
 	return &r, nil
 }
 
-func (a *PostgresCompensationRetryRepositoryAdapter) UpdateStatus(ctx context.Context, tenantID string, sagaID uuid.UUID, stepID string, status string, nextRetryAt *time.Time, lastError string) error {
+func (a *PostgresCompensationRetryRepositoryAdapter) UpdateStatus(ctx context.Context, tenantID string, sagaID uuid.UUID, stepID string, status string, nextRetryAt *time.Time, lastError string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	res, err := a.db.ExecContext(
 		ctx,
 		queries.QueryUpdateCompensationStatus,
@@ -126,7 +129,8 @@ func (a *PostgresCompensationRetryRepositoryAdapter) UpdateStatus(ctx context.Co
 	return nil
 }
 
-func (a *PostgresCompensationRetryRepositoryAdapter) PauseStepType(ctx context.Context, tenantID string, stepType string) error {
+func (a *PostgresCompensationRetryRepositoryAdapter) PauseStepType(ctx context.Context, tenantID string, stepType string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	pubID := fmt.Sprintf("stp_%s", strings.ReplaceAll(uuid.New().String(), "-", "")[:26])
 	extID := fmt.Sprintf("%s:%s", tenantID, stepType)
 	_, err := a.db.ExecContext(
@@ -140,7 +144,8 @@ func (a *PostgresCompensationRetryRepositoryAdapter) PauseStepType(ctx context.C
 	return nil
 }
 
-func (a *PostgresCompensationRetryRepositoryAdapter) ResumeStepType(ctx context.Context, tenantID string, stepType string) error {
+func (a *PostgresCompensationRetryRepositoryAdapter) ResumeStepType(ctx context.Context, tenantID string, stepType string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	pubID := fmt.Sprintf("stp_%s", strings.ReplaceAll(uuid.New().String(), "-", "")[:26])
 	extID := fmt.Sprintf("%s:%s", tenantID, stepType)
 	_, err := a.db.ExecContext(
@@ -154,7 +159,8 @@ func (a *PostgresCompensationRetryRepositoryAdapter) ResumeStepType(ctx context.
 	return nil
 }
 
-func (a *PostgresCompensationRetryRepositoryAdapter) IsStepTypePaused(ctx context.Context, tenantID string, stepType string) (bool, error) {
+func (a *PostgresCompensationRetryRepositoryAdapter) IsStepTypePaused(ctx context.Context, tenantID string, stepType string) (spanResult0 bool, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	var isPaused bool
 	err := a.db.QueryRowContext(
 		ctx,

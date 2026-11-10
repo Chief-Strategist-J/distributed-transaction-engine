@@ -50,9 +50,12 @@ func NewService(deps ServiceDeps) *CompensationRetryService {
 	}
 }
 
-func (s *CompensationRetryService) Evaluate(ctx context.Context, input contracts.EvaluateCompensationRetryInput) (*contracts.CompensationRetryDecision, error) {
+func (s *CompensationRetryService) Evaluate(ctx context.Context, input contracts.EvaluateCompensationRetryInput) (spanResult0 *contracts.CompensationRetryDecision, spanErr error) {
 	ctx, span := s.tracer.StartSpan(ctx, "compensation_retry.service_evaluate")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	sagaUUID, firstTime, deadlineTime, err := contracts.ValidateEvaluateCompensationRetryInput(input)
 	if err != nil {
@@ -73,7 +76,7 @@ func (s *CompensationRetryService) Evaluate(ctx context.Context, input contracts
 	}
 
 	if input.IsBreakerOpen {
-		_ = s.repo.UpdateStatus(ctx, input.TenantID, *sagaUUID, input.StepID, string(machines.CompensationStateFrozenBreaker), nil, "dependency circuit breaker open")
+		observability.NoteSwallowed(s.repo.UpdateStatus(ctx, input.TenantID, *sagaUUID, input.StepID, string(machines.CompensationStateFrozenBreaker), nil, "dependency circuit breaker open"))
 		return &contracts.CompensationRetryDecision{
 			Action:          "FREEZE_BREAKER",
 			OutcomeClass:    contracts.OutcomeDependencyDown,
@@ -87,7 +90,7 @@ func (s *CompensationRetryService) Evaluate(ctx context.Context, input contracts
 	escalation, isExhausted := s.rules.DetermineEscalation(now, *firstTime, *deadlineTime, input.AttemptNumber, 10)
 
 	if outcomeClass == contracts.OutcomeDone {
-		_ = s.repo.UpdateStatus(ctx, input.TenantID, *sagaUUID, input.StepID, string(machines.CompensationStateCompensated), nil, "")
+		observability.NoteSwallowed(s.repo.UpdateStatus(ctx, input.TenantID, *sagaUUID, input.StepID, string(machines.CompensationStateCompensated), nil, ""))
 		return &contracts.CompensationRetryDecision{
 			Action:          "DONE",
 			OutcomeClass:    outcomeClass,
@@ -98,7 +101,7 @@ func (s *CompensationRetryService) Evaluate(ctx context.Context, input contracts
 	}
 
 	if outcomeClass == contracts.OutcomeAmbiguous {
-		_ = s.repo.UpdateStatus(ctx, input.TenantID, *sagaUUID, input.StepID, string(machines.CompensationStateVerifyingAmbiguous), nil, input.ErrorMessage)
+		observability.NoteSwallowed(s.repo.UpdateStatus(ctx, input.TenantID, *sagaUUID, input.StepID, string(machines.CompensationStateVerifyingAmbiguous), nil, input.ErrorMessage))
 		return &contracts.CompensationRetryDecision{
 			Action:          "VERIFY_AMBIGUOUS",
 			OutcomeClass:    outcomeClass,
@@ -109,8 +112,8 @@ func (s *CompensationRetryService) Evaluate(ctx context.Context, input contracts
 	}
 
 	if outcomeClass == contracts.OutcomeContractDefect {
-		_ = s.repo.PauseStepType(ctx, input.TenantID, input.StepType)
-		_ = s.repo.UpdateStatus(ctx, input.TenantID, *sagaUUID, input.StepID, string(machines.CompensationStateStepTypePaused), nil, input.ErrorMessage)
+		observability.NoteSwallowed(s.repo.PauseStepType(ctx, input.TenantID, input.StepType))
+		observability.NoteSwallowed(s.repo.UpdateStatus(ctx, input.TenantID, *sagaUUID, input.StepID, string(machines.CompensationStateStepTypePaused), nil, input.ErrorMessage))
 		return &contracts.CompensationRetryDecision{
 			Action:          "PAUSE_STEP_TYPE",
 			OutcomeClass:    outcomeClass,
@@ -121,8 +124,8 @@ func (s *CompensationRetryService) Evaluate(ctx context.Context, input contracts
 	}
 
 	if outcomeClass == contracts.OutcomeCredential {
-		_ = s.repo.PauseStepType(ctx, input.TenantID, input.StepType)
-		_ = s.repo.UpdateStatus(ctx, input.TenantID, *sagaUUID, input.StepID, string(machines.CompensationStateStepTypePaused), nil, input.ErrorMessage)
+		observability.NoteSwallowed(s.repo.PauseStepType(ctx, input.TenantID, input.StepType))
+		observability.NoteSwallowed(s.repo.UpdateStatus(ctx, input.TenantID, *sagaUUID, input.StepID, string(machines.CompensationStateStepTypePaused), nil, input.ErrorMessage))
 		return &contracts.CompensationRetryDecision{
 			Action:          "PAUSE_STEP_TYPE",
 			OutcomeClass:    outcomeClass,
@@ -133,7 +136,7 @@ func (s *CompensationRetryService) Evaluate(ctx context.Context, input contracts
 	}
 
 	if outcomeClass == contracts.OutcomeBusinessAlternative {
-		_ = s.repo.UpdateStatus(ctx, input.TenantID, *sagaUUID, input.StepID, string(machines.CompensationStateNeedsAttention), nil, input.ErrorMessage)
+		observability.NoteSwallowed(s.repo.UpdateStatus(ctx, input.TenantID, *sagaUUID, input.StepID, string(machines.CompensationStateNeedsAttention), nil, input.ErrorMessage))
 		return &contracts.CompensationRetryDecision{
 			Action:          "BUSINESS_ALTERNATIVE",
 			OutcomeClass:    outcomeClass,
@@ -181,8 +184,9 @@ func (s *CompensationRetryService) Evaluate(ctx context.Context, input contracts
 		record.Status = string(machines.CompensationStateNeedsAttention)
 		record.NextRetryAt = nil
 		record.LastError = "retry budget or business deadline exhausted"
-		_, _ = s.repo.UpsertAttempt(ctx, record)
-		_ = s.repo.UpdateStatus(ctx, input.TenantID, *sagaUUID, input.StepID, string(machines.CompensationStateNeedsAttention), nil, "retry budget or business deadline exhausted")
+		_, swallowedErr2 := s.repo.UpsertAttempt(ctx, record)
+		observability.NoteSwallowed(swallowedErr2)
+		observability.NoteSwallowed(s.repo.UpdateStatus(ctx, input.TenantID, *sagaUUID, input.StepID, string(machines.CompensationStateNeedsAttention), nil, "retry budget or business deadline exhausted"))
 		return &contracts.CompensationRetryDecision{
 			Action:          "NEEDS_ATTENTION",
 			OutcomeClass:    contracts.OutcomeNeedsAttention,
@@ -191,8 +195,8 @@ func (s *CompensationRetryService) Evaluate(ctx context.Context, input contracts
 			Reason:          "compensation retry horizon or business deadline exhausted; non-terminal escalation to operator",
 		}, nil
 	}
-
-	_, _ = s.repo.UpsertAttempt(ctx, record)
+	_, swallowedErr1 := s.repo.UpsertAttempt(ctx, record)
+	observability.NoteSwallowed(swallowedErr1)
 
 	return &contracts.CompensationRetryDecision{
 		Action:          "RETRY",
@@ -203,24 +207,32 @@ func (s *CompensationRetryService) Evaluate(ctx context.Context, input contracts
 	}, nil
 }
 
-func (s *CompensationRetryService) GetRecord(ctx context.Context, tenantID string, sagaID uuid.UUID, stepID string) (*contracts.CompensationRetryRecord, error) {
+func (s *CompensationRetryService) GetRecord(ctx context.Context, tenantID string, sagaID uuid.UUID, stepID string) (spanResult0 *contracts.CompensationRetryRecord, spanErr error) {
 	ctx, span := s.tracer.StartSpan(ctx, "compensation_retry.service_get_record")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	return s.repo.GetRecord(ctx, tenantID, sagaID, stepID)
 }
 
-func (s *CompensationRetryService) PauseStepType(ctx context.Context, tenantID string, stepType string) error {
+func (s *CompensationRetryService) PauseStepType(ctx context.Context, tenantID string, stepType string) (spanErr error) {
 	ctx, span := s.tracer.StartSpan(ctx, "compensation_retry.service_pause_step_type")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	return s.repo.PauseStepType(ctx, tenantID, stepType)
 }
 
-func (s *CompensationRetryService) ResumeStepType(ctx context.Context, tenantID string, stepType string) error {
+func (s *CompensationRetryService) ResumeStepType(ctx context.Context, tenantID string, stepType string) (spanErr error) {
 	ctx, span := s.tracer.StartSpan(ctx, "compensation_retry.service_resume_step_type")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	return s.repo.ResumeStepType(ctx, tenantID, stepType)
 }
-

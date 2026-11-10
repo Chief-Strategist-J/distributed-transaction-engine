@@ -1,6 +1,7 @@
 package machines
 
 import (
+	"distributed-transaction-engine/src/infra/observability"
 	appErrors "distributed-transaction-engine/src/shared/errors"
 )
 
@@ -34,7 +35,8 @@ func NewCompensationRetryMachine() *CompensationRetryMachine {
 	return &CompensationRetryMachine{}
 }
 
-func (m *CompensationRetryMachine) Transition(current CompensationState, event CompensationEvent) (CompensationState, error) {
+func (m *CompensationRetryMachine) Transition(current CompensationState, event CompensationEvent) (spanResult0 CompensationState, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	switch current {
 	case CompensationStatePending, CompensationStateRetryScheduled:
 		switch event {
@@ -77,6 +79,6 @@ func (m *CompensationRetryMachine) Transition(current CompensationState, event C
 }
 
 func (m *CompensationRetryMachine) IsTerminal(state CompensationState) bool {
+	defer observability.TraceEnter(nil)()
 	return state == CompensationStateCompensated || state == CompensationStateNeedsAttention
 }
-

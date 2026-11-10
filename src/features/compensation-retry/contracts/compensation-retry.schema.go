@@ -1,21 +1,22 @@
 package contracts
 
 import (
+	"distributed-transaction-engine/src/infra/observability"
+	appErrors "distributed-transaction-engine/src/shared/errors"
+	"github.com/google/uuid"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
-
-	appErrors "distributed-transaction-engine/src/shared/errors"
-	"github.com/google/uuid"
 )
 
 var (
 	cprPublicIDRegex = regexp.MustCompile(`^cpr_[0-9a-zA-Z]{26}$`)
 )
 
-func ValidateEvaluateCompensationRetryInput(input EvaluateCompensationRetryInput) (*uuid.UUID, *time.Time, *time.Time, error) {
+func ValidateEvaluateCompensationRetryInput(input EvaluateCompensationRetryInput) (spanResult0 *uuid.UUID, spanResult1 *time.Time, spanResult2 *time.Time, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if strings.TrimSpace(input.TenantID) == "" {
 		return nil, nil, nil, appErrors.NewValidationError("tenantId cannot be empty")
 	}
@@ -65,10 +66,12 @@ func ValidateEvaluateCompensationRetryInput(input EvaluateCompensationRetryInput
 }
 
 func ValidatePublicID(publicID string) bool {
+	defer observability.TraceEnter(nil)()
 	return cprPublicIDRegex.MatchString(publicID)
 }
 
 func ParseRetryAfter(headerValue string, now time.Time) (time.Duration, bool) {
+	defer observability.TraceEnter(nil)()
 	headerValue = strings.TrimSpace(headerValue)
 	if headerValue == "" {
 		return 0, false
@@ -91,4 +94,3 @@ func ParseRetryAfter(headerValue string, now time.Time) (time.Duration, bool) {
 
 	return 0, false
 }
-

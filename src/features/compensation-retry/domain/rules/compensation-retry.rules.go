@@ -2,11 +2,11 @@ package rules
 
 import (
 	"crypto/rand"
+	"distributed-transaction-engine/src/features/compensation-retry/contracts"
+	"distributed-transaction-engine/src/infra/observability"
 	"math/big"
 	"strings"
 	"time"
-
-	"distributed-transaction-engine/src/features/compensation-retry/contracts"
 )
 
 type CompensationRetryRules struct{}
@@ -16,6 +16,7 @@ func NewCompensationRetryRules() *CompensationRetryRules {
 }
 
 func (r *CompensationRetryRules) ClassifyResult(statusCode int, errMessage string) contracts.OutcomeClass {
+	defer observability.TraceEnter(nil)()
 	if statusCode >= 200 && statusCode < 300 {
 		return contracts.OutcomeDone
 	}
@@ -50,6 +51,7 @@ func (r *CompensationRetryRules) ClassifyResult(statusCode int, errMessage strin
 }
 
 func (r *CompensationRetryRules) CalculateBackoff(attempt int, baseMillis, maxMillis int, retryAfter time.Duration) time.Duration {
+	defer observability.TraceEnter(nil)()
 	if retryAfter > 0 {
 		return retryAfter
 	}
@@ -95,6 +97,7 @@ func (r *CompensationRetryRules) DetermineEscalation(
 	attempt int,
 	maxAttempts int,
 ) (contracts.EscalationLevel, bool) {
+	defer observability.TraceEnter(nil)()
 	if !now.Before(deadline) {
 		return contracts.EscalationLevel3Missed, true
 	}
@@ -118,6 +121,6 @@ func (r *CompensationRetryRules) DetermineEscalation(
 }
 
 func (r *CompensationRetryRules) ShouldThrottleTenant(tenantUsageRatio float64) bool {
+	defer observability.TraceEnter(nil)()
 	return tenantUsageRatio > 0.20
 }
-

@@ -2,14 +2,14 @@ package adapters
 
 import (
 	"context"
-	"fmt"
-	"sync"
-	"time"
-
 	"distributed-transaction-engine/src/features/compensation-retry/contracts"
 	"distributed-transaction-engine/src/features/compensation-retry/infrastructure/ports"
+	"distributed-transaction-engine/src/infra/observability"
 	appErrors "distributed-transaction-engine/src/shared/errors"
+	"fmt"
 	"github.com/google/uuid"
+	"sync"
+	"time"
 )
 
 type MemoryCompensationRetryRepositoryAdapter struct {
@@ -27,7 +27,8 @@ func NewMemoryCompensationRetryRepositoryAdapter() *MemoryCompensationRetryRepos
 	}
 }
 
-func (a *MemoryCompensationRetryRepositoryAdapter) UpsertAttempt(ctx context.Context, record contracts.CompensationRetryRecord) (*contracts.CompensationRetryRecord, error) {
+func (a *MemoryCompensationRetryRepositoryAdapter) UpsertAttempt(ctx context.Context, record contracts.CompensationRetryRecord) (spanResult0 *contracts.CompensationRetryRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -53,7 +54,8 @@ func (a *MemoryCompensationRetryRepositoryAdapter) UpsertAttempt(ctx context.Con
 	return &record, nil
 }
 
-func (a *MemoryCompensationRetryRepositoryAdapter) GetRecord(ctx context.Context, tenantID string, sagaID uuid.UUID, stepID string) (*contracts.CompensationRetryRecord, error) {
+func (a *MemoryCompensationRetryRepositoryAdapter) GetRecord(ctx context.Context, tenantID string, sagaID uuid.UUID, stepID string) (spanResult0 *contracts.CompensationRetryRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -65,7 +67,8 @@ func (a *MemoryCompensationRetryRepositoryAdapter) GetRecord(ctx context.Context
 	return &record, nil
 }
 
-func (a *MemoryCompensationRetryRepositoryAdapter) UpdateStatus(ctx context.Context, tenantID string, sagaID uuid.UUID, stepID string, status string, nextRetryAt *time.Time, lastError string) error {
+func (a *MemoryCompensationRetryRepositoryAdapter) UpdateStatus(ctx context.Context, tenantID string, sagaID uuid.UUID, stepID string, status string, nextRetryAt *time.Time, lastError string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -84,7 +87,8 @@ func (a *MemoryCompensationRetryRepositoryAdapter) UpdateStatus(ctx context.Cont
 	return nil
 }
 
-func (a *MemoryCompensationRetryRepositoryAdapter) PauseStepType(ctx context.Context, tenantID string, stepType string) error {
+func (a *MemoryCompensationRetryRepositoryAdapter) PauseStepType(ctx context.Context, tenantID string, stepType string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -93,7 +97,8 @@ func (a *MemoryCompensationRetryRepositoryAdapter) PauseStepType(ctx context.Con
 	return nil
 }
 
-func (a *MemoryCompensationRetryRepositoryAdapter) ResumeStepType(ctx context.Context, tenantID string, stepType string) error {
+func (a *MemoryCompensationRetryRepositoryAdapter) ResumeStepType(ctx context.Context, tenantID string, stepType string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -102,11 +107,11 @@ func (a *MemoryCompensationRetryRepositoryAdapter) ResumeStepType(ctx context.Co
 	return nil
 }
 
-func (a *MemoryCompensationRetryRepositoryAdapter) IsStepTypePaused(ctx context.Context, tenantID string, stepType string) (bool, error) {
+func (a *MemoryCompensationRetryRepositoryAdapter) IsStepTypePaused(ctx context.Context, tenantID string, stepType string) (spanResult0 bool, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
 	key := fmt.Sprintf("%s:%s", tenantID, stepType)
 	return a.pausedStepTypes[key], nil
 }
-
