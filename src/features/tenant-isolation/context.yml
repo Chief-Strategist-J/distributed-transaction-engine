@@ -1,2 +1,320 @@
 feature: tenant-isolation
 mode: stateless_hexagonal
+owner: core-platform
+status: implementation_complete
+source_of_truth: db
+business_logic: docs/features/tenant-isolation/business-logic.md
+migration: database/migrations/sql/0022_create_tenant_isolation_tables.sql
+
+invariants:
+  - TI-01: tenant is derived from the authenticated principal; a requested tenant only selects among verified memberships and is answered with not-found otherwise
+  - TI-02: every unit of work carries an explicit tenant argument; no goroutine-global or thread-local tenant state
+  - TI-03: tenant context is transaction-scoped (set_config local); an absent context yields no rows
+  - TI-04: RLS is forced with USING and WITH CHECK policies; application role dtx_app is not an owner, not superuser, not BYPASSRLS
+  - TI-05: every query carries an explicit tenant predicate; keys and foreign keys include the tenant
+  - TI-06: cross-tenant references are answered as not-found, recorded as a security event, and never panic
+  - TI-07: unknown, mismatched, or offboarded tenants on messages are quarantined, never dropped, never processed
+  - TI-08: saga quota is reserved by one conditional UPDATE, never read-then-create
+  - TI-09: webhook endpoints are validated at configuration time (https only, port 443, no internal or ambiguous hosts)
+  - TI-10: operator cross-tenant access requires an explicit, time-bound grant with reason and ticket
+
+decisions:
+  - decision: message tenant consistency requires envelope, key and payload tenant to be present and equal; aggregate tenant is optional because a new aggregate has no owner yet
+  - decision: tenant ids are canonical lowercase and are rejected, never coerced, when they do not match ^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$
+  - decision: suspension semantics per reason are the table in domain/rules/tenant-isolation.rules.go; BILLING lets in-flight work and partner events continue, ABUSE pauses in-flight work and parks partner events; money owed to the tenant always continues until OFFBOARDED
+  - decision: tenant status is read from the authoritative registry on every admission decision; no cache exists, so a suspension takes effect on the next call
+  - decision: webhook hostnames are checked lexically at configuration time; delivery time must still re-resolve and re-check the resolved address
+
+roles:
+  dtx_app: tenant-scoped application path; SELECT own registry row, quota read-write for own tenant, INSERT-only on quarantine and security events
+  dtx_platform: platform operations; registry writes, quarantine listing and release, security event reads
+
+entities:
+  - entity: tenant_registry
+    fields:
+      - name: "id"
+        type: "uuid"
+        "null": "no"
+        constraint: "part of PK (tenant_id, id), immutable"
+      - name: "public_id"
+        type: "varchar(30)"
+        "null": "no"
+        constraint: "UNIQUE, immutable, format 'tnt_' + 26 chars"
+      - name: "tenant_id"
+        type: "varchar(64)"
+        "null": "no"
+        constraint: "UNIQUE, immutable, format ^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$, never reissued after OFFBOARDED"
+      - name: "correlation_id"
+        type: "uuid"
+        "null": "no"
+        constraint: "immutable, no FK"
+      - name: "status"
+        type: "varchar(16)"
+        "null": "no"
+        default: "ACTIVE"
+        constraint: "FK tenant_status(code), transition checked by trigger against tenant_status_transition"
+      - name: "suspension_reason"
+        type: "varchar(16)"
+        "null": "yes"
+        constraint: "CHECK IN ('BILLING','ABUSE'), (status = 'SUSPENDED') = (suspension_reason IS NOT NULL); null means the tenant is not suspended"
+      - name: "max_concurrent_sagas"
+        type: "integer"
+        "null": "no"
+        constraint: "CHECK BETWEEN 1 AND 1000000"
+      - name: "status_changed_at"
+        type: "timestamptz"
+        "null": "no"
+        default: "now(), maintained by trigger on status change"
+      - name: "version"
+        type: "bigint"
+        "null": "no"
+        default: "1, CHECK >= 1, optimistic concurrency"
+      - name: "created_at"
+        type: "timestamptz"
+        "null": "no"
+        default: "now()"
+      - name: "updated_at"
+        type: "timestamptz"
+        "null": "no"
+        default: "now(), maintained by trigger"
+    dropped_roles:
+      - source + external_id: the tenant id is itself the natural key supplied by the platform
+    invariants:
+      - registry rows are never deleted
+      - a tenant is always registered ACTIVE
+    pii: [none]
+
+  - entity: tenant_status_transition
+    fields:
+      - name: "from_status"
+        type: "varchar(16)"
+        "null": "no"
+        constraint: "FK tenant_status(code), part of PK"
+      - name: "to_status"
+        type: "varchar(16)"
+        "null": "no"
+        constraint: "FK tenant_status(code), part of PK, CHECK from_status <> to_status"
+    dropped_roles:
+      - all five identifier roles: lookup table keyed by natural codes
+    invariants:
+      - the machine in domain/machines/tenant-isolation.machine.go is identical to this table, asserted by a contract test
+
+  - entity: tenant_tombstone
+    fields:
+      - name: "tenant_id"
+        type: "varchar(64)"
+        "null": "no"
+        constraint: "PK, FK tenant_registry(tenant_id) ON DELETE RESTRICT"
+      - name: "tombstoned_at"
+        type: "timestamptz"
+        "null": "no"
+        default: "now()"
+    dropped_roles:
+      - id, public_id, source, external_id, correlation_id: append-only existence marker keyed by tenant id
+    invariants:
+      - rows are written only by trigger when a tenant becomes OFFBOARDED; UPDATE and DELETE raise
+
+  - entity: tenant_saga_quota
+    fields:
+      - name: "tenant_id"
+        type: "varchar(64)"
+        "null": "no"
+        constraint: "PK, FK tenant_registry(tenant_id) ON DELETE RESTRICT, immutable"
+      - name: "active_saga_count"
+        type: "bigint"
+        "null": "no"
+        default: "0, CHECK >= 0"
+      - name: "version"
+        type: "bigint"
+        "null": "no"
+        default: "1, CHECK >= 1"
+      - name: "created_at"
+        type: "timestamptz"
+        "null": "no"
+        default: "now()"
+      - name: "updated_at"
+        type: "timestamptz"
+        "null": "no"
+        default: "now(), maintained by trigger"
+    dropped_roles:
+      - id, public_id, source, external_id, correlation_id: one-row-per-tenant derived counter, rebuilt by UpdateSagaQuotaCounter from the count of non-terminal sagas
+    invariants:
+      - active_saga_count never exceeds max_concurrent_sagas through reservation; drift is repaired by reconciliation
+
+  - entity: tenant_message_quarantine
+    fields:
+      - name: "id"
+        type: "uuid"
+        "null": "no"
+        constraint: "PK, immutable"
+      - name: "public_id"
+        type: "varchar(30)"
+        "null": "no"
+        constraint: "UNIQUE, immutable, format 'tqm_' + 26 chars"
+      - name: "correlation_id"
+        type: "uuid"
+        "null": "no"
+        constraint: "immutable, no FK"
+      - name: "source_topic"
+        type: "varchar(249)"
+        "null": "no"
+        constraint: "UNIQUE(source_topic, source_partition, source_offset), immutable"
+      - name: "source_partition"
+        type: "integer"
+        "null": "no"
+        constraint: "CHECK >= 0, immutable"
+      - name: "source_offset"
+        type: "bigint"
+        "null": "no"
+        constraint: "CHECK >= 0, immutable"
+      - name: "reason"
+        type: "varchar(24)"
+        "null": "no"
+        constraint: "CHECK IN ('UNKNOWN_TENANT','INTEGRITY_MISMATCH','OFFBOARDED_TENANT'), immutable"
+      - name: "status"
+        type: "varchar(16)"
+        "null": "no"
+        default: "PENDING, CHECK IN ('PENDING','RELEASED','DISCARDED')"
+      - name: "envelope_tenant_id"
+        type: "varchar(64)"
+        "null": "yes"
+        constraint: "immutable; null when the producer omitted or sent an unstorable value"
+      - name: "key_tenant_id"
+        type: "varchar(64)"
+        "null": "yes"
+        constraint: "immutable; null when the producer omitted or sent an unstorable value"
+      - name: "payload_tenant_id"
+        type: "varchar(64)"
+        "null": "yes"
+        constraint: "immutable; null when the producer omitted or sent an unstorable value"
+      - name: "aggregate_tenant_id"
+        type: "varchar(64)"
+        "null": "yes"
+        constraint: "immutable; null when the aggregate is new or unresolved"
+      - name: "payload_sha256"
+        type: "char(64)"
+        "null": "no"
+        constraint: "CHECK ~ '^[0-9a-f]{64}$', immutable; the payload itself is never stored"
+      - name: "resolved_at"
+        type: "timestamptz"
+        "null": "yes"
+        constraint: "(status = 'PENDING') = (resolved_at IS NULL)"
+      - name: "version"
+        type: "bigint"
+        "null": "no"
+        default: "1"
+      - name: "created_at"
+        type: "timestamptz"
+        "null": "no"
+        default: "now()"
+      - name: "updated_at"
+        type: "timestamptz"
+        "null": "no"
+        default: "now(), maintained by trigger"
+    dropped_roles:
+      - tenant_id: the claimed tenant is untrusted and may be unknown, so it carries no FK and is not a partition key
+      - source + external_id: replaced by the broker coordinates (topic, partition, offset)
+    invariants:
+      - redelivery of the same coordinates never creates a second row
+
+  - entity: tenant_security_event
+    fields:
+      - name: "id"
+        type: "uuid"
+        "null": "no"
+        constraint: "UNIQUE, part of PK (actor_tenant_id, id), immutable"
+      - name: "public_id"
+        type: "varchar(30)"
+        "null": "no"
+        constraint: "UNIQUE, format 'tse_' + 26 chars"
+      - name: "actor_tenant_id"
+        type: "varchar(64)"
+        "null": "no"
+        constraint: "FK tenant_registry(tenant_id) ON DELETE RESTRICT, RLS WITH CHECK equals tenant context"
+      - name: "referenced_tenant_id"
+        type: "varchar(64)"
+        "null": "yes"
+        constraint: "untrusted claim, no FK; null when the event has no referenced tenant"
+      - name: "correlation_id"
+        type: "uuid"
+        "null": "no"
+        constraint: "no FK"
+      - name: "event_type"
+        type: "varchar(32)"
+        "null": "no"
+        constraint: "CHECK IN ('CROSS_TENANT_REFERENCE','TENANT_SELECTION_REJECTED','MESSAGE_INTEGRITY_MISMATCH')"
+      - name: "resource_kind"
+        type: "varchar(64)"
+        "null": "no"
+        constraint: "CHECK btrim and non-empty"
+      - name: "resource_id"
+        type: "varchar(128)"
+        "null": "yes"
+        constraint: "null when the event has no addressable resource"
+      - name: "occurred_at"
+        type: "timestamptz"
+        "null": "no"
+      - name: "created_at"
+        type: "timestamptz"
+        "null": "no"
+        default: "now()"
+    dropped_roles:
+      - source + external_id: events are produced internally and have no upstream natural key
+    invariants:
+      - append-only: UPDATE and DELETE raise; dtx_app can INSERT but never SELECT
+
+invariant_queries:
+  - FLOW_CHECK_TENANT_REGISTRY_QUOTA_ROW_MISSING
+  - FLOW_CHECK_TENANT_SAGA_QUOTA_OVER_LIMIT
+  - FLOW_CHECK_TENANT_REGISTRY_TOMBSTONE_MISSING
+
+ports:
+  driven:
+    - TenantRegistryRepositoryPort
+    - SagaQuotaRepositoryPort
+    - MessageQuarantineRepositoryPort
+    - SecurityEventRepositoryPort
+    - ClockPort
+    - IDGeneratorPort
+  driving:
+    - TenantRegistryServicePort
+    - SagaQuotaServicePort
+    - MessageQuarantineServicePort
+    - TenantAccessServicePort
+
+inheritance_chain:
+  - class: RegistryService
+    parents: []
+    linearization: [RegistryService]
+    shared_ancestors: []
+    ports: [TenantRegistryServicePort]
+  - class: QuotaService
+    parents: []
+    linearization: [QuotaService]
+    shared_ancestors: []
+    ports: [SagaQuotaServicePort]
+  - class: QuarantineService
+    parents: []
+    linearization: [QuarantineService]
+    shared_ancestors: []
+    ports: [MessageQuarantineServicePort]
+  - class: AccessService
+    parents: []
+    linearization: [AccessService]
+    shared_ancestors: []
+    ports: [TenantAccessServicePort]
+  - class: PostgresTenantIsolationRepositoryAdapter
+    parents: []
+    linearization: [PostgresTenantIsolationRepositoryAdapter]
+    shared_ancestors: []
+    ports: [TenantRegistryRepositoryPort, SagaQuotaRepositoryPort, MessageQuarantineRepositoryPort, SecurityEventRepositoryPort]
+  - class: MemoryTenantIsolationRepositoryAdapter
+    parents: []
+    linearization: [MemoryTenantIsolationRepositoryAdapter]
+    shared_ancestors: []
+    ports: [TenantRegistryRepositoryPort, SagaQuotaRepositoryPort, MessageQuarantineRepositoryPort, SecurityEventRepositoryPort]
+  - class: SystemRuntimeAdapter
+    parents: []
+    linearization: [SystemRuntimeAdapter]
+    shared_ancestors: []
+    ports: [ClockPort, IDGeneratorPort]

@@ -1,0 +1,14 @@
+DROP TABLE IF EXISTS tenant_security_event;
+DROP TABLE IF EXISTS tenant_message_quarantine;
+DROP TABLE IF EXISTS tenant_saga_quota;
+DROP TABLE IF EXISTS tenant_tombstone;
+DROP TABLE IF EXISTS tenant_registry;
+DROP TABLE IF EXISTS tenant_status_transition;
+DROP TABLE IF EXISTS tenant_status;
+DROP FUNCTION IF EXISTS tenant_isolation_record_tombstone();
+DROP FUNCTION IF EXISTS tenant_isolation_guard_registry_transition();
+DROP FUNCTION IF EXISTS tenant_isolation_guard_registry_insert();
+DROP FUNCTION IF EXISTS tenant_isolation_reject_mutation();
+DROP FUNCTION IF EXISTS tenant_isolation_touch_updated_at();
+DROP FUNCTION IF EXISTS tenant_isolation_guard_immutable();
+DROP FUNCTION IF EXISTS tenant_isolation_current_tenant();
