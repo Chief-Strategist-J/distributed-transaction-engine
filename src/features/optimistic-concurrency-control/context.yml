@@ -1,2 +1,121 @@
 feature: optimistic-concurrency-control
 mode: stateless_hexagonal
+owner: core-platform-guild
+entity: occ_pending_inputs
+fields:
+  - name: id
+    type: uuid
+    null: no
+    default: gen_random_uuid()
+    constraint: PK, UNIQUE(tenant_id, id), immutable
+  - name: public_id
+    type: text
+    null: no
+    constraint: UNIQUE, immutable, format 'opn_' + 26 chars
+  - name: tenant_id
+    type: text
+    null: no
+    constraint: immutable, leads composite unique keys
+  - name: source
+    type: text
+    null: no
+    default: 'ENGINE_OCC'
+    constraint: immutable
+  - name: external_id
+    type: text
+    null: no
+    constraint: immutable
+  - name: correlation_id
+    type: uuid
+    null: no
+    constraint: immutable
+  - name: saga_id
+    type: uuid
+    null: no
+    constraint: immutable, references saga_instances(id)
+  - name: input_type
+    type: text
+    null: no
+    constraint: CHECK (input_type IN ('REPLY', 'TIMER', 'OPERATOR_COMMAND'))
+  - name: input_payload
+    type: jsonb
+    null: no
+  - name: attempt_count
+    type: integer
+    null: no
+    default: 1
+    constraint: CHECK (attempt_count >= 1)
+  - name: last_conflict_reason
+    type: text
+    null: no
+  - name: status
+    type: text
+    null: no
+    default: 'PENDING'
+    constraint: CHECK (status IN ('PENDING', 'REPROCESSED', 'QUARANTINED'))
+  - name: version
+    type: bigint
+    null: no
+    default: 1
+  - name: created_at
+    type: timestamptz
+    null: no
+    default: NOW()
+  - name: updated_at
+    type: timestamptz
+    null: no
+    default: NOW()
+invariants:
+  - OC-01 CAS checks version AND ownership epoch
+  - OC-02 Mutations of the aggregate increment root version
+  - OC-03 Decisions are pure functions with zero side effects before commit
+  - OC-04 Side effects leave only via outbox rows in same transaction
+  - OC-05 Input applied check runs before re-deciding after conflict
+  - OC-06 Conflict exhaustion never drops an engine input
+  - OC-07 Zero-row results diagnosed from same statement
+  - OC-08 Reads used for decisions come from primary
+  - OC-09 Client-facing version conflicts returned as 409
+pii: [none]
+source_of_truth: db
+
+secondary_entities:
+  - entity: occ_contention_journal
+    owner: core-platform-guild
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        default: gen_random_uuid()
+        constraint: PK, immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'ocj_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+      - name: saga_id
+        type: uuid
+        null: no
+      - name: attempted_version
+        type: bigint
+        null: no
+      - name: current_version
+        type: bigint
+        null: no
+      - name: attempted_epoch
+        type: bigint
+        null: no
+      - name: current_epoch
+        type: bigint
+        null: no
+      - name: diagnosis
+        type: text
+        null: no
+        constraint: CHECK (diagnosis IN ('VERSION_CONFLICT', 'NOT_OWNER', 'STATE_CONFLICT', 'DATA_ERROR', 'SECURITY_INTEGRITY_VIOLATION'))
+      - name: worker_id
+        type: text
+        null: no
+      - name: created_at
+        type: timestamptz
+        null: no
