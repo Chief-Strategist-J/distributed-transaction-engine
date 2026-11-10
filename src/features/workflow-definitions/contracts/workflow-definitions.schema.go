@@ -2,6 +2,8 @@ package contracts
 
 import (
 	"crypto/sha256"
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -9,8 +11,6 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 var (
@@ -19,7 +19,8 @@ var (
 	publicIDRegex = regexp.MustCompile(`^wfd_[0-9a-zA-Z]{26}$`)
 )
 
-func ValidateCreateWorkflowDefinitionInput(input CreateWorkflowDefinitionInput) error {
+func ValidateCreateWorkflowDefinitionInput(input CreateWorkflowDefinitionInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if strings.TrimSpace(input.TenantID) == "" {
 		return errors.NewValidationError("tenantId cannot be empty")
 	}
@@ -113,7 +114,8 @@ func validateEndpointSecurity(endpoint string) error {
 	return nil
 }
 
-func ComputeSpecHash(name string, steps []StepDefinition) (string, error) {
+func ComputeSpecHash(name string, steps []StepDefinition) (spanResult0 string, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	canonicalData, err := json.Marshal(struct {
 		Name  string           `json:"name"`
 		Steps []StepDefinition `json:"steps"`

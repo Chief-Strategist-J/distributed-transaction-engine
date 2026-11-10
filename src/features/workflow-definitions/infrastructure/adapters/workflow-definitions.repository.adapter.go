@@ -2,12 +2,12 @@ package adapters
 
 import (
 	"context"
-	"fmt"
-	"sync"
-
 	contracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
 	ports "distributed-transaction-engine/src/features/workflow-definitions/infrastructure/ports"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"fmt"
+	"sync"
 )
 
 type MemoryWorkflowDefinitionsRepositoryAdapter struct {
@@ -29,7 +29,8 @@ func NewMemoryWorkflowDefinitionsRepositoryAdapter() *MemoryWorkflowDefinitionsR
 	}
 }
 
-func (a *MemoryWorkflowDefinitionsRepositoryAdapter) Save(ctx context.Context, def *contracts.WorkflowDefinitionInstance) error {
+func (a *MemoryWorkflowDefinitionsRepositoryAdapter) Save(ctx context.Context, def *contracts.WorkflowDefinitionInstance) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -63,7 +64,8 @@ func (a *MemoryWorkflowDefinitionsRepositoryAdapter) Save(ctx context.Context, d
 	return nil
 }
 
-func (a *MemoryWorkflowDefinitionsRepositoryAdapter) GetByID(ctx context.Context, tenantID string, id string) (*contracts.WorkflowDefinitionInstance, error) {
+func (a *MemoryWorkflowDefinitionsRepositoryAdapter) GetByID(ctx context.Context, tenantID string, id string) (spanResult0 *contracts.WorkflowDefinitionInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -75,7 +77,8 @@ func (a *MemoryWorkflowDefinitionsRepositoryAdapter) GetByID(ctx context.Context
 	return item, nil
 }
 
-func (a *MemoryWorkflowDefinitionsRepositoryAdapter) GetByNameAndVersion(ctx context.Context, tenantID string, name string, version int64) (*contracts.WorkflowDefinitionInstance, error) {
+func (a *MemoryWorkflowDefinitionsRepositoryAdapter) GetByNameAndVersion(ctx context.Context, tenantID string, name string, version int64) (spanResult0 *contracts.WorkflowDefinitionInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -87,7 +90,8 @@ func (a *MemoryWorkflowDefinitionsRepositoryAdapter) GetByNameAndVersion(ctx con
 	return item, nil
 }
 
-func (a *MemoryWorkflowDefinitionsRepositoryAdapter) GetBySpecHash(ctx context.Context, tenantID string, name string, hash string) (*contracts.WorkflowDefinitionInstance, error) {
+func (a *MemoryWorkflowDefinitionsRepositoryAdapter) GetBySpecHash(ctx context.Context, tenantID string, name string, hash string) (spanResult0 *contracts.WorkflowDefinitionInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -99,7 +103,8 @@ func (a *MemoryWorkflowDefinitionsRepositoryAdapter) GetBySpecHash(ctx context.C
 	return item, nil
 }
 
-func (a *MemoryWorkflowDefinitionsRepositoryAdapter) ListByTenant(ctx context.Context, tenantID string, limit int, offset int) ([]*contracts.WorkflowDefinitionInstance, error) {
+func (a *MemoryWorkflowDefinitionsRepositoryAdapter) ListByTenant(ctx context.Context, tenantID string, limit int, offset int) (spanResult0 []*contracts.WorkflowDefinitionInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -119,4 +124,3 @@ func (a *MemoryWorkflowDefinitionsRepositoryAdapter) ListByTenant(ctx context.Co
 
 	return list[offset:end], nil
 }
-

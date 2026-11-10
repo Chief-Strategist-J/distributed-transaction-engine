@@ -3,16 +3,15 @@ package adapters
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"fmt"
-	"strings"
-
-	"github.com/google/uuid"
-
 	contracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
 	ports "distributed-transaction-engine/src/features/workflow-definitions/infrastructure/ports"
 	"distributed-transaction-engine/src/features/workflow-definitions/infrastructure/queries"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"encoding/json"
+	"fmt"
+	"github.com/google/uuid"
+	"strings"
 )
 
 type PostgresWorkflowDefinitionsRepositoryAdapter struct {
@@ -25,7 +24,8 @@ func NewPostgresWorkflowDefinitionsRepositoryAdapter(db *sql.DB) *PostgresWorkfl
 	return &PostgresWorkflowDefinitionsRepositoryAdapter{db: db}
 }
 
-func (a *PostgresWorkflowDefinitionsRepositoryAdapter) Save(ctx context.Context, def *contracts.WorkflowDefinitionInstance) error {
+func (a *PostgresWorkflowDefinitionsRepositoryAdapter) Save(ctx context.Context, def *contracts.WorkflowDefinitionInstance) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
 		return errors.NewInternalError(err.Error())
@@ -103,22 +103,26 @@ func (a *PostgresWorkflowDefinitionsRepositoryAdapter) Save(ctx context.Context,
 	return nil
 }
 
-func (a *PostgresWorkflowDefinitionsRepositoryAdapter) GetByID(ctx context.Context, tenantID string, id string) (*contracts.WorkflowDefinitionInstance, error) {
+func (a *PostgresWorkflowDefinitionsRepositoryAdapter) GetByID(ctx context.Context, tenantID string, id string) (spanResult0 *contracts.WorkflowDefinitionInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	row := a.db.QueryRowContext(ctx, queries.FlowSelectWorkflowDefinitionByID, tenantID, id)
 	return a.scanWorkflowWithSteps(ctx, row)
 }
 
-func (a *PostgresWorkflowDefinitionsRepositoryAdapter) GetByNameAndVersion(ctx context.Context, tenantID string, name string, version int64) (*contracts.WorkflowDefinitionInstance, error) {
+func (a *PostgresWorkflowDefinitionsRepositoryAdapter) GetByNameAndVersion(ctx context.Context, tenantID string, name string, version int64) (spanResult0 *contracts.WorkflowDefinitionInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	row := a.db.QueryRowContext(ctx, queries.FlowSelectWorkflowDefinitionByNameAndVersion, tenantID, name, version)
 	return a.scanWorkflowWithSteps(ctx, row)
 }
 
-func (a *PostgresWorkflowDefinitionsRepositoryAdapter) GetBySpecHash(ctx context.Context, tenantID string, name string, hash string) (*contracts.WorkflowDefinitionInstance, error) {
+func (a *PostgresWorkflowDefinitionsRepositoryAdapter) GetBySpecHash(ctx context.Context, tenantID string, name string, hash string) (spanResult0 *contracts.WorkflowDefinitionInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	row := a.db.QueryRowContext(ctx, queries.FlowSelectWorkflowDefinitionByHash, tenantID, name, hash)
 	return a.scanWorkflowWithSteps(ctx, row)
 }
 
-func (a *PostgresWorkflowDefinitionsRepositoryAdapter) ListByTenant(ctx context.Context, tenantID string, limit int, offset int) ([]*contracts.WorkflowDefinitionInstance, error) {
+func (a *PostgresWorkflowDefinitionsRepositoryAdapter) ListByTenant(ctx context.Context, tenantID string, limit int, offset int) (spanResult0 []*contracts.WorkflowDefinitionInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	rows, err := a.db.QueryContext(ctx, queries.FlowListWorkflowDefinitionsByTenant, tenantID, limit, offset)
 	if err != nil {
 		return nil, errors.NewInternalError(err.Error())
@@ -226,4 +230,3 @@ func (a *PostgresWorkflowDefinitionsRepositoryAdapter) scanWorkflowWithSteps(ctx
 
 	return &d, nil
 }
-

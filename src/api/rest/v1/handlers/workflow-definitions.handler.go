@@ -97,7 +97,7 @@ func (h *WorkflowDefinitionsHandler) RegisterWorkflow(w http.ResponseWriter, r *
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }
 
 func (h *WorkflowDefinitionsHandler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +145,7 @@ func (h *WorkflowDefinitionsHandler) GetWorkflow(w http.ResponseWriter, r *http.
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }
 
 func (h *WorkflowDefinitionsHandler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
@@ -204,7 +204,7 @@ func (h *WorkflowDefinitionsHandler) ListWorkflows(w http.ResponseWriter, r *htt
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }
 
 func (h *WorkflowDefinitionsHandler) mapAndWriteError(w http.ResponseWriter, err error) {
@@ -229,5 +229,5 @@ func (h *WorkflowDefinitionsHandler) writeError(w http.ResponseWriter, statusCod
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }

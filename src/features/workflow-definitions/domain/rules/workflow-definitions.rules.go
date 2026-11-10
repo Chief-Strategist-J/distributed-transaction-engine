@@ -1,11 +1,11 @@
 package rules
 
 import (
+	contracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"fmt"
 	"strings"
-
-	contracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 type ValidationResult struct {
@@ -15,6 +15,7 @@ type ValidationResult struct {
 }
 
 func ValidateDAGTopology(steps []contracts.StepDefinition) ValidationResult {
+	defer observability.TraceEnter(nil)()
 	stepMap := make(map[string]contracts.StepDefinition, len(steps))
 	inDegree := make(map[string]int, len(steps))
 	adjList := make(map[string][]string, len(steps))
