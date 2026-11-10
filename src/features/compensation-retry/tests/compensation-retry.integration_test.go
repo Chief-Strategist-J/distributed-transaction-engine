@@ -114,3 +114,42 @@ func TestIntegration_EvaluateService(t *testing.T) {
 		}
 	})
 }
+
+func TestIntegration_FirstEvaluationPersistsStatusWithoutPriorRecord(t *testing.T) {
+	cases := []struct {
+		name       string
+		statusCode int
+		message    string
+		action     string
+		status     machines.CompensationState
+	}{
+		{"ambiguous timeout", 504, "timeout", "VERIFY_AMBIGUOUS", machines.CompensationStateVerifyingAmbiguous},
+		{"credential failure", 401, "unauthorized", "PAUSE_STEP_TYPE", machines.CompensationStateStepTypePaused},
+		{"contract defect", 400, "bad schema", "PAUSE_STEP_TYPE", machines.CompensationStateStepTypePaused},
+		{"business alternative", 409, "already shipped", "BUSINESS_ALTERNATIVE", machines.CompensationStateNeedsAttention},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := adapters.NewMemoryCompensationRetryRepositoryAdapter()
+			svc := service.NewService(service.ServiceDeps{
+				Repo: repo, Rules: rules.NewCompensationRetryRules(), Machine: machines.NewCompensationRetryMachine(),
+				Tracer: observability.NewTracer("status-persistence-test"),
+			})
+			now := time.Now().UTC()
+			sagaID := uuid.New()
+			input := contracts.EvaluateCompensationRetryInput{
+				TenantID: "tenant-test", SagaID: sagaID.String(), StepID: "step-refund", StepType: "payment.refund",
+				DependencyID: "provider", CompensationKey: "comp-1", AttemptNumber: 1, StatusCode: tc.statusCode,
+				ErrorMessage: tc.message, FirstAttemptAt: now.Format(time.RFC3339), BusinessDeadline: now.Add(2 * time.Hour).Format(time.RFC3339),
+			}
+			decision, err := svc.Evaluate(context.Background(), input)
+			if err != nil || decision.Action != tc.action {
+				t.Fatalf("expected action %s, got %+v %v", tc.action, decision, err)
+			}
+			record, err := svc.GetRecord(context.Background(), "tenant-test", sagaID, "step-refund")
+			if err != nil || record == nil || record.Status != string(tc.status) {
+				t.Fatalf("the decision must be persisted even without a prior record, got %+v %v", record, err)
+			}
+		})
+	}
+}

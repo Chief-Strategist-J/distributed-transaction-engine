@@ -10,6 +10,7 @@ import (
 	interventionmachines "distributed-transaction-engine/src/features/manual-intervention/domain/machines"
 	interventionrules "distributed-transaction-engine/src/features/manual-intervention/domain/rules"
 	"distributed-transaction-engine/src/infra/observability"
+	appErrors "distributed-transaction-engine/src/shared/errors"
 	"github.com/lib/pq"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -292,5 +293,34 @@ func TestRulesAndMachinesJoinTheRequestTrace(t *testing.T) {
 	}
 	if positive.Parent().SpanID() != serviceSpan.SpanContext().SpanID() || attributeOf(positive, observability.AttrLayer) != observability.LayerRules {
 		t.Fatal("rules spans must be children of the active service span with layer=rules")
+	}
+}
+
+func TestExpectedLookupMissesAreNotErrorSpansButClientNotFoundsAre(t *testing.T) {
+	recorder := installRecorder(t)
+	tracer := observability.NewTracer("miss-test")
+	ctx, service := tracer.StartLayerSpan(context.Background(), observability.LayerService, "service.get")
+	_, adapter := tracer.StartLayerSpan(ctx, observability.LayerAdapter, "adapter.find")
+	observability.RecordError(adapter, appErrors.NewNotFoundError("not found"))
+	adapter.End()
+	_, failing := tracer.StartLayerSpan(ctx, observability.LayerAdapter, "adapter.broken")
+	observability.RecordError(failing, appErrors.NewInternalError("database exploded"))
+	failing.End()
+	observability.RecordError(service, appErrors.NewNotFoundError("saga not found"))
+	service.End()
+
+	spans := recorder.Ended()
+	miss, broken, served := findSpan(spans, "adapter.find"), findSpan(spans, "adapter.broken"), findSpan(spans, "service.get")
+	if miss.Status().Code != codes.Ok || attributeOf(miss, observability.AttrOutcome) != observability.OutcomeNotFound || attributeOf(miss, "error.expected") != "true" {
+		t.Fatalf("an adapter lookup miss must be an OK span marked not_found, got %v", miss.Status())
+	}
+	if len(miss.Events()) == 0 || miss.Events()[0].Name != "lookup.miss" {
+		t.Fatal("the miss must still be visible as a span event")
+	}
+	if broken.Status().Code != codes.Error {
+		t.Fatal("a real adapter failure must stay an ERROR span")
+	}
+	if served.Status().Code != codes.Error {
+		t.Fatal("a 404 returned to the caller from the service layer must stay an ERROR span")
 	}
 }

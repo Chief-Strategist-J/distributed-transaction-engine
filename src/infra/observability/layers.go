@@ -2,11 +2,14 @@ package observability
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 
+	appErrors "distributed-transaction-engine/src/shared/errors"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -18,20 +21,21 @@ const (
 	AttrFunction = "code.function"
 	AttrOutcome  = "outcome"
 
-	LayerHandler  = "handler"
-	LayerRouter   = "router"
-	LayerService  = "service"
-	LayerRules    = "rules"
-	LayerMachine  = "machine"
-	LayerWorkflow = "workflow"
-	LayerPort     = "port"
-	LayerAdapter  = "adapter"
-	LayerSchema   = "schema"
-	LayerInfra    = "infra"
-	LayerHTTP     = "http"
-	LayerUnknown  = "unknown"
-	OutcomeOK     = "ok"
-	OutcomeError  = "error"
+	LayerHandler    = "handler"
+	LayerRouter     = "router"
+	LayerService    = "service"
+	LayerRules      = "rules"
+	LayerMachine    = "machine"
+	LayerWorkflow   = "workflow"
+	LayerPort       = "port"
+	LayerAdapter    = "adapter"
+	LayerSchema     = "schema"
+	LayerInfra      = "infra"
+	LayerHTTP       = "http"
+	LayerUnknown    = "unknown"
+	OutcomeOK       = "ok"
+	OutcomeError    = "error"
+	OutcomeNotFound = "not_found"
 )
 
 type CodeLocation struct {
@@ -129,6 +133,7 @@ type layerSpan struct {
 	trace.Span
 	mutex    sync.Mutex
 	failed   bool
+	missed   bool
 	location CodeLocation
 }
 
@@ -155,10 +160,33 @@ func (s *layerSpan) SetStatus(code codes.Code, description string) {
 	s.Span.SetStatus(code, description)
 }
 
+func isLookupLayer(layer string) bool {
+	return layer == LayerAdapter || layer == LayerRules || layer == LayerMachine
+}
+
+func (s *layerSpan) recordExpectedMiss(err error) bool {
+	var applicationError *appErrors.ApplicationError
+	if !isLookupLayer(s.location.Layer) || !errors.As(err, &applicationError) || applicationError.StatusCode != http.StatusNotFound {
+		return false
+	}
+	s.mutex.Lock()
+	s.missed = true
+	s.mutex.Unlock()
+	s.Span.AddEvent("lookup.miss", trace.WithAttributes(attribute.String("error.message", err.Error()), attribute.Bool("error.expected", true)))
+	s.Span.SetAttributes(attribute.Bool("error.expected", true))
+	return true
+}
+
 func (s *layerSpan) markFailed() {
 	s.mutex.Lock()
 	s.failed = true
 	s.mutex.Unlock()
+}
+
+func (s *layerSpan) hasMissed() bool {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return s.missed
 }
 
 func (s *layerSpan) hasFailed() bool {
@@ -170,6 +198,9 @@ func (s *layerSpan) hasFailed() bool {
 func (s *layerSpan) End(options ...trace.SpanEndOption) {
 	if s.hasFailed() {
 		s.Span.SetAttributes(attribute.String(AttrOutcome, OutcomeError))
+	} else if s.hasMissed() {
+		s.Span.SetStatus(codes.Ok, "")
+		s.Span.SetAttributes(attribute.String(AttrOutcome, OutcomeNotFound))
 	} else {
 		s.Span.SetStatus(codes.Ok, "")
 		s.Span.SetAttributes(attribute.String(AttrOutcome, OutcomeOK))

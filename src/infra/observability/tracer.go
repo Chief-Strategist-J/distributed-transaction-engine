@@ -118,6 +118,9 @@ func RecordError(span trace.Span, err error) {
 	if span == nil || err == nil {
 		return
 	}
+	if wrapped, ok := span.(*layerSpan); ok && wrapped.recordExpectedMiss(err) {
+		return
+	}
 	span.RecordError(err)
 	span.SetStatus(codes.Error, err.Error())
 	span.SetAttributes(errorAttributes(err)...)

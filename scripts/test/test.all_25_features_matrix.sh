@@ -285,6 +285,7 @@ assert_endpoint "operational-dashboard" "GET" "http://127.0.0.1:${PORT}/api/v1/d
 OX_EVENT_ID=$(generate_uuid)
 OX_EVENT_PUB_ID="oxe_$(python3 -c 'import uuid; print(uuid.uuid4().hex[:26])')"
 OX_TOPIC="dist-tx.live-verify.mat.${TENANT_ID}"
+docker exec dist_tx-kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic "${OX_TOPIC}" --partitions 1 --replication-factor 1 > /dev/null
 
 /snap/bin/docker exec dist_tx-kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic "${OX_TOPIC}" --partitions 1 --replication-factor 1 >/dev/null 2>&1
 
