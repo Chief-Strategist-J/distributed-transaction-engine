@@ -1,2 +1,242 @@
 feature: transaction-query-api
 mode: stateless_hexagonal
+owner: query-platform
+entities:
+  - entity: transaction_view
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        default: uuidv7()
+        constraint: PK
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, format 'txn_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: FK tenant_registry(tenant_id), immutable
+      - name: source
+        type: text
+        null: no
+        default: 'SAGA_CORE'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: text
+        null: no
+      - name: saga_id
+        type: uuid
+        null: no
+      - name: internal_status
+        type: text
+        null: no
+      - name: business_status
+        type: text
+        null: no
+      - name: compensation_status
+        type: text
+        null: no
+      - name: workflow_type
+        type: text
+        null: no
+      - name: workflow_version
+        type: text
+        null: no
+      - name: amount_minor
+        type: bigint
+        null: no
+      - name: currency
+        type: text
+        null: no
+      - name: customer_ref
+        type: text
+        null: no
+      - name: customer_email_blind
+        type: text
+        null: yes
+      - name: customer_email_mask
+        type: text
+        null: yes
+      - name: merchant_ref
+        type: text
+        null: yes
+      - name: provider_reference
+        type: text
+        null: yes
+      - name: tags
+        type: text[]
+        null: no
+      - name: needs_attention
+        type: boolean
+        null: no
+        default: false
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: effective_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: completed_at
+        type: timestamptz
+        null: yes
+      - name: updated_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: version
+        type: bigint
+        null: no
+        default: 1
+
+  - entity: tq_saved_query
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        default: uuidv7()
+        constraint: PK
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, format 'tsq_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: FK tenant_registry(tenant_id), immutable
+      - name: source
+        type: text
+        null: no
+        default: 'QUERY_API'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+      - name: name
+        type: text
+        null: no
+      - name: description
+        type: text
+        null: yes
+      - name: owner_principal_id
+        type: text
+        null: no
+      - name: visibility
+        type: text
+        null: no
+      - name: query_text
+        type: text
+        null: no
+      - name: ast_json
+        type: jsonb
+        null: no
+      - name: tql_version
+        type: text
+        null: no
+      - name: registry_version
+        type: text
+        null: no
+      - name: is_valid
+        type: boolean
+        null: no
+        default: true
+      - name: invalid_reason
+        type: text
+        null: yes
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: updated_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: version
+        type: bigint
+        null: no
+        default: 1
+
+  - entity: tq_export_job
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        default: uuidv7()
+        constraint: PK
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, format 'txj_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: FK tenant_registry(tenant_id), immutable
+      - name: source
+        type: text
+        null: no
+        default: 'EXPORT_ENGINE'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+      - name: principal_id
+        type: text
+        null: no
+      - name: status
+        type: text
+        null: no
+      - name: query_text
+        type: text
+        null: no
+      - name: ast_json
+        type: jsonb
+        null: no
+      - name: tql_version
+        type: text
+        null: no
+      - name: format
+        type: text
+        null: no
+      - name: as_of_watermark
+        type: bigint
+        null: no
+      - name: row_count
+        type: bigint
+        null: no
+        default: 0
+      - name: total_chunks
+        type: integer
+        null: no
+        default: 0
+      - name: token_hash
+        type: text
+        null: yes
+      - name: error_message
+        type: text
+        null: yes
+      - name: expires_at
+        type: timestamptz
+        null: no
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: updated_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: version
+        type: bigint
+        null: no
+        default: 1

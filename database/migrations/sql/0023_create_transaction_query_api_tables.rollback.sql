@@ -1,0 +1,13 @@
+DROP TABLE IF EXISTS tq_export_chunk;
+DROP TABLE IF EXISTS tq_export_job;
+DROP TABLE IF EXISTS tq_export_status_transition;
+DROP TABLE IF EXISTS tq_export_status;
+DROP TABLE IF EXISTS tq_saved_query;
+DROP TABLE IF EXISTS tq_rate_bucket;
+DROP TABLE IF EXISTS tq_audit_log;
+DROP TABLE IF EXISTS transaction_search_document;
+DROP TABLE IF EXISTS transaction_view_step;
+DROP TABLE IF EXISTS transaction_view;
+DROP TABLE IF EXISTS tq_watermark;
+DROP SEQUENCE IF EXISTS tq_projection_seq;
+DROP FUNCTION IF EXISTS tq_guard_export_job_transition();
