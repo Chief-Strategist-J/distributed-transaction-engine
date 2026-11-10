@@ -45,4 +45,3 @@ func Preflight(args []string, _ []string, stdout io.Writer) (*BootContext, int, 
 		ValidateOnly: validateOnly,
 	}, ExitSuccess, nil
 }
-

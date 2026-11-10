@@ -91,4 +91,3 @@ func (l *Lifecycle) StopAll(timeout time.Duration) error {
 
 	return errors.Join(drainErrs...)
 }
-

@@ -236,4 +236,3 @@ func runLongLived(app *App, lifecycle *Lifecycle, rootCtx context.Context) int {
 
 	return exitCode
 }
-

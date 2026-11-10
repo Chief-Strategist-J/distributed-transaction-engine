@@ -4,6 +4,7 @@ import (
 	"context"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -21,10 +22,27 @@ type activeSpan struct {
 	span *layerSpan
 }
 
+const shardCount = 64
+
+type registryShard struct {
+	mutex sync.Mutex
+	spans map[uint64][]activeSpan
+}
+
 var (
-	activeMutex sync.Mutex
-	activeSpans = make(map[uint64][]activeSpan)
+	shards      [shardCount]registryShard
+	activeCount atomic.Int64
 )
+
+func init() {
+	for index := range shards {
+		shards[index].spans = make(map[uint64][]activeSpan)
+	}
+}
+
+func shardFor(id uint64) *registryShard {
+	return &shards[id%shardCount]
+}
 
 func goroutineID() uint64 {
 	var buffer [64]byte
@@ -37,21 +55,32 @@ func goroutineID() uint64 {
 }
 
 func pushActive(ctx context.Context, span *layerSpan) {
+	if !span.Span.IsRecording() {
+		return
+	}
 	id := goroutineID()
-	activeMutex.Lock()
-	stack := append(activeSpans[id], activeSpan{ctx: ctx, span: span})
+	shard := shardFor(id)
+	shard.mutex.Lock()
+	stack := append(shard.spans[id], activeSpan{ctx: ctx, span: span})
 	if len(stack) > maxGoroutineStack {
 		stack = stack[len(stack)-maxGoroutineStack:]
 	}
-	activeSpans[id] = stack
-	activeMutex.Unlock()
+	shard.spans[id] = stack
+	shard.mutex.Unlock()
+	span.markTracked(id)
+	activeCount.Add(1)
 }
 
 func popActive(span *layerSpan) {
-	id := goroutineID()
-	activeMutex.Lock()
-	defer activeMutex.Unlock()
-	stack := activeSpans[id]
+	id, tracked := span.releaseTracked()
+	if !tracked {
+		return
+	}
+	activeCount.Add(-1)
+	shard := shardFor(id)
+	shard.mutex.Lock()
+	defer shard.mutex.Unlock()
+	stack := shard.spans[id]
 	for index := len(stack) - 1; index >= 0; index-- {
 		if stack[index].span == span {
 			stack = append(stack[:index], stack[index+1:]...)
@@ -59,21 +88,32 @@ func popActive(span *layerSpan) {
 		}
 	}
 	if len(stack) == 0 {
-		delete(activeSpans, id)
+		delete(shard.spans, id)
 		return
 	}
-	activeSpans[id] = stack
+	shard.spans[id] = stack
+}
+
+func topActive() (activeSpan, bool) {
+	if activeCount.Load() <= 0 {
+		return activeSpan{}, false
+	}
+	id := goroutineID()
+	shard := shardFor(id)
+	shard.mutex.Lock()
+	defer shard.mutex.Unlock()
+	stack := shard.spans[id]
+	if len(stack) == 0 {
+		return activeSpan{}, false
+	}
+	return stack[len(stack)-1], true
 }
 
 func currentContext() context.Context {
-	id := goroutineID()
-	activeMutex.Lock()
-	defer activeMutex.Unlock()
-	stack := activeSpans[id]
-	if len(stack) == 0 {
-		return nil
+	if top, found := topActive(); found {
+		return top.ctx
 	}
-	return stack[len(stack)-1].ctx
+	return nil
 }
 
 func adoptCurrent(ctx context.Context) context.Context {
@@ -108,14 +148,10 @@ func TraceEnter(errPointer *error) func() {
 }
 
 func currentWrapper() *layerSpan {
-	id := goroutineID()
-	activeMutex.Lock()
-	defer activeMutex.Unlock()
-	stack := activeSpans[id]
-	if len(stack) == 0 {
-		return nil
+	if top, found := topActive(); found {
+		return top.span
 	}
-	return stack[len(stack)-1].span
+	return nil
 }
 
 func NoteSwallowed(err error) {
@@ -126,7 +162,7 @@ func NoteSwallowed(err error) {
 	if wrapper == nil {
 		return
 	}
-	wrapper.AddEvent("error.swallowed", trace.WithAttributes(append(errorAttributes(err), attribute.String("error.message", err.Error()))...))
+	wrapper.AddEvent("error.swallowed", trace.WithAttributes(append(errorAttributes(err), attribute.String("error.message", SanitizeText(err.Error())))...))
 	wrapper.SetAttributes(attribute.Bool("error.swallowed", true))
 	RecordError(wrapper, err)
 }
@@ -136,9 +172,13 @@ func NoteLogged(level string, message string) {
 	if wrapper == nil {
 		return
 	}
-	wrapper.AddEvent("log."+level, trace.WithAttributes(attribute.String("log.message", message)))
+	wrapper.AddEvent("log."+level, trace.WithAttributes(attribute.String("log.message", SanitizeText(message))))
 	if level == "error" {
 		wrapper.SetAttributes(attribute.Bool("error.logged", true))
 		wrapper.SetStatus(codes.Error, message)
 	}
+}
+
+func ActiveSpanCount() int64 {
+	return activeCount.Load()
 }

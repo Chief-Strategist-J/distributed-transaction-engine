@@ -408,6 +408,7 @@ func describeService() chassis.ServiceSpec {
 					"poller":                  poller,
 					"recoverySvc":             recoverySvc,
 					"pollInterval":            deps.Config.PollInterval(),
+					"pollerEnabled":           !deps.Config.Poller.Disabled,
 					"hasDB":                   deps.DB != nil,
 				},
 			}, nil
@@ -490,7 +491,8 @@ func describeService() chassis.ServiceSpec {
 			var jobs []chassis.JobSpec
 			poller, hasPoller := services.Instances["poller"].(*sagaService.SagaPoller)
 			interval, hasInterval := services.Instances["pollInterval"].(time.Duration)
-			if hasPoller && hasInterval {
+			pollerEnabled, _ := services.Instances["pollerEnabled"].(bool)
+			if hasPoller && hasInterval && pollerEnabled {
 				jobs = append(jobs, chassis.JobSpec{
 					Name: "saga-poller",
 					Start: func(ctx context.Context) error {

@@ -134,6 +134,8 @@ type layerSpan struct {
 	mutex    sync.Mutex
 	failed   bool
 	missed   bool
+	tracked  bool
+	goid     uint64
 	location CodeLocation
 }
 
@@ -150,12 +152,16 @@ func (s *layerSpan) RecordError(err error, options ...trace.EventOption) {
 	if err != nil {
 		s.markFailed()
 	}
+	if err != nil {
+		err = newSanitizedError(err)
+	}
 	s.Span.RecordError(err, options...)
 }
 
 func (s *layerSpan) SetStatus(code codes.Code, description string) {
 	if code == codes.Error {
 		s.markFailed()
+		description = SanitizeText(description)
 	}
 	s.Span.SetStatus(code, description)
 }
@@ -172,9 +178,23 @@ func (s *layerSpan) recordExpectedMiss(err error) bool {
 	s.mutex.Lock()
 	s.missed = true
 	s.mutex.Unlock()
-	s.Span.AddEvent("lookup.miss", trace.WithAttributes(attribute.String("error.message", err.Error()), attribute.Bool("error.expected", true)))
+	s.Span.AddEvent("lookup.miss", trace.WithAttributes(attribute.String("error.message", SanitizeText(err.Error())), attribute.Bool("error.expected", true)))
 	s.Span.SetAttributes(attribute.Bool("error.expected", true))
 	return true
+}
+
+func (s *layerSpan) markTracked(id uint64) {
+	s.mutex.Lock()
+	s.tracked, s.goid = true, id
+	s.mutex.Unlock()
+}
+
+func (s *layerSpan) releaseTracked() (uint64, bool) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	id, tracked := s.goid, s.tracked
+	s.tracked = false
+	return id, tracked
 }
 
 func (s *layerSpan) markFailed() {
@@ -238,7 +258,7 @@ func (r *requestRegistry) annotateTransportError(code string, message string) {
 	r.mutex.Unlock()
 	for _, span := range spans {
 		if span.location.Layer == LayerHandler || span.location.Layer == LayerRouter {
-			span.SetAttributes(attribute.String("error.code", code), attribute.String("error.message", message))
+			span.SetAttributes(attribute.String("error.code", code), attribute.String("error.message", SanitizeText(message)))
 		}
 	}
 }

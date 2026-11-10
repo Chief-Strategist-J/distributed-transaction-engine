@@ -198,7 +198,7 @@ func finishRootSpan(ctx context.Context, rootSpan trace.Span, interceptor *respo
 		logger.Error(ctx, "HTTP request error", fields...)
 		code, message := extractErrorEnvelope(interceptor.body.Bytes())
 		description := fmt.Sprintf("HTTP %d %s", interceptor.statusCode, code)
-		rootSpan.SetAttributes(attribute.String("error.code", code), attribute.String("error.message", message))
+		rootSpan.SetAttributes(attribute.String("error.code", code), attribute.String("error.message", SanitizeText(message)))
 		rootSpan.SetStatus(codes.Error, strings.TrimSpace(description))
 	} else {
 		logger.Info(ctx, "HTTP request completed", fields...)

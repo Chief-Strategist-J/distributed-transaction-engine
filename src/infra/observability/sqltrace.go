@@ -135,8 +135,9 @@ func finishSQLSpan(span trace.Span, err error) {
 		span.End()
 		return
 	}
-	span.RecordError(err)
-	span.SetStatus(codes.Error, err.Error())
+	safe := newSanitizedError(err)
+	span.RecordError(safe)
+	span.SetStatus(codes.Error, safe.Error())
 	span.SetAttributes(attribute.String(AttrOutcome, OutcomeError))
 	if coded, ok := err.(interface{ SQLState() string }); ok {
 		span.SetAttributes(attribute.String("db.error.sqlstate", coded.SQLState()))

@@ -2,9 +2,11 @@ package observability_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	interventionmachines "distributed-transaction-engine/src/features/manual-intervention/domain/machines"
@@ -322,5 +324,109 @@ func TestExpectedLookupMissesAreNotErrorSpansButClientNotFoundsAre(t *testing.T)
 	}
 	if served.Status().Code != codes.Error {
 		t.Fatal("a 404 returned to the caller from the service layer must stay an ERROR span")
+	}
+}
+
+func TestSanitizeTextRedactsSensitiveValues(t *testing.T) {
+	cases := map[string]string{
+		"user jane.doe@example.com failed":                           "user [redacted] failed",
+		"Key (tenant_id, external_id)=(t1, order-7) already exists":  "Key ([redacted]) already exists",
+		"card 4111 1111 1111 1111 declined":                          "card [redacted] declined",
+		"password=hunter2 rejected":                                  "password=[redacted] rejected",
+		"token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln is invalid": "token [redacted] is invalid",
+		"Authorization: Bearer abc.def.ghi":                          "Authorization=[redacted]",
+		"order 1234567890123 not found":                              "order [redacted] not found",
+		"saga 0b1f6d3e-2c4a-4b8f-9a3e-1d2c3b4a5f60 not found":        "saga 0b1f6d3e-2c4a-4b8f-9a3e-1d2c3b4a5f60 not found",
+	}
+	for input, want := range cases {
+		if got := observability.SanitizeText(input); got != want {
+			t.Fatalf("SanitizeText(%q) = %q, want %q", input, got, want)
+		}
+	}
+	if long := observability.SanitizeText(strings.Repeat("x", 1000)); len(long) > 310 {
+		t.Fatalf("messages must be truncated, got %d bytes", len(long))
+	}
+}
+
+func TestSpansNeverCarryRawSensitiveErrorText(t *testing.T) {
+	recorder := installRecorder(t)
+	tracer := observability.NewTracer("redaction-test")
+	_, span := tracer.StartSpan(context.Background(), "leaky")
+	observability.RecordError(span, errors.New("lookup failed for jane.doe@example.com password=hunter2"))
+	span.End()
+	recorded := findSpan(recorder.Ended(), "leaky")
+	if strings.Contains(recorded.Status().Description, "jane.doe") || strings.Contains(recorded.Status().Description, "hunter2") {
+		t.Fatalf("status description leaked: %q", recorded.Status().Description)
+	}
+	for _, event := range recorded.Events() {
+		for _, attr := range event.Attributes {
+			if strings.Contains(attr.Value.Emit(), "jane.doe") || strings.Contains(attr.Value.Emit(), "hunter2") {
+				t.Fatalf("event attribute leaked: %s=%s", attr.Key, attr.Value.Emit())
+			}
+		}
+	}
+}
+
+func TestTracingSettingsFromEnvironment(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.internal:4318")
+	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "authorization=Bearer abc, x-team=core")
+	t.Setenv("OTEL_TRACES_SAMPLER", "parentbased_traceidratio")
+	t.Setenv("OTEL_TRACES_SAMPLER_ARG", "0.25")
+	t.Setenv("ENV", "production")
+	settings := observability.LoadTracingSettings("svc")
+	if settings.Endpoint != "collector.internal:4318" || settings.Insecure || settings.Environment != "production" || settings.SamplerArg != 0.25 {
+		t.Fatalf("unexpected settings: %+v", settings)
+	}
+	if settings.Headers["authorization"] != "Bearer abc" || settings.Headers["x-team"] != "core" {
+		t.Fatalf("headers not parsed: %v", settings.Headers)
+	}
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "127.0.0.1:4318")
+	if plain := observability.LoadTracingSettings("svc"); plain.Endpoint != "127.0.0.1:4318" || !plain.Insecure {
+		t.Fatalf("a bare host:port must be accepted: %+v", plain)
+	}
+	t.Setenv("OTEL_TRACES_SAMPLER_ARG", "7")
+	if invalid := observability.LoadTracingSettings("svc"); invalid.SamplerArg != 1.0 {
+		t.Fatalf("an out of range ratio must fall back to 1.0, got %v", invalid.SamplerArg)
+	}
+}
+
+func TestSamplerHonoursRatioAndParent(t *testing.T) {
+	t.Setenv("OTEL_TRACES_SAMPLER_ARG", "0")
+	never := observability.LoadTracingSettings("svc").Sampler()
+	if never.Description() == "" {
+		t.Fatal("sampler must describe itself")
+	}
+	t.Setenv("OTEL_TRACES_SAMPLER", "always_off")
+	if observability.LoadTracingSettings("svc").Sampler().Description() != sdktrace.NeverSample().Description() {
+		t.Fatal("always_off must map to the never sampler")
+	}
+}
+
+func TestUnsampledSpansDoNotLeakIntoTheGoroutineRegistry(t *testing.T) {
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.NeverSample()))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(sdktrace.NewTracerProvider()) })
+	tracer := observability.NewTracer("unsampled")
+	for iteration := 0; iteration < 1000; iteration++ {
+		_, span := tracer.StartSpan(context.Background(), "dropped")
+		span.End()
+	}
+	if observability.ActiveSpanCount() != 0 {
+		t.Fatalf("registry leaked %d entries", observability.ActiveSpanCount())
+	}
+}
+
+func TestSpansEndedOnAnotherGoroutineAreReleased(t *testing.T) {
+	installRecorder(t)
+	tracer := observability.NewTracer("cross-goroutine")
+	_, span := tracer.StartSpan(context.Background(), "handoff")
+	done := make(chan struct{})
+	go func() {
+		span.End()
+		close(done)
+	}()
+	<-done
+	if observability.ActiveSpanCount() != 0 {
+		t.Fatalf("a span ended on another goroutine must still be released, %d left", observability.ActiveSpanCount())
 	}
 }

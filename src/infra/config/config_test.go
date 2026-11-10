@@ -125,3 +125,17 @@ func TestConfig_PasswordFileOverride(t *testing.T) {
 	}
 }
 
+func TestPollerCanBeDisabledFromTheEnvironment(t *testing.T) {
+	t.Setenv("POLLER_ENABLED", "false")
+	cfg, err := Load("")
+	if err != nil {
+		t.Skipf("config load needs the default file: %v", err)
+	}
+	if !cfg.Poller.Disabled {
+		t.Fatal("POLLER_ENABLED=false must disable the poller")
+	}
+	t.Setenv("POLLER_ENABLED", "true")
+	if enabled, _ := Load(""); enabled != nil && enabled.Poller.Disabled {
+		t.Fatal("POLLER_ENABLED=true must keep the poller on")
+	}
+}

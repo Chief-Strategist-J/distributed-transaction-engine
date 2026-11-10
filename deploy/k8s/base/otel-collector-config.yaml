@@ -44,6 +44,27 @@ data:
           - consumers
 
     processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 200
+        spike_limit_mib: 50
+      tail_sampling:
+        decision_wait: 10s
+        num_traces: 50000
+        expected_new_traces_per_sec: 500
+        policies:
+          - name: keep-errors
+            type: status_code
+            status_code:
+              status_codes: [ERROR]
+          - name: keep-slow
+            type: latency
+            latency:
+              threshold_ms: 1000
+          - name: sample-the-rest
+            type: probabilistic
+            probabilistic:
+              sampling_percentage: 10
       batch:
         timeout: 1s
         send_batch_size: 256
@@ -76,7 +97,7 @@ data:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [batch]
+          processors: [memory_limiter, tail_sampling, batch]
           exporters: [otlp/tempo, logging]
         logs:
           receivers: [otlp]

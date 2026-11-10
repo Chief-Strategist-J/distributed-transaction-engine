@@ -9,7 +9,10 @@ import (
 	"strings"
 )
 
-const rollbackSuffix = ".rollback.sql"
+const (
+	rollbackSuffix   = ".rollback.sql"
+	migrationLockKey = 727002
+)
 
 func RunMigrations(ctx context.Context, db *sql.DB, migrationsDir string) error {
 	if migrationsDir == "" {
@@ -18,6 +21,18 @@ func RunMigrations(ctx context.Context, db *sql.DB, migrationsDir string) error 
 	if _, err := os.Stat(migrationsDir); os.IsNotExist(err) {
 		return nil
 	}
+
+	lockConn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer lockConn.Close()
+	if _, err = lockConn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", migrationLockKey); err != nil {
+		return err
+	}
+	defer func() {
+		_, _ = lockConn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockKey)
+	}()
 
 	createTableQuery := `
 CREATE TABLE IF NOT EXISTS schema_migrations (

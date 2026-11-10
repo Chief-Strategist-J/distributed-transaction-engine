@@ -4,18 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
-	"os"
 
 	appErrors "distributed-transaction-engine/src/shared/errors"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -25,48 +18,6 @@ type TracerProvider interface {
 
 type DefaultTracer struct {
 	tracer trace.Tracer
-}
-
-func InitTracer(ctx context.Context, serviceName string) (func(context.Context) error, error) {
-	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if endpoint == "" {
-		endpoint = "127.0.0.1:4318"
-	}
-
-	opts := []otlptracehttp.Option{
-		otlptracehttp.WithEndpoint(endpoint),
-		otlptracehttp.WithInsecure(),
-	}
-
-	exporter, err := otlptracehttp.New(ctx, opts...)
-	if err != nil {
-		log.Printf("Warning: failed to initialize OTLP trace exporter: %v. Running in noop trace mode.\n", err)
-		return func(context.Context) error { return nil }, nil
-	}
-
-	res, err := resource.New(ctx,
-		resource.WithAttributes(
-			semconv.ServiceNameKey.String(serviceName),
-			attribute.String("environment", os.Getenv("ENV")),
-		),
-	)
-	if err != nil {
-		res = resource.Default()
-	}
-
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-	)
-
-	otel.SetTracerProvider(tp)
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
-
-	return tp.Shutdown, nil
 }
 
 func NewTracer(name string) *DefaultTracer {
@@ -121,8 +72,9 @@ func RecordError(span trace.Span, err error) {
 	if wrapped, ok := span.(*layerSpan); ok && wrapped.recordExpectedMiss(err) {
 		return
 	}
-	span.RecordError(err)
-	span.SetStatus(codes.Error, err.Error())
+	safe := newSanitizedError(err)
+	span.RecordError(safe)
+	span.SetStatus(codes.Error, safe.Error())
 	span.SetAttributes(errorAttributes(err)...)
 }
 

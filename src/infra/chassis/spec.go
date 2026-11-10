@@ -62,4 +62,3 @@ type ServiceSpec struct {
 	Jobs              func(services Services) []JobSpec
 	Migrations        func() MigrationSet
 }
-

@@ -37,6 +37,7 @@ type PollerConfig struct {
 	WorkerID             string `yaml:"worker_id"`
 	LeaseDurationSeconds int    `yaml:"lease_duration_seconds"`
 	PollIntervalMillis   int    `yaml:"poll_interval_millis"`
+	Disabled             bool   `yaml:"disabled"`
 }
 
 type KafkaConfig struct {
@@ -220,6 +221,11 @@ func Load(path string) (*AppConfig, error) {
 			cfg.Poller.LeaseDurationSeconds = val
 		}
 	}
+	if enabled := strings.ToLower(strings.TrimSpace(os.Getenv("POLLER_ENABLED"))); enabled == "false" || enabled == "0" {
+		cfg.Poller.Disabled = true
+	} else if enabled == "true" || enabled == "1" {
+		cfg.Poller.Disabled = false
+	}
 	if pollInt := os.Getenv("POLLER_INTERVAL_MILLIS"); pollInt != "" {
 		if val, err := strconv.Atoi(pollInt); err == nil && val > 0 {
 			cfg.Poller.PollIntervalMillis = val
@@ -232,4 +238,3 @@ func Load(path string) (*AppConfig, error) {
 
 	return cfg, nil
 }
-
