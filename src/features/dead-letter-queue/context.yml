@@ -1,2 +1,203 @@
 feature: dead-letter-queue
 mode: stateless_hexagonal
+owner: core-platform-guild
+entity: dead_letter_records
+fields:
+  - name: id
+    type: uuid
+    null: no
+    default: gen_random_uuid()
+    constraint: PK, UNIQUE(tenant_id, id), immutable
+  - name: public_id
+    type: text
+    null: no
+    constraint: UNIQUE, immutable, format 'dlq_' + 26 chars
+  - name: tenant_id
+    type: text
+    null: no
+    constraint: immutable, leads composite unique keys
+  - name: source
+    type: text
+    null: no
+    default: 'ENGINE_SAGA'
+    constraint: immutable
+  - name: external_id
+    type: text
+    null: no
+    constraint: immutable
+  - name: correlation_id
+    type: uuid
+    null: no
+    constraint: immutable
+  - name: saga_id
+    type: uuid
+    null: no
+    constraint: immutable, references saga_instances(id)
+  - name: step_index
+    type: integer
+    null: no
+    constraint: CHECK (step_index >= 0)
+  - name: step_type
+    type: text
+    null: no
+    constraint: immutable
+  - name: attempt_id
+    type: uuid
+    null: no
+    constraint: immutable
+  - name: idempotency_key
+    type: text
+    null: no
+    constraint: immutable
+  - name: outcome_class
+    type: text
+    null: no
+    constraint: CHECK (outcome_class IN ('NOT_EXECUTED', 'UNKNOWN', 'FAILED'))
+  - name: failure_class
+    type: text
+    null: no
+    constraint: CHECK (failure_class IN ('POISON', 'DEFINITION_DEFECT', 'RETRY_EXHAUSTED', 'BUSINESS_REJECTION', 'COMPENSATION_FAILURE', 'INTEGRITY_VIOLATION'))
+  - name: error_fingerprint
+    type: text
+    null: no
+    constraint: CHECK (error_fingerprint = btrim(error_fingerprint) AND error_fingerprint <> '')
+  - name: sanitized_message
+    type: text
+    null: no
+  - name: payload_ref
+    type: text
+    null: no
+    constraint: immutable pointer to payload store
+  - name: schema_version
+    type: integer
+    null: no
+    default: 1
+    constraint: CHECK (schema_version >= 1)
+  - name: money_at_stake_cents
+    type: bigint
+    null: no
+    default: 0
+    constraint: CHECK (money_at_stake_cents >= 0)
+  - name: currency
+    type: char(3)
+    null: no
+    default: 'USD'
+    constraint: CHECK (currency ~ '^[A-Z]{3}$')
+  - name: business_deadline
+    type: timestamptz
+    null: yes
+  - name: status
+    type: text
+    null: no
+    default: 'QUARANTINED'
+    constraint: CHECK (status IN ('QUARANTINED', 'TRIAGED', 'ACTION_IN_PROGRESS', 'RESOLVED', 'ESCALATED'))
+  - name: disposition
+    type: text
+    null: yes
+    constraint: CHECK (disposition IN ('RETRIED_SUCCEEDED', 'RESOLVED_AS_EXECUTED', 'RESOLVED_AS_NOT_EXECUTED', 'CORRECTED', 'SAGA_COMPENSATED', 'SAGA_ROLLED_FORWARD', 'SAGA_COMPLETED_MANUALLY', 'WRITTEN_OFF'))
+  - name: actor_id
+    type: text
+    null: yes
+  - name: second_approver_id
+    type: text
+    null: yes
+  - name: disposition_reason
+    type: text
+    null: yes
+  - name: evidence_ref
+    type: text
+    null: yes
+  - name: corrective_attempt_id
+    type: uuid
+    null: yes
+  - name: corrective_idempotency_key
+    type: text
+    null: yes
+  - name: version
+    type: bigint
+    null: no
+    default: 1
+  - name: created_at
+    type: timestamptz
+    null: no
+    default: NOW()
+  - name: updated_at
+    type: timestamptz
+    null: no
+    default: NOW()
+invariants:
+  - DQ-01 DLQ record and saga transition to NEEDS_ATTENTION commit atomically in one transaction
+  - DQ-02 Database is source of truth; notification emitted via outbox
+  - DQ-03 UNKNOWN outcome is never treated as NOT_EXECUTED
+  - DQ-04 Replay uses original idempotency key
+  - DQ-05 Payloads are immutable; corrective actions create new attempts
+  - DQ-06 Every resolution requires an explicit business disposition
+  - DQ-07 Money-impacting write-offs and corrections require second approver
+  - DQ-08 Actions serialized via optimistic concurrency version check
+  - DQ-09 Systemic bursts trigger step pause incident
+  - DQ-10 Sensitive data masked by default
+pii: [none]
+source_of_truth: db
+
+secondary_entities:
+  - entity: dlq_systemic_incidents
+    owner: core-platform-guild
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        default: gen_random_uuid()
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'inc_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable
+      - name: source
+        type: text
+        null: no
+        default: 'ENGINE_DLQ'
+      - name: external_id
+        type: text
+        null: no
+      - name: correlation_id
+        type: uuid
+        null: no
+      - name: fingerprint
+        type: text
+        null: no
+      - name: step_type
+        type: text
+        null: no
+      - name: incident_status
+        type: text
+        null: no
+        default: 'ACTIVE'
+        constraint: CHECK (incident_status IN ('ACTIVE', 'RESOLVED'))
+      - name: affected_count
+        type: integer
+        null: no
+        default: 1
+      - name: paused_at
+        type: timestamptz
+        null: no
+      - name: unpaused_at
+        type: timestamptz
+        null: yes
+      - name: owner_team
+        type: text
+        null: no
+      - name: review_deadline
+        type: timestamptz
+        null: no
+      - name: created_at
+        type: timestamptz
+        null: no
+      - name: updated_at
+        type: timestamptz
+        null: no
+    invariants:
+      - incident created when fingerprint count exceeds threshold within window
