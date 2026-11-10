@@ -40,9 +40,12 @@ func NewCompensationService(deps CompensationServiceDeps) *CompensationService {
 func (s *CompensationService) TriggerCompensation(
 	ctx context.Context,
 	input *contracts.TriggerCompensationInput,
-) (*contracts.SagaCompensationPlanInstance, error) {
+) (spanResult0 *contracts.SagaCompensationPlanInstance, spanErr error) {
 	_, span := s.tracer.StartSpan(ctx, "compensation.trigger")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	if err := contracts.ValidateTriggerCompensationInput(input); err != nil {
 		return nil, err
@@ -107,7 +110,7 @@ func (s *CompensationService) TriggerCompensation(
 	}
 
 	for _, step := range steps {
-		_ = s.dispatcher.DispatchCompensation(ctx, input.TenantID, input.SagaID, step)
+		observability.NoteSwallowed(s.dispatcher.DispatchCompensation(ctx, input.TenantID, input.SagaID, step))
 	}
 
 	plan.Steps = steps
@@ -117,9 +120,12 @@ func (s *CompensationService) TriggerCompensation(
 func (s *CompensationService) CompleteStepCompensation(
 	ctx context.Context,
 	input *contracts.CompleteStepCompensationInput,
-) error {
+) (spanErr error) {
 	_, span := s.tracer.StartSpan(ctx, "compensation.complete_step")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	if err := contracts.ValidateCompleteStepCompensationInput(input); err != nil {
 		return err
@@ -168,9 +174,12 @@ func (s *CompensationService) GetCompensationPlan(
 	ctx context.Context,
 	tenantID string,
 	sagaID string,
-) (*contracts.SagaCompensationPlanInstance, error) {
+) (spanResult0 *contracts.SagaCompensationPlanInstance, spanErr error) {
 	_, span := s.tracer.StartSpan(ctx, "compensation.get_plan")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	if tenantID == "" || sagaID == "" {
 		return nil, errors.NewValidationError("tenantId and sagaId cannot be empty")

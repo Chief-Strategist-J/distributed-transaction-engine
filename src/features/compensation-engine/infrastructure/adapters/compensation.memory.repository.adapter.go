@@ -2,11 +2,11 @@ package adapters
 
 import (
 	"context"
+	contracts "distributed-transaction-engine/src/features/compensation-engine/contracts"
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"sync"
 	"time"
-
-	contracts "distributed-transaction-engine/src/features/compensation-engine/contracts"
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 type MemoryCompensationRepositoryAdapter struct {
@@ -26,7 +26,8 @@ func (a *MemoryCompensationRepositoryAdapter) CreateCompensationPlanAtomic(
 	_ context.Context,
 	plan *contracts.SagaCompensationPlanInstance,
 	steps []contracts.SagaStepCompensationInstance,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -48,7 +49,8 @@ func (a *MemoryCompensationRepositoryAdapter) GetCompensationPlan(
 	_ context.Context,
 	tenantID string,
 	sagaID string,
-) (*contracts.SagaCompensationPlanInstance, error) {
+) (spanResult0 *contracts.SagaCompensationPlanInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -70,7 +72,8 @@ func (a *MemoryCompensationRepositoryAdapter) UpdateStepOutcome(
 	outcome contracts.StepCompensationStatus,
 	residual map[string]interface{},
 	errorMessage string,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -104,7 +107,8 @@ func (a *MemoryCompensationRepositoryAdapter) UpdatePlanCAS(
 	compensatedSteps int,
 	failedSteps int,
 	residuals []map[string]interface{},
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -144,7 +148,8 @@ func (a *MemoryCompensationDispatcherAdapter) DispatchCompensation(
 	_ string,
 	_ string,
 	step contracts.SagaStepCompensationInstance,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.Dispatched = append(a.Dispatched, step)
 	return nil
 }

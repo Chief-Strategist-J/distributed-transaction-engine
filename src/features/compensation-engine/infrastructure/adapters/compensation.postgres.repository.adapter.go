@@ -3,11 +3,11 @@ package adapters
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-
 	contracts "distributed-transaction-engine/src/features/compensation-engine/contracts"
 	queries "distributed-transaction-engine/src/features/compensation-engine/infrastructure/queries"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"encoding/json"
 )
 
 type PostgresCompensationRepositoryAdapter struct {
@@ -22,7 +22,8 @@ func (a *PostgresCompensationRepositoryAdapter) CreateCompensationPlanAtomic(
 	ctx context.Context,
 	plan *contracts.SagaCompensationPlanInstance,
 	steps []contracts.SagaStepCompensationInstance,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
 		return errors.NewInternalError("failed to begin atomic compensation plan tx: " + err.Error())
@@ -80,7 +81,8 @@ func (a *PostgresCompensationRepositoryAdapter) GetCompensationPlan(
 	ctx context.Context,
 	tenantID string,
 	sagaID string,
-) (*contracts.SagaCompensationPlanInstance, error) {
+) (spanResult0 *contracts.SagaCompensationPlanInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	row := a.db.QueryRowContext(ctx, queries.FLOW_GET_COMPENSATION_PLAN, tenantID, sagaID)
 
 	var p contracts.SagaCompensationPlanInstance
@@ -108,8 +110,7 @@ func (a *PostgresCompensationRepositoryAdapter) GetCompensationPlan(
 		}
 		return nil, errors.NewInternalError("failed to query compensation plan: " + err.Error())
 	}
-
-	_ = json.Unmarshal(residualsBytes, &p.Residuals)
+	observability.NoteSwallowed(json.Unmarshal(residualsBytes, &p.Residuals))
 	if completedAt.Valid {
 		p.CompletedAt = &completedAt.Time
 	}
@@ -151,8 +152,8 @@ func (a *PostgresCompensationRepositoryAdapter) GetCompensationPlan(
 		if err != nil {
 			return nil, errors.NewInternalError("failed to scan step compensation: " + err.Error())
 		}
-		_ = json.Unmarshal(compBytes, &s.CompensationPayload)
-		_ = json.Unmarshal(resBytes, &s.ResidualPayload)
+		observability.NoteSwallowed(json.Unmarshal(compBytes, &s.CompensationPayload))
+		observability.NoteSwallowed(json.Unmarshal(resBytes, &s.ResidualPayload))
 		if lastErr.Valid {
 			s.LastError = lastErr.String
 		}
@@ -173,7 +174,8 @@ func (a *PostgresCompensationRepositoryAdapter) UpdateStepOutcome(
 	outcome contracts.StepCompensationStatus,
 	residual map[string]interface{},
 	errorMessage string,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	resBytes, _ := json.Marshal(residual)
 	if len(residual) == 0 {
 		resBytes = []byte("{}")
@@ -212,7 +214,8 @@ func (a *PostgresCompensationRepositoryAdapter) UpdatePlanCAS(
 	compensatedSteps int,
 	failedSteps int,
 	residuals []map[string]interface{},
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	resBytes, _ := json.Marshal(residuals)
 	if len(residuals) == 0 {
 		resBytes = []byte("[]")

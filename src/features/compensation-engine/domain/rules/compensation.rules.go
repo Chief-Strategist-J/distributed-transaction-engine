@@ -2,12 +2,14 @@ package rules
 
 import (
 	contracts "distributed-transaction-engine/src/features/compensation-engine/contracts"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
 )
 
 func BuildCompensationPlan(
 	forwardSteps []contracts.ForwardStepExecutionRecord,
-) ([]contracts.ForwardStepExecutionRecord, error) {
+) (spanResult0 []contracts.ForwardStepExecutionRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	for _, step := range forwardSteps {
 		if step.IsPivot && (step.ForwardOutcome == "SUCCEEDED" || step.ForwardOutcome == "UNKNOWN") {
 			return nil, errors.NewConflictError("CE-02: pivot step succeeded or open; compensation is forbidden")
@@ -38,6 +40,7 @@ func BuildCompensationPlan(
 func EvaluatePlanCompletion(
 	steps []contracts.SagaStepCompensationInstance,
 ) contracts.CompensationPlanState {
+	defer observability.TraceEnter(nil)()
 	if len(steps) == 0 {
 		return contracts.PlanStateFullyCompensated
 	}

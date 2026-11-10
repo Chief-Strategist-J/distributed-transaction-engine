@@ -1,9 +1,9 @@
 package contracts
 
 import (
-	"regexp"
-
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"regexp"
 )
 
 var (
@@ -11,7 +11,8 @@ var (
 	cmpPubRegex = regexp.MustCompile(`^cmp_[0-9a-zA-Z]{26}$`)
 )
 
-func ValidateTriggerCompensationInput(input *TriggerCompensationInput) error {
+func ValidateTriggerCompensationInput(input *TriggerCompensationInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if input == nil {
 		return errors.NewValidationError("input must not be nil")
 	}
@@ -43,7 +44,8 @@ func ValidateTriggerCompensationInput(input *TriggerCompensationInput) error {
 	return nil
 }
 
-func ValidateCompleteStepCompensationInput(input *CompleteStepCompensationInput) error {
+func ValidateCompleteStepCompensationInput(input *CompleteStepCompensationInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if input == nil {
 		return errors.NewValidationError("input must not be nil")
 	}
