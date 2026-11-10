@@ -1,2 +1,274 @@
 feature: authentication-authorization
 mode: stateless_hexagonal
+invariants:
+  - AA-01: Every request is authenticated by the mechanism of its caller type with no fallback to weaker mechanisms
+  - AA-02: Authorization requires permission, tenant scope, resource relationship, state rules, and risk controls
+  - AA-03: Service identities are authorized per method by explicit policy with default deny
+  - AA-04: Token validation enforces algorithm allow-list, issuer, audience, token type, and bounded clock skew
+  - AA-05: High-risk actions require fresh authorization and step-up or dual approvers
+  - AA-06: Failure of identity or revocation components follows declared fail-closed policy for mutations
+  - AA-07: Denials and privileged allows are written to the audit trail
+  - AA-08: Responses never reveal existence or ownership of resources the caller cannot access via 404
+  - AA-09: Provider callbacks are authenticated by signature and protected against replay
+status: implementation_complete
+
+entities:
+  - entity: api_keys
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'apk_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'AUTH_ADMIN'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: key_prefix
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, key_prefix)
+      - name: key_hash
+        type: text
+        null: no
+        constraint: CHECK (length(key_hash) = 64)
+      - name: name
+        type: text
+        null: no
+      - name: scopes
+        type: text[]
+        null: no
+        default: '{}'
+      - name: allowed_cidrs
+        type: text[]
+        null: no
+        default: '{}'
+      - name: status
+        type: text
+        null: no
+        default: 'ACTIVE'
+        constraint: CHECK (status IN ('ACTIVE', 'REVOKED', 'EXPIRED'))
+      - name: expires_at
+        type: timestamptz
+        null: yes
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
+
+  - entity: service_identities
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'svi_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'PLATFORM_MESH'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: spiffe_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, spiffe_id)
+      - name: trust_domain
+        type: text
+        null: no
+      - name: allowed_methods
+        type: text[]
+        null: no
+        default: '{}'
+      - name: status
+        type: text
+        null: no
+        default: 'ACTIVE'
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
+
+  - entity: auth_decision_audit
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'ada_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'AUTH_ENGINE'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: caller_type
+        type: text
+        null: no
+      - name: principal_id
+        type: text
+        null: no
+      - name: action
+        type: text
+        null: no
+      - name: resource_id
+        type: text
+        null: no
+      - name: decision
+        type: text
+        null: no
+        constraint: CHECK (decision IN ('ALLOW', 'DENY'))
+      - name: reason_code
+        type: text
+        null: no
+      - name: risk_level
+        type: text
+        null: no
+        constraint: CHECK (risk_level IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL'))
+      - name: step_up_verified
+        type: boolean
+        null: no
+        default: false
+      - name: approver_id
+        type: text
+        null: no
+        default: ''
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
+
+  - entity: revocation_records
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'rev_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'AUTH_ADMIN'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: target_type
+        type: text
+        null: no
+        constraint: CHECK (target_type IN ('TOKEN', 'USER', 'KEY', 'SESSION'))
+      - name: target_id
+        type: text
+        null: no
+      - name: revocation_reason
+        type: text
+        null: no
+        default: ''
+      - name: revoked_at
+        type: timestamptz
+        null: no
+        default: NOW()
+      - name: expires_at
+        type: timestamptz
+        null: no
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
+
+  - entity: provider_replay_cache
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'prc_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'WEBHOOK_RECEIVER'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: provider
+        type: text
+        null: no
+      - name: nonce
+        type: text
+        null: no
+      - name: received_at
+        type: timestamptz
+        null: no
+        default: NOW()
+      - name: expires_at
+        type: timestamptz
+        null: no
