@@ -1,2 +1,257 @@
 feature: operational-dashboard
 mode: stateless_hexagonal
+owner: platform-sre
+entities:
+  - entity: dashboard_stream_sessions
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        default: uuidv7()
+        constraint: PK
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, format 'dss_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable
+      - name: source
+        type: text
+        null: no
+        default: 'DASHBOARD_GATEWAY'
+        constraint: non-empty
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: principal_id
+        type: text
+        null: no
+      - name: scope_type
+        type: text
+        null: no
+        constraint: CHECK IN ('TENANT_ADMIN', 'SUPPORT', 'OPERATOR')
+      - name: impersonation_ticket
+        type: text
+        null: yes
+      - name: impersonation_expires_at
+        type: timestamptz
+        null: yes
+      - name: reauth_deadline
+        type: timestamptz
+        null: no
+      - name: last_heartbeat_at
+        type: timestamptz
+        null: no
+      - name: status
+        type: text
+        null: no
+        constraint: CHECK IN ('CONNECTING', 'ACTIVE', 'STALE_PAUSED', 'REVOKED', 'TERMINATED')
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: updated_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: version
+        type: bigint
+        null: no
+        default: 1
+
+  - entity: dashboard_tile_snapshots
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        default: uuidv7()
+        constraint: PK
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, format 'dts_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable
+      - name: source
+        type: text
+        null: no
+        default: 'METRICS_ENGINE'
+        constraint: non-empty
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: tile_key
+        type: text
+        null: no
+        constraint: CHECK IN ('sagas_by_state', 'outcome_rates', 'unknown_outcomes', 'dlq_metrics', 'latency_quantiles', 'pipeline_health', 'compensations')
+      - name: metrics_payload
+        type: jsonb
+        null: no
+      - name: data_age_ms
+        type: bigint
+        null: no
+        default: 0
+      - name: is_stale
+        type: boolean
+        null: no
+        default: false
+      - name: as_of_version
+        type: bigint
+        null: no
+        default: 1
+      - name: source_timestamp
+        type: timestamptz
+        null: no
+        default: now()
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: updated_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: version
+        type: bigint
+        null: no
+        default: 1
+
+  - entity: dashboard_action_previews
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        default: uuidv7()
+        constraint: PK
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, format 'dap_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable
+      - name: source
+        type: text
+        null: no
+        default: 'INTERVENTION_ENGINE'
+        constraint: non-empty
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: saga_id
+        type: text
+        null: no
+      - name: action_type
+        type: text
+        null: no
+        constraint: CHECK IN ('PAUSE', 'RESUME', 'RETRY_STEP', 'FORCE_COMPENSATE', 'MARK_COMPLETED', 'SKIP_STEP')
+      - name: snapshot_version
+        type: bigint
+        null: no
+      - name: requires_second_approver
+        type: boolean
+        null: no
+        default: false
+      - name: money_at_stake
+        type: numeric(18,4)
+        null: no
+        default: 0
+      - name: preview_payload
+        type: jsonb
+        null: no
+      - name: status
+        type: text
+        null: no
+        constraint: CHECK IN ('PENDING_CONFIRMATION', 'CONFIRMED', 'EXPIRED', 'MISMATCH_REJECTED')
+      - name: expires_at
+        type: timestamptz
+        null: no
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: updated_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: version
+        type: bigint
+        null: no
+        default: 1
+
+  - entity: dashboard_audit_events
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        default: uuidv7()
+        constraint: PK
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, format 'dae_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable
+      - name: source
+        type: text
+        null: no
+        default: 'DASHBOARD_AUDIT'
+        constraint: non-empty
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: operator_id
+        type: text
+        null: no
+      - name: event_type
+        type: text
+        null: no
+      - name: resource_id
+        type: text
+        null: no
+      - name: details
+        type: jsonb
+        null: no
+      - name: ip_address
+        type: text
+        null: no
+        default: '127.0.0.1'
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: updated_at
+        type: timestamptz
+        null: no
+        default: now()
+      - name: version
+        type: bigint
+        null: no
+        default: 1
