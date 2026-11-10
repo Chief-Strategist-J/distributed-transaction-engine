@@ -38,9 +38,12 @@ func NewSequentialExecutionService(deps SequentialExecutionServiceDeps) *Sequent
 	}
 }
 
-func (s *SequentialExecutionService) StartSequentialSaga(ctx context.Context, input *contracts.StartSequentialSagaInput) (*contracts.SequentialSagaState, error) {
+func (s *SequentialExecutionService) StartSequentialSaga(ctx context.Context, input *contracts.StartSequentialSagaInput) (spanResult0 *contracts.SequentialSagaState, spanErr error) {
 	_, span := s.tracer.StartSpan(ctx, "StartSequentialSaga")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	if err := contracts.ValidateStartSequentialSagaInput(input); err != nil {
 		return nil, err
@@ -74,7 +77,7 @@ func (s *SequentialExecutionService) StartSequentialSaga(ctx context.Context, in
 	}
 
 	if len(wf.Steps) > 0 {
-		_ = s.dispatcher.DispatchStep(ctx, saga.TenantID, saga.ID, 0, input.Payload)
+		observability.NoteSwallowed(s.dispatcher.DispatchStep(ctx, saga.TenantID, saga.ID, 0, input.Payload))
 	}
 	return saga, nil
 }
@@ -87,9 +90,12 @@ func (s *SequentialExecutionService) HandleStepCompletion(
 	isSuccess bool,
 	output map[string]interface{},
 	isRetryable bool,
-) error {
+) (spanErr error) {
 	_, span := s.tracer.StartSpan(ctx, "HandleStepCompletion")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	saga, err := s.repo.GetSequentialSaga(ctx, tenantID, sagaID)
 	if err != nil {
@@ -134,19 +140,22 @@ func (s *SequentialExecutionService) HandleStepCompletion(
 	for _, cmd := range dec.Commands {
 		switch cmd.Type {
 		case machines.CommandDispatchStep:
-			_ = s.dispatcher.DispatchStep(ctx, tenantID, sagaID, cmd.StepIndex, output)
+			observability.NoteSwallowed(s.dispatcher.DispatchStep(ctx, tenantID, sagaID, cmd.StepIndex, output))
 		case machines.CommandCompensateStep:
-			_ = s.dispatcher.CompensateStep(ctx, tenantID, sagaID, cmd.StepIndex)
+			observability.NoteSwallowed(s.dispatcher.CompensateStep(ctx, tenantID, sagaID, cmd.StepIndex))
 		case machines.CommandScheduleRetry:
-			_ = s.dispatcher.ScheduleTimer(ctx, tenantID, sagaID, cmd.StepIndex, 5)
+			observability.NoteSwallowed(s.dispatcher.ScheduleTimer(ctx, tenantID, sagaID, cmd.StepIndex, 5))
 		}
 	}
 	return nil
 }
 
-func (s *SequentialExecutionService) GetSaga(ctx context.Context, tenantID string, sagaID string) (*contracts.SequentialSagaState, error) {
+func (s *SequentialExecutionService) GetSaga(ctx context.Context, tenantID string, sagaID string) (spanResult0 *contracts.SequentialSagaState, spanErr error) {
 	_, span := s.tracer.StartSpan(ctx, "GetSaga")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	return s.repo.GetSequentialSaga(ctx, tenantID, sagaID)
 }

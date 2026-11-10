@@ -3,17 +3,18 @@ package machines
 import (
 	contracts "distributed-transaction-engine/src/features/sequential-execution/contracts"
 	rules "distributed-transaction-engine/src/features/sequential-execution/domain/rules"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
 )
 
 type SequentialCommandType string
 
 const (
-	CommandDispatchStep       SequentialCommandType = "DISPATCH_STEP"
-	CommandCompensateStep     SequentialCommandType = "COMPENSATE_STEP"
-	CommandCompleteSaga       SequentialCommandType = "COMPLETE_SAGA"
-	CommandFailCompensated    SequentialCommandType = "FAIL_COMPENSATED"
-	CommandScheduleRetry      SequentialCommandType = "SCHEDULE_RETRY"
+	CommandDispatchStep      SequentialCommandType = "DISPATCH_STEP"
+	CommandCompensateStep    SequentialCommandType = "COMPENSATE_STEP"
+	CommandCompleteSaga      SequentialCommandType = "COMPLETE_SAGA"
+	CommandFailCompensated   SequentialCommandType = "FAIL_COMPENSATED"
+	CommandScheduleRetry     SequentialCommandType = "SCHEDULE_RETRY"
 	CommandEscalateAttention SequentialCommandType = "ESCALATE_ATTENTION"
 )
 
@@ -42,7 +43,8 @@ func (m *SequentialExecutionMachine) EvaluateStepSuccess(
 	totalSteps int,
 	isPivot bool,
 	pivotReached bool,
-) (SequentialTransitionDecision, error) {
+) (spanResult0 SequentialTransitionDecision, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if currentPhase == contracts.PhaseForward {
 		updatedPivotReached := pivotReached || isPivot
 		nextIndex, hasMore := rules.NextForwardStepIndex(currentIndex, totalSteps)
@@ -92,7 +94,8 @@ func (m *SequentialExecutionMachine) EvaluateStepFailure(
 	currentIndex int,
 	pivotReached bool,
 	isRetryable bool,
-) (SequentialTransitionDecision, error) {
+) (spanResult0 SequentialTransitionDecision, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if isRetryable {
 		return SequentialTransitionDecision{
 			NextPhase:        currentPhase,

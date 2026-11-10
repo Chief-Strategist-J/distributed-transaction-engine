@@ -3,11 +3,11 @@ package adapters
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-
 	contracts "distributed-transaction-engine/src/features/sequential-execution/contracts"
 	queries "distributed-transaction-engine/src/features/sequential-execution/infrastructure/queries"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"encoding/json"
 )
 
 type PostgresSequentialExecutionRepositoryAdapter struct {
@@ -18,7 +18,8 @@ func NewPostgresSequentialExecutionRepositoryAdapter(db *sql.DB) *PostgresSequen
 	return &PostgresSequentialExecutionRepositoryAdapter{db: db}
 }
 
-func (a *PostgresSequentialExecutionRepositoryAdapter) CreateSequentialSaga(ctx context.Context, saga *contracts.SequentialSagaState) error {
+func (a *PostgresSequentialExecutionRepositoryAdapter) CreateSequentialSaga(ctx context.Context, saga *contracts.SequentialSagaState) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	outputBytes, err := json.Marshal(saga.FinalOutput)
 	if err != nil {
 		return errors.NewInternalError("failed to serialize final output")
@@ -39,7 +40,8 @@ func (a *PostgresSequentialExecutionRepositoryAdapter) CreateSequentialSaga(ctx 
 	return nil
 }
 
-func (a *PostgresSequentialExecutionRepositoryAdapter) GetSequentialSaga(ctx context.Context, tenantID string, sagaID string) (*contracts.SequentialSagaState, error) {
+func (a *PostgresSequentialExecutionRepositoryAdapter) GetSequentialSaga(ctx context.Context, tenantID string, sagaID string) (spanResult0 *contracts.SequentialSagaState, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	row := a.db.QueryRowContext(ctx, queries.FLOW_GET_SEQUENTIAL_SAGA, tenantID, sagaID)
 
 	var s contracts.SequentialSagaState
@@ -60,7 +62,7 @@ func (a *PostgresSequentialExecutionRepositoryAdapter) GetSequentialSaga(ctx con
 
 	s.Phase = contracts.ExecutionPhase(phaseStr)
 	s.FinalOutput = make(map[string]interface{})
-	_ = json.Unmarshal(outputBytes, &s.FinalOutput)
+	observability.NoteSwallowed(json.Unmarshal(outputBytes, &s.FinalOutput))
 	return &s, nil
 }
 
@@ -75,7 +77,8 @@ func (a *PostgresSequentialExecutionRepositoryAdapter) UpdateSagaCAS(
 	nextPhase contracts.ExecutionPhase,
 	pivotReached bool,
 	output map[string]interface{},
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	outputBytes, err := json.Marshal(output)
 	if err != nil {
 		return errors.NewInternalError("failed to marshal output")
@@ -101,7 +104,8 @@ func (a *PostgresSequentialExecutionRepositoryAdapter) UpdateSagaCAS(
 	return nil
 }
 
-func (a *PostgresSequentialExecutionRepositoryAdapter) SaveContextEntry(ctx context.Context, entry *contracts.StepContextEntry) error {
+func (a *PostgresSequentialExecutionRepositoryAdapter) SaveContextEntry(ctx context.Context, entry *contracts.StepContextEntry) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	valBytes, err := json.Marshal(entry.EntryValue)
 	if err != nil {
 		return errors.NewInternalError("failed to serialize context value")
@@ -119,7 +123,8 @@ func (a *PostgresSequentialExecutionRepositoryAdapter) SaveContextEntry(ctx cont
 	return nil
 }
 
-func (a *PostgresSequentialExecutionRepositoryAdapter) GetContextEntries(ctx context.Context, tenantID string, sagaID string) ([]contracts.StepContextEntry, error) {
+func (a *PostgresSequentialExecutionRepositoryAdapter) GetContextEntries(ctx context.Context, tenantID string, sagaID string) (spanResult0 []contracts.StepContextEntry, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	rows, err := a.db.QueryContext(ctx, queries.FLOW_GET_CONTEXT_ENTRIES, tenantID, sagaID)
 	if err != nil {
 		return nil, errors.NewInternalError("failed to query context entries")
@@ -134,7 +139,7 @@ func (a *PostgresSequentialExecutionRepositoryAdapter) GetContextEntries(ctx con
 			return nil, errors.NewInternalError("failed to scan context entry")
 		}
 		e.EntryValue = make(map[string]interface{})
-		_ = json.Unmarshal(valBytes, &e.EntryValue)
+		observability.NoteSwallowed(json.Unmarshal(valBytes, &e.EntryValue))
 		entries = append(entries, e)
 	}
 	return entries, nil

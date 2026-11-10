@@ -1,9 +1,9 @@
 package contracts
 
 import (
-	"regexp"
-
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"regexp"
 )
 
 var (
@@ -11,7 +11,8 @@ var (
 	seqPubRegex = regexp.MustCompile(`^seq_[0-9a-zA-Z]{26}$`)
 )
 
-func ValidateStartSequentialSagaInput(input *StartSequentialSagaInput) error {
+func ValidateStartSequentialSagaInput(input *StartSequentialSagaInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if input == nil {
 		return errors.NewValidationError("input must not be nil")
 	}
@@ -42,7 +43,8 @@ func ValidateStartSequentialSagaInput(input *StartSequentialSagaInput) error {
 	return nil
 }
 
-func ValidateResumeSequentialSagaInput(input *ResumeSequentialSagaInput) error {
+func ValidateResumeSequentialSagaInput(input *ResumeSequentialSagaInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if input == nil {
 		return errors.NewValidationError("input must not be nil")
 	}

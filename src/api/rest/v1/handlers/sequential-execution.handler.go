@@ -61,7 +61,7 @@ func (h *SequentialExecutionHandler) setStandardHeaders(w http.ResponseWriter, r
 
 func (h *SequentialExecutionHandler) writeResponse(w http.ResponseWriter, r *http.Request, statusCode int, data interface{}, start time.Time) {
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(types.ApiResponse{
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(types.ApiResponse{
 		Success:    true,
 		StatusCode: statusCode,
 		Data:       data,
@@ -73,7 +73,7 @@ func (h *SequentialExecutionHandler) writeResponse(w http.ResponseWriter, r *htt
 			ExecutionTimeMs: time.Since(start).Milliseconds(),
 			APIVersion:      "v1",
 		},
-	})
+	}))
 }
 
 func (h *SequentialExecutionHandler) writeError(w http.ResponseWriter, r *http.Request, err error, start time.Time) {
@@ -88,7 +88,7 @@ func (h *SequentialExecutionHandler) writeError(w http.ResponseWriter, r *http.R
 	}
 
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(types.ApiResponse{
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(types.ApiResponse{
 		Success:    false,
 		StatusCode: statusCode,
 		Error: &types.ResponseError{
@@ -104,5 +104,5 @@ func (h *SequentialExecutionHandler) writeError(w http.ResponseWriter, r *http.R
 			ExecutionTimeMs: time.Since(start).Milliseconds(),
 			APIVersion:      "v1",
 		},
-	})
+	}))
 }

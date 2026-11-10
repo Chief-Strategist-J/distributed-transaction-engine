@@ -2,10 +2,12 @@ package rules
 
 import (
 	contracts "distributed-transaction-engine/src/features/sequential-execution/contracts"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
 )
 
 func NextForwardStepIndex(currentIndex int, totalSteps int) (int, bool) {
+	defer observability.TraceEnter(nil)()
 	if currentIndex < 0 || totalSteps <= 0 {
 		return currentIndex, false
 	}
@@ -17,6 +19,7 @@ func NextForwardStepIndex(currentIndex int, totalSteps int) (int, bool) {
 }
 
 func NextCompensatingStepIndex(currentIndex int) (int, bool) {
+	defer observability.TraceEnter(nil)()
 	if currentIndex <= 0 {
 		return 0, false
 	}
@@ -24,6 +27,7 @@ func NextCompensatingStepIndex(currentIndex int) (int, bool) {
 }
 
 func CanCompensate(phase contracts.ExecutionPhase, pivotReached bool, nature contracts.StepNature) bool {
+	defer observability.TraceEnter(nil)()
 	if pivotReached {
 		return false
 	}
@@ -34,13 +38,15 @@ func CanCompensate(phase contracts.ExecutionPhase, pivotReached bool, nature con
 }
 
 func DetermineNextPhaseOnFailure(pivotReached bool) contracts.ExecutionPhase {
+	defer observability.TraceEnter(nil)()
 	if pivotReached {
 		return contracts.PhaseRollForward
 	}
 	return contracts.PhaseCompensating
 }
 
-func ValidateStepOrdering(natures []contracts.StepNature) error {
+func ValidateStepOrdering(natures []contracts.StepNature) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if len(natures) == 0 {
 		return errors.NewValidationError("workflow must contain at least one step")
 	}

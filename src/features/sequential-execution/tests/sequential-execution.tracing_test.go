@@ -65,7 +65,6 @@ func TestSequentialExecution_EndToEndTracingAndRealDB(t *testing.T) {
 		Tracer:       tracer,
 	})
 
-	// Start root span representing ingress API call with W3C Traceparent
 	ctx, rootSpan := tracer.StartSpan(context.Background(), "POST /api/v1/sagas/sequential/start")
 	defer rootSpan.End()
 
@@ -76,7 +75,6 @@ func TestSequentialExecution_EndToEndTracingAndRealDB(t *testing.T) {
 	tenantID := fmt.Sprintf("tenant_trace_%d", time.Now().UnixNano())
 	wfID := "77777777-7777-4777-8777-777777777777"
 
-	// Register workflow definition in DB & Memory repo
 	wfDef := &workflowContracts.WorkflowDefinitionInstance{
 		ID:            wfID,
 		PublicID:      "wfd_01HXYZ0123456789ABCDEFTRC1",
@@ -127,21 +125,18 @@ func TestSequentialExecution_EndToEndTracingAndRealDB(t *testing.T) {
 	t.Logf("Saga Started Successfully: ID=%s, PublicID=%s, State=%s, TraceID=%s",
 		sagaState.ID, sagaState.PublicID, sagaState.CurrentState, traceID)
 
-	// Step 0 Completion
 	err = svc.HandleStepCompletion(ctx, tenantID, sagaID, 0, true, map[string]interface{}{"auth_code": "AUTH_99"}, false)
 	if err != nil {
 		t.Fatalf("Step 0 completion failed: %v", err)
 	}
 	t.Logf("Step 0 'Authorize' Succeeded (Recorded under TraceID %s)", traceID)
 
-	// Step 1 Completion
 	err = svc.HandleStepCompletion(ctx, tenantID, sagaID, 1, true, map[string]interface{}{"charge_id": "CH_99"}, false)
 	if err != nil {
 		t.Fatalf("Step 1 completion failed: %v", err)
 	}
 	t.Logf("Step 1 'Charge' (Pivot) Succeeded -> Saga COMPLETED")
 
-	// Verify terminal state in Real PostgreSQL
 	row := db.QueryRowContext(ctx, "SELECT current_state, version, pivot_reached FROM saga_instances WHERE tenant_id = $1 AND id = $2", tenantID, sagaID)
 	var finalState string
 	var version int64

@@ -59,7 +59,6 @@ func TestPostgresSequentialExecutionAdapter_RealDatabaseInvariants(t *testing.T)
 	tenantID := fmt.Sprintf("tenant_test_%d", time.Now().UnixNano())
 	workflowDefID := "88888888-8888-4888-8888-888888888888"
 
-	// 1. Seed foreign key workflow definition
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO workflow_definitions (
 			id, public_id, tenant_id, name, version, source, external_id,
@@ -94,18 +93,15 @@ func TestPostgresSequentialExecutionAdapter_RealDatabaseInvariants(t *testing.T)
 		UpdatedAt:            now,
 	}
 
-	// 2. Real DB Insert
 	if err := adapter.CreateSequentialSaga(ctx, saga); err != nil {
 		t.Fatalf("CreateSequentialSaga failed on real Postgres: %v", err)
 	}
 
-	// 3. Real DB Unique Constraint Violation Check (23505)
 	duplicateErr := adapter.CreateSequentialSaga(ctx, saga)
 	if duplicateErr == nil {
 		t.Fatal("expected unique constraint violation on duplicate insert, got nil")
 	}
 
-	// 4. Real DB Read Back
 	fetched, err := adapter.GetSequentialSaga(ctx, tenantID, sagaID)
 	if err != nil {
 		t.Fatalf("GetSequentialSaga failed: %v", err)
@@ -114,7 +110,6 @@ func TestPostgresSequentialExecutionAdapter_RealDatabaseInvariants(t *testing.T)
 		t.Fatalf("unexpected fetched state: %+v", fetched)
 	}
 
-	// 5. Optimistic Lock / Compare-And-Swap (CAS) Update on Real DB
 	err = adapter.UpdateSagaCAS(
 		ctx,
 		tenantID,
@@ -131,7 +126,6 @@ func TestPostgresSequentialExecutionAdapter_RealDatabaseInvariants(t *testing.T)
 		t.Fatalf("UpdateSagaCAS failed: %v", err)
 	}
 
-	// 6. Stale CAS Version Conflict Check (Affects 0 rows -> Conflict error)
 	staleErr := adapter.UpdateSagaCAS(
 		ctx,
 		tenantID,
@@ -148,7 +142,6 @@ func TestPostgresSequentialExecutionAdapter_RealDatabaseInvariants(t *testing.T)
 		t.Fatal("expected conflict error on stale CAS version, got nil")
 	}
 
-	// 7. Verify version incremented to 2 in real PostgreSQL
 	updated, err := adapter.GetSequentialSaga(ctx, tenantID, sagaID)
 	if err != nil {
 		t.Fatalf("failed to fetch updated saga: %v", err)
@@ -157,7 +150,6 @@ func TestPostgresSequentialExecutionAdapter_RealDatabaseInvariants(t *testing.T)
 		t.Fatalf("expected version 2 step 1, got version %d step %d", updated.Version, updated.CurrentStepIndex)
 	}
 
-	// 8. Context Entry Insert and Fetch against Real Postgres
 	ctxEntry := &contracts.StepContextEntry{
 		ID:                "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
 		PublicID:          "ctx_01HXYZ0123456789ABCDEFREAL",

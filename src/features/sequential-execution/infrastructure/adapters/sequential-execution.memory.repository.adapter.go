@@ -2,11 +2,11 @@ package adapters
 
 import (
 	"context"
+	contracts "distributed-transaction-engine/src/features/sequential-execution/contracts"
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"fmt"
 	"sync"
-
-	contracts "distributed-transaction-engine/src/features/sequential-execution/contracts"
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 type MemorySequentialExecutionRepositoryAdapter struct {
@@ -22,7 +22,8 @@ func NewMemorySequentialExecutionRepositoryAdapter() *MemorySequentialExecutionR
 	}
 }
 
-func (m *MemorySequentialExecutionRepositoryAdapter) CreateSequentialSaga(_ context.Context, saga *contracts.SequentialSagaState) error {
+func (m *MemorySequentialExecutionRepositoryAdapter) CreateSequentialSaga(_ context.Context, saga *contracts.SequentialSagaState) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -35,7 +36,8 @@ func (m *MemorySequentialExecutionRepositoryAdapter) CreateSequentialSaga(_ cont
 	return nil
 }
 
-func (m *MemorySequentialExecutionRepositoryAdapter) GetSequentialSaga(_ context.Context, tenantID string, sagaID string) (*contracts.SequentialSagaState, error) {
+func (m *MemorySequentialExecutionRepositoryAdapter) GetSequentialSaga(_ context.Context, tenantID string, sagaID string) (spanResult0 *contracts.SequentialSagaState, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -59,7 +61,8 @@ func (m *MemorySequentialExecutionRepositoryAdapter) UpdateSagaCAS(
 	nextPhase contracts.ExecutionPhase,
 	pivotReached bool,
 	output map[string]interface{},
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -82,7 +85,8 @@ func (m *MemorySequentialExecutionRepositoryAdapter) UpdateSagaCAS(
 	return nil
 }
 
-func (m *MemorySequentialExecutionRepositoryAdapter) SaveContextEntry(_ context.Context, entry *contracts.StepContextEntry) error {
+func (m *MemorySequentialExecutionRepositoryAdapter) SaveContextEntry(_ context.Context, entry *contracts.StepContextEntry) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -91,7 +95,8 @@ func (m *MemorySequentialExecutionRepositoryAdapter) SaveContextEntry(_ context.
 	return nil
 }
 
-func (m *MemorySequentialExecutionRepositoryAdapter) GetContextEntries(_ context.Context, tenantID string, sagaID string) ([]contracts.StepContextEntry, error) {
+func (m *MemorySequentialExecutionRepositoryAdapter) GetContextEntries(_ context.Context, tenantID string, sagaID string) (spanResult0 []contracts.StepContextEntry, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
