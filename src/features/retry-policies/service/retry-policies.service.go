@@ -103,8 +103,7 @@ func (s *RetryPolicyService) Evaluate(
 	if hasRetryAfter {
 		retryAfterSec = int(retryAfterDelay.Seconds())
 	}
-
-	_ = s.repo.RecordStepAttempt(
+	observability.NoteSwallowed(s.repo.RecordStepAttempt(
 		ctx,
 		input.TenantID,
 		sagaUUID.String(),
@@ -116,7 +115,7 @@ func (s *RetryPolicyService) Evaluate(
 		retryAfterSec,
 		decision.DelayMillis,
 		nextAttempt,
-	)
+	))
 
 	if input.DependencyID != "" {
 		if errClass == contracts.ClassTransientNotExecuted || errClass == contracts.ClassAmbiguous {
@@ -130,18 +129,21 @@ func (s *RetryPolicyService) Evaluate(
 }
 
 func (s *RetryPolicyService) GetBreakerState(ctx context.Context, dependencyID string) machines.BreakerState {
+	defer observability.TraceEnter(nil)()
 	return s.breaker.GetState(dependencyID)
 }
 
 func (s *RetryPolicyService) RecordBreakerSuccess(ctx context.Context, dependencyID string) {
+	defer observability.TraceEnter(nil)()
 	s.breaker.RecordSuccess(dependencyID)
 }
 
 func (s *RetryPolicyService) RecordBreakerFailure(ctx context.Context, dependencyID string) {
+	defer observability.TraceEnter(nil)()
 	s.breaker.RecordFailure(dependencyID)
 }
 
 func (s *RetryPolicyService) ResetBreaker(ctx context.Context, dependencyID string) {
+	defer observability.TraceEnter(nil)()
 	s.breaker.Reset(dependencyID)
 }
-

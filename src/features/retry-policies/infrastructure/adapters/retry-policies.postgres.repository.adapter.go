@@ -3,13 +3,12 @@ package adapters
 import (
 	"context"
 	"database/sql"
-	"time"
-
 	"distributed-transaction-engine/src/features/retry-policies/contracts"
 	"distributed-transaction-engine/src/features/retry-policies/infrastructure/queries"
+	"distributed-transaction-engine/src/infra/observability"
 	appErrors "distributed-transaction-engine/src/shared/errors"
-
 	"github.com/google/uuid"
+	"time"
 )
 
 type DBExecutor interface {
@@ -34,7 +33,8 @@ func (a *PostgresRetryRepositoryAdapter) RecordStepAttempt(
 	retryAfter int,
 	delayMillis int64,
 	nextAttempt *time.Time,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	id := uuid.New()
 	publicID := "sre_" + id.String()[:26]
 	now := time.Now().UTC()
@@ -65,7 +65,8 @@ func (a *PostgresRetryRepositoryAdapter) RecordStepAttempt(
 func (a *PostgresRetryRepositoryAdapter) GetPolicy(
 	ctx context.Context,
 	tenantID, policyName string,
-) (*contracts.RetryPolicyConfig, error) {
+) (spanResult0 *contracts.RetryPolicyConfig, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	row := a.db.QueryRowContext(ctx, queries.FLOW_GET_RETRY_POLICY, tenantID, policyName)
 
 	var p contracts.RetryPolicyConfig
@@ -95,7 +96,8 @@ func (a *PostgresRetryRepositoryAdapter) GetPolicy(
 func (a *PostgresRetryRepositoryAdapter) SavePolicy(
 	ctx context.Context,
 	policy contracts.RetryPolicyConfig,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	now := time.Now().UTC()
 	extID := "ext_rtp_" + policy.PolicyName
 	corrID := uuid.New()

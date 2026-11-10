@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	contracts "distributed-transaction-engine/src/features/retry-policies/contracts"
 	retrypolicies "distributed-transaction-engine/src/features/retry-policies"
+	contracts "distributed-transaction-engine/src/features/retry-policies/contracts"
 	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/constants"
 	appErrors "distributed-transaction-engine/src/shared/errors"
@@ -105,7 +105,7 @@ func (h *RetryPoliciesHandler) setStandardHeaders(w http.ResponseWriter, r *http
 
 func (h *RetryPoliciesHandler) writeResponse(w http.ResponseWriter, r *http.Request, statusCode int, data interface{}, start time.Time) {
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(types.ApiResponse{
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(types.ApiResponse{
 		Success:    true,
 		StatusCode: statusCode,
 		Data:       data,
@@ -117,7 +117,7 @@ func (h *RetryPoliciesHandler) writeResponse(w http.ResponseWriter, r *http.Requ
 			ExecutionTimeMs: time.Since(start).Milliseconds(),
 			APIVersion:      "v1",
 		},
-	})
+	}))
 }
 
 func (h *RetryPoliciesHandler) writeError(w http.ResponseWriter, r *http.Request, err error, start time.Time) {
@@ -132,7 +132,7 @@ func (h *RetryPoliciesHandler) writeError(w http.ResponseWriter, r *http.Request
 	}
 
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(types.ApiResponse{
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(types.ApiResponse{
 		Success:    false,
 		StatusCode: statusCode,
 		Error: &types.ResponseError{
@@ -148,6 +148,5 @@ func (h *RetryPoliciesHandler) writeError(w http.ResponseWriter, r *http.Request
 			ExecutionTimeMs: time.Since(start).Milliseconds(),
 			APIVersion:      "v1",
 		},
-	})
+	}))
 }
-

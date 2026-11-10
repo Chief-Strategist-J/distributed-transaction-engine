@@ -2,16 +2,17 @@ package rules
 
 import (
 	"crypto/sha256"
+	"distributed-transaction-engine/src/features/retry-policies/contracts"
+	"distributed-transaction-engine/src/infra/observability"
 	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"strings"
 	"time"
-
-	"distributed-transaction-engine/src/features/retry-policies/contracts"
 )
 
 func ComputeFingerprint(statusCode int, errMsg string) string {
+	defer observability.TraceEnter(nil)()
 	normalized := strings.TrimSpace(errMsg)
 	raw := fmt.Sprintf("%d|%s", statusCode, normalized)
 	sum := sha256.Sum256([]byte(raw))
@@ -19,6 +20,7 @@ func ComputeFingerprint(statusCode int, errMsg string) string {
 }
 
 func IsDeterministicError(fingerprintHistory []string, currentFingerprint string) bool {
+	defer observability.TraceEnter(nil)()
 	if len(fingerprintHistory) < 2 {
 		return false
 	}
@@ -42,6 +44,7 @@ func ClassifyError(
 	attempt int,
 	history []string,
 ) contracts.ErrorClass {
+	defer observability.TraceEnter(nil)()
 	currentFp := ComputeFingerprint(statusCode, errMsg)
 	if IsDeterministicError(history, currentFp) {
 		return contracts.ClassDeterministicError
@@ -84,6 +87,7 @@ func CalculateBackoff(
 	retryAfterDelay time.Duration,
 	hasRetryAfter bool,
 ) time.Duration {
+	defer observability.TraceEnter(nil)()
 	attemptClamped := attempt
 	if attemptClamped > 30 {
 		attemptClamped = 30
@@ -154,6 +158,7 @@ func EvaluateDecision(
 	computedDelay time.Duration,
 	now time.Time,
 ) contracts.RetryDecision {
+	defer observability.TraceEnter(nil)()
 	if class == contracts.ClassDeterministicError {
 		return contracts.RetryDecision{
 			Action:     contracts.ActionNeedsAttention,
@@ -242,4 +247,3 @@ func EvaluateDecision(
 		Reason:      "retry scheduled with backoff delay",
 	}
 }
-

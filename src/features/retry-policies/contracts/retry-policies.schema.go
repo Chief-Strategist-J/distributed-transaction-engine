@@ -1,17 +1,17 @@
 package contracts
 
 import (
+	"distributed-transaction-engine/src/infra/observability"
+	appErrors "distributed-transaction-engine/src/shared/errors"
+	"github.com/google/uuid"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	appErrors "distributed-transaction-engine/src/shared/errors"
-
-	"github.com/google/uuid"
 )
 
-func ValidateEvaluateInput(input EvaluateRetryInput) (*uuid.UUID, *time.Time, *time.Time, error) {
+func ValidateEvaluateInput(input EvaluateRetryInput) (spanResult0 *uuid.UUID, spanResult1 *time.Time, spanResult2 *time.Time, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if strings.TrimSpace(input.TenantID) == "" {
 		return nil, nil, nil, appErrors.NewValidationError("tenantId cannot be empty")
 	}
@@ -69,6 +69,7 @@ func ValidateEvaluateInput(input EvaluateRetryInput) (*uuid.UUID, *time.Time, *t
 }
 
 func ParseRetryAfter(headerValue string, now time.Time) (time.Duration, bool) {
+	defer observability.TraceEnter(nil)()
 	headerValue = strings.TrimSpace(headerValue)
 	if headerValue == "" {
 		return 0, false
@@ -91,4 +92,3 @@ func ParseRetryAfter(headerValue string, now time.Time) (time.Duration, bool) {
 
 	return 0, false
 }
-

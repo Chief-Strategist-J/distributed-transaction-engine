@@ -1,6 +1,7 @@
 package machines
 
 import (
+	"distributed-transaction-engine/src/infra/observability"
 	"sync"
 	"time"
 )
@@ -50,6 +51,7 @@ func (m *CircuitBreakerManager) getOrCreate(depID string) *DependencyBreaker {
 }
 
 func (m *CircuitBreakerManager) AllowRequest(depID string) bool {
+	defer observability.TraceEnter(nil)()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -78,6 +80,7 @@ func (m *CircuitBreakerManager) AllowRequest(depID string) bool {
 }
 
 func (m *CircuitBreakerManager) RecordSuccess(depID string) {
+	defer observability.TraceEnter(nil)()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -96,6 +99,7 @@ func (m *CircuitBreakerManager) RecordSuccess(depID string) {
 }
 
 func (m *CircuitBreakerManager) RecordFailure(depID string) {
+	defer observability.TraceEnter(nil)()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -118,6 +122,7 @@ func (m *CircuitBreakerManager) RecordFailure(depID string) {
 }
 
 func (m *CircuitBreakerManager) GetState(depID string) BreakerState {
+	defer observability.TraceEnter(nil)()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -130,6 +135,7 @@ func (m *CircuitBreakerManager) GetState(depID string) BreakerState {
 }
 
 func (m *CircuitBreakerManager) Reset(depID string) {
+	defer observability.TraceEnter(nil)()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -139,4 +145,3 @@ func (m *CircuitBreakerManager) Reset(depID string) {
 	b.SuccessCount = 0
 	b.LastStateChange = time.Now().UTC()
 }
-

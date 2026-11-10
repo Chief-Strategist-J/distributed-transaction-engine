@@ -2,11 +2,11 @@ package adapters
 
 import (
 	"context"
+	"distributed-transaction-engine/src/features/retry-policies/contracts"
+	"distributed-transaction-engine/src/infra/observability"
 	"fmt"
 	"sync"
 	"time"
-
-	"distributed-transaction-engine/src/features/retry-policies/contracts"
 )
 
 type MemoryRetryRepositoryAdapter struct {
@@ -30,7 +30,8 @@ func (a *MemoryRetryRepositoryAdapter) RecordStepAttempt(
 	retryAfter int,
 	delayMillis int64,
 	nextAttempt *time.Time,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -42,7 +43,8 @@ func (a *MemoryRetryRepositoryAdapter) RecordStepAttempt(
 func (a *MemoryRetryRepositoryAdapter) GetPolicy(
 	ctx context.Context,
 	tenantID, policyName string,
-) (*contracts.RetryPolicyConfig, error) {
+) (spanResult0 *contracts.RetryPolicyConfig, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -58,7 +60,8 @@ func (a *MemoryRetryRepositoryAdapter) GetPolicy(
 func (a *MemoryRetryRepositoryAdapter) SavePolicy(
 	ctx context.Context,
 	policy contracts.RetryPolicyConfig,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -66,4 +69,3 @@ func (a *MemoryRetryRepositoryAdapter) SavePolicy(
 	a.policies[k] = policy
 	return nil
 }
-
