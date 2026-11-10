@@ -1,2 +1,250 @@
 feature: workflow-versioning
 mode: stateless_hexagonal
+invariants:
+  - WV-10: Live inputs snapshotted at saga start
+  - WV-11: Version resolution is part of idempotent saga start
+  - WV-12: Bundle verified loadable across regions before activation
+  - WV-13: Bundle content hash and signature verified at load
+  - WV-14: Step attempts record handler build, contract version, and bundle hash
+  - WV-15: Dual-authorization required for publish, promote, block, and migrate
+  - WV-16: Orchestrator capability-aware ownership matching
+status: implementation_complete
+
+entities:
+  - entity: workflow_bundles
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'wvb_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'SYSTEM'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: workflow_name
+        type: text
+        null: no
+        constraint: CHECK (workflow_name = btrim(workflow_name) AND workflow_name <> '')
+      - name: version_tag
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, workflow_name, version_tag)
+      - name: content_hash
+        type: char(64)
+        null: no
+        constraint: UNIQUE(tenant_id, workflow_name, content_hash), immutable
+      - name: signature
+        type: text
+        null: no
+        default: ''
+      - name: status
+        type: text
+        null: no
+        default: 'DRAFT'
+        constraint: CHECK (status IN ('DRAFT', 'VALIDATED', 'ACTIVE', 'DEPRECATED', 'BLOCKED', 'ARCHIVED'))
+      - name: bundle_payload
+        type: jsonb
+        null: no
+        constraint: CHECK (jsonb_typeof(bundle_payload) = 'object')
+      - name: capabilities_required
+        type: jsonb
+        null: no
+        default: '[]'::jsonb
+        constraint: CHECK (jsonb_typeof(capabilities_required) = 'array')
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
+      - name: updated_at
+        type: timestamptz
+        null: no
+        default: NOW()
+
+  - entity: workflow_version_promotions
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'wvp_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'SYSTEM'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: bundle_id
+        type: uuid
+        null: no
+        constraint: FK workflow_bundles(tenant_id, id) ON DELETE RESTRICT
+      - name: action
+        type: text
+        null: no
+        constraint: CHECK (action IN ('PUBLISH', 'PROMOTE', 'DEPRECATE', 'BLOCK', 'ARCHIVE'))
+      - name: proposer_id
+        type: text
+        null: no
+        constraint: CHECK (proposer_id = btrim(proposer_id) AND proposer_id <> '')
+      - name: approver_id
+        type: text
+        null: no
+        default: ''
+        constraint: CHECK ((status = 'APPROVED' AND approver_id <> '' AND approver_id <> proposer_id) OR (status <> 'APPROVED'))
+      - name: status
+        type: text
+        null: no
+        default: 'PENDING'
+        constraint: CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED'))
+      - name: reason
+        type: text
+        null: no
+        default: ''
+      - name: decided_at
+        type: timestamptz
+        null: yes
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
+      - name: updated_at
+        type: timestamptz
+        null: no
+        default: NOW()
+
+  - entity: workflow_entity_cohorts
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'wvc_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'SYSTEM'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: workflow_name
+        type: text
+        null: no
+      - name: entity_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, workflow_name, entity_id)
+      - name: cohort_bucket
+        type: int
+        null: no
+        constraint: CHECK (cohort_bucket >= 0 AND cohort_bucket <= 100)
+      - name: bundle_id
+        type: uuid
+        null: no
+        constraint: FK workflow_bundles(tenant_id, id) ON DELETE RESTRICT
+      - name: assigned_at
+        type: timestamptz
+        null: no
+        default: NOW()
+
+  - entity: workflow_version_migrations
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'wvm_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'SYSTEM'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: saga_id
+        type: uuid
+        null: no
+      - name: from_bundle_id
+        type: uuid
+        null: no
+        constraint: FK workflow_bundles(tenant_id, id) ON DELETE RESTRICT
+      - name: to_bundle_id
+        type: uuid
+        null: no
+        constraint: FK workflow_bundles(tenant_id, id) ON DELETE RESTRICT
+      - name: status
+        type: text
+        null: no
+        default: 'PENDING'
+        constraint: CHECK (status IN ('PENDING', 'EXECUTED', 'ROLLED_BACK', 'FAILED'))
+      - name: safe_point_step_id
+        type: text
+        null: no
+      - name: state_mapping_applied
+        type: jsonb
+        null: no
+        default: '{}'::jsonb
+        constraint: CHECK (jsonb_typeof(state_mapping_applied) = 'object')
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
+      - name: updated_at
+        type: timestamptz
+        null: no
+        default: NOW()
