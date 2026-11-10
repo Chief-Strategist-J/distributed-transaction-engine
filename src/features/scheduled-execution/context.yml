@@ -1,2 +1,33 @@
+entity: schedules
+owner: core-platform
+fields:
+  - name: id             type: uuid          null: no   default: uuidv7()            constraint: PK, UNIQUE(tenant_id, id), immutable
+  - name: public_id      type: text          null: no   default: generated          constraint: UNIQUE, immutable, format 'sch_' + 26 chars
+  - name: tenant_id      type: text          null: no   constraint: immutable
+  - name: source         type: text          null: no   constraint: CHECK (source = btrim(source) AND source <> '')
+  - name: external_id    type: text          null: no   normalize: trim            constraint: UNIQUE(tenant_id, source, external_id), length 1..128
+  - name: correlation_id type: uuid          null: no   constraint: immutable, no FK
+  - name: workflow_id    type: text          null: no   constraint: CHECK <> ''
+  - name: schedule_type  type: text          null: no   constraint: CHECK IN ('ONE_OFF', 'RECURRING_CRON')
+  - name: cron_expression type: text         null: no   default: ''
+  - name: time_zone      type: text          null: no   constraint: CHECK <> ''
+  - name: dst_policy     type: text          null: no   constraint: CHECK IN ('RUN_AT_NEXT_VALID', 'SKIP', 'RUN_FIRST', 'RUN_SECOND')
+  - name: misfire_policy type: text          null: no   constraint: CHECK IN ('RUN_ALL_MISSED', 'RUN_ONCE', 'SKIP_MISSED')
+  - name: overlap_policy type: text          null: no   constraint: CHECK IN ('ALLOW', 'SKIP_IF_RUNNING', 'QUEUE_ONE', 'CANCEL_PREVIOUS')
+  - name: max_lateness_seconds type: integer null: no   default: 3600
+  - name: status         type: text          null: no   constraint: CHECK IN ('ACTIVE', 'PAUSED', 'EXPIRED', 'COMPLETED')
+  - name: run_as_principal type: text        null: no   constraint: CHECK <> ''
+  - name: required_permission type: text     null: no   default: 'action:workflow:execute'
+  - name: frozen_payload type: text          null: no   default: '{}'
+  - name: next_occurrence_at type: timestamptz null: no
+  - name: last_occurrence_at type: timestamptz null: yes
+  - name: consecutive_failures type: integer null: no   default: 0
+  - name: version        type: bigint        null: no   default: 1
+invariants:
+  - time zone is mandatory and validated against IANA database
+  - occurrence idempotency is keyed by schedule id and logical occurrence instant
+  - firing records an occurrence before advancing the schedule
+pii: [none]
+source_of_truth: db
 feature: scheduled-execution
 mode: stateless_hexagonal
