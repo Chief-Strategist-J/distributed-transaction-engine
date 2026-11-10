@@ -1,10 +1,10 @@
 package contracts
 
 import (
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"encoding/json"
 	"regexp"
-
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 var (
@@ -14,7 +14,8 @@ var (
 
 const MaxPayloadSizeBytes = 1024 * 1024
 
-func ValidateCreateOutboxEventInput(input *CreateOutboxEventInput) error {
+func ValidateCreateOutboxEventInput(input *CreateOutboxEventInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if input == nil {
 		return errors.NewValidationError("input must not be nil")
 	}

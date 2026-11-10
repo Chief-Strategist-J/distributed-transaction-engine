@@ -3,6 +3,7 @@ package machines
 import (
 	contracts "distributed-transaction-engine/src/features/transactional-outbox/contracts"
 	rules "distributed-transaction-engine/src/features/transactional-outbox/domain/rules"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
 )
 
@@ -15,7 +16,8 @@ func NewOutboxStateMachine() *OutboxStateMachine {
 func (m *OutboxStateMachine) EvaluatePublishOutcome(
 	currentStatus contracts.OutboxStatus,
 	publishErr error,
-) (contracts.OutboxStatus, error) {
+) (spanResult0 contracts.OutboxStatus, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if publishErr == nil {
 		if !rules.CanTransitionOutboxStatus(currentStatus, contracts.OutboxStatusPublished) {
 			return currentStatus, errors.NewConflictError("illegal state transition to PUBLISHED")

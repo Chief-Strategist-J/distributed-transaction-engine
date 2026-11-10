@@ -3,11 +3,11 @@ package adapters
 import (
 	"context"
 	"database/sql"
+	contracts "distributed-transaction-engine/src/features/transactional-outbox/contracts"
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"sync"
 	"time"
-
-	contracts "distributed-transaction-engine/src/features/transactional-outbox/contracts"
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 type MemoryOutboxRepositoryAdapter struct {
@@ -25,7 +25,8 @@ func (a *MemoryOutboxRepositoryAdapter) InsertOutboxEventTx(
 	_ context.Context,
 	_ *sql.Tx,
 	event *contracts.OutboxEventInstance,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -48,7 +49,8 @@ func (a *MemoryOutboxRepositoryAdapter) InsertOutboxEventTx(
 func (a *MemoryOutboxRepositoryAdapter) ClaimPendingEvents(
 	_ context.Context,
 	input *contracts.ClaimOutboxEventsInput,
-) ([]contracts.OutboxEventInstance, error) {
+) (spanResult0 []contracts.OutboxEventInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -75,7 +77,8 @@ func (a *MemoryOutboxRepositoryAdapter) ClaimPendingEvents(
 func (a *MemoryOutboxRepositoryAdapter) ConfirmPublished(
 	_ context.Context,
 	input *contracts.ConfirmOutboxPublishInput,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -96,7 +99,8 @@ func (a *MemoryOutboxRepositoryAdapter) ReleaseInFlightToPending(
 	tenantID string,
 	eventID string,
 	reason string,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -116,7 +120,8 @@ func (a *MemoryOutboxRepositoryAdapter) ReleaseInFlightToPending(
 func (a *MemoryOutboxRepositoryAdapter) ParkEvent(
 	_ context.Context,
 	input *contracts.ParkOutboxEventInput,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -137,7 +142,8 @@ func (a *MemoryOutboxRepositoryAdapter) GetEvent(
 	_ context.Context,
 	tenantID string,
 	eventID string,
-) (*contracts.OutboxEventInstance, error) {
+) (spanResult0 *contracts.OutboxEventInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 

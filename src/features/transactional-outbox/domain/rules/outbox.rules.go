@@ -1,9 +1,9 @@
 package rules
 
 import (
-	"strings"
-
 	contracts "distributed-transaction-engine/src/features/transactional-outbox/contracts"
+	"distributed-transaction-engine/src/infra/observability"
+	"strings"
 )
 
 type ErrorClassification string
@@ -14,6 +14,7 @@ const (
 )
 
 func ClassifyPublishError(err error) ErrorClassification {
+	defer observability.TraceEnter(nil)()
 	if err == nil {
 		return ErrorRetriable
 	}
@@ -29,10 +30,12 @@ func ClassifyPublishError(err error) ErrorClassification {
 }
 
 func ValidateSequenceProgression(currentSeq int64, nextSeq int64) bool {
+	defer observability.TraceEnter(nil)()
 	return nextSeq == currentSeq+1
 }
 
 func CanTransitionOutboxStatus(from contracts.OutboxStatus, to contracts.OutboxStatus) bool {
+	defer observability.TraceEnter(nil)()
 	switch from {
 	case contracts.OutboxStatusPending:
 		return to == contracts.OutboxStatusInFlight

@@ -84,7 +84,7 @@ func (h *OutboxHandler) setStandardHeaders(w http.ResponseWriter, r *http.Reques
 
 func (h *OutboxHandler) writeResponse(w http.ResponseWriter, r *http.Request, statusCode int, data interface{}, start time.Time) {
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(types.ApiResponse{
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(types.ApiResponse{
 		Success:    true,
 		StatusCode: statusCode,
 		Data:       data,
@@ -96,7 +96,7 @@ func (h *OutboxHandler) writeResponse(w http.ResponseWriter, r *http.Request, st
 			ExecutionTimeMs: time.Since(start).Milliseconds(),
 			APIVersion:      "v1",
 		},
-	})
+	}))
 }
 
 func (h *OutboxHandler) writeError(w http.ResponseWriter, r *http.Request, err error, start time.Time) {
@@ -111,7 +111,7 @@ func (h *OutboxHandler) writeError(w http.ResponseWriter, r *http.Request, err e
 	}
 
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(types.ApiResponse{
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(types.ApiResponse{
 		Success:    false,
 		StatusCode: statusCode,
 		Error: &types.ResponseError{
@@ -127,5 +127,5 @@ func (h *OutboxHandler) writeError(w http.ResponseWriter, r *http.Request, err e
 			ExecutionTimeMs: time.Since(start).Milliseconds(),
 			APIVersion:      "v1",
 		},
-	})
+	}))
 }

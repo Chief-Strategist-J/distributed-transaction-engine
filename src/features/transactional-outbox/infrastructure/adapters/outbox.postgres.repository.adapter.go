@@ -3,12 +3,12 @@ package adapters
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"time"
-
 	contracts "distributed-transaction-engine/src/features/transactional-outbox/contracts"
 	queries "distributed-transaction-engine/src/features/transactional-outbox/infrastructure/queries"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"encoding/json"
+	"time"
 )
 
 type PostgresOutboxRepositoryAdapter struct {
@@ -19,7 +19,8 @@ func NewPostgresOutboxRepositoryAdapter(db *sql.DB) *PostgresOutboxRepositoryAda
 	return &PostgresOutboxRepositoryAdapter{db: db}
 }
 
-func (a *PostgresOutboxRepositoryAdapter) InsertOutboxEventTx(ctx context.Context, tx *sql.Tx, event *contracts.OutboxEventInstance) error {
+func (a *PostgresOutboxRepositoryAdapter) InsertOutboxEventTx(ctx context.Context, tx *sql.Tx, event *contracts.OutboxEventInstance) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	payloadBytes, err := json.Marshal(event.Payload)
 	if err != nil {
 		return errors.NewInternalError("failed to serialize outbox payload")
@@ -52,7 +53,8 @@ func (a *PostgresOutboxRepositoryAdapter) InsertOutboxEventTx(ctx context.Contex
 	return nil
 }
 
-func (a *PostgresOutboxRepositoryAdapter) ClaimPendingEvents(ctx context.Context, input *contracts.ClaimOutboxEventsInput) ([]contracts.OutboxEventInstance, error) {
+func (a *PostgresOutboxRepositoryAdapter) ClaimPendingEvents(ctx context.Context, input *contracts.ClaimOutboxEventsInput) (spanResult0 []contracts.OutboxEventInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	leaseExpiry := time.Now().UTC().Add(input.LeaseDuration)
 
 	rows, err := a.db.QueryContext(
@@ -102,9 +104,8 @@ func (a *PostgresOutboxRepositoryAdapter) ClaimPendingEvents(ctx context.Context
 		if err != nil {
 			return nil, errors.NewInternalError("failed to scan claimed outbox event: " + err.Error())
 		}
-
-		_ = json.Unmarshal(payloadBytes, &e.Payload)
-		_ = json.Unmarshal(headersBytes, &e.Headers)
+		observability.NoteSwallowed(json.Unmarshal(payloadBytes, &e.Payload))
+		observability.NoteSwallowed(json.Unmarshal(headersBytes, &e.Headers))
 		if leaseOwner.Valid {
 			e.LeaseOwner = leaseOwner.String
 		}
@@ -124,7 +125,8 @@ func (a *PostgresOutboxRepositoryAdapter) ClaimPendingEvents(ctx context.Context
 	return events, nil
 }
 
-func (a *PostgresOutboxRepositoryAdapter) ConfirmPublished(ctx context.Context, input *contracts.ConfirmOutboxPublishInput) error {
+func (a *PostgresOutboxRepositoryAdapter) ConfirmPublished(ctx context.Context, input *contracts.ConfirmOutboxPublishInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	res, err := a.db.ExecContext(
 		ctx,
 		queries.FLOW_CONFIRM_OUTBOX_PUBLISHED,
@@ -146,7 +148,8 @@ func (a *PostgresOutboxRepositoryAdapter) ConfirmPublished(ctx context.Context, 
 	return nil
 }
 
-func (a *PostgresOutboxRepositoryAdapter) ReleaseInFlightToPending(ctx context.Context, tenantID string, eventID string, reason string) error {
+func (a *PostgresOutboxRepositoryAdapter) ReleaseInFlightToPending(ctx context.Context, tenantID string, eventID string, reason string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	_, err := a.db.ExecContext(ctx, queries.FLOW_RELEASE_IN_FLIGHT_TO_PENDING, reason, tenantID, eventID)
 	if err != nil {
 		return errors.NewInternalError("failed to release outbox event: " + err.Error())
@@ -154,7 +157,8 @@ func (a *PostgresOutboxRepositoryAdapter) ReleaseInFlightToPending(ctx context.C
 	return nil
 }
 
-func (a *PostgresOutboxRepositoryAdapter) ParkEvent(ctx context.Context, input *contracts.ParkOutboxEventInput) error {
+func (a *PostgresOutboxRepositoryAdapter) ParkEvent(ctx context.Context, input *contracts.ParkOutboxEventInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	_, err := a.db.ExecContext(ctx, queries.FLOW_PARK_OUTBOX_EVENT, input.Reason, input.TenantID, input.EventID, input.WorkerID)
 	if err != nil {
 		return errors.NewInternalError("failed to park outbox event: " + err.Error())
@@ -162,7 +166,8 @@ func (a *PostgresOutboxRepositoryAdapter) ParkEvent(ctx context.Context, input *
 	return nil
 }
 
-func (a *PostgresOutboxRepositoryAdapter) GetEvent(ctx context.Context, tenantID string, eventID string) (*contracts.OutboxEventInstance, error) {
+func (a *PostgresOutboxRepositoryAdapter) GetEvent(ctx context.Context, tenantID string, eventID string) (spanResult0 *contracts.OutboxEventInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	row := a.db.QueryRowContext(ctx, queries.FLOW_GET_OUTBOX_EVENT, tenantID, eventID)
 
 	var e contracts.OutboxEventInstance
@@ -199,9 +204,8 @@ func (a *PostgresOutboxRepositoryAdapter) GetEvent(ctx context.Context, tenantID
 		}
 		return nil, errors.NewInternalError("failed to fetch outbox event: " + err.Error())
 	}
-
-	_ = json.Unmarshal(payloadBytes, &e.Payload)
-	_ = json.Unmarshal(headersBytes, &e.Headers)
+	observability.NoteSwallowed(json.Unmarshal(payloadBytes, &e.Payload))
+	observability.NoteSwallowed(json.Unmarshal(headersBytes, &e.Headers))
 	if leaseOwner.Valid {
 		e.LeaseOwner = leaseOwner.String
 	}

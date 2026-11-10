@@ -42,9 +42,12 @@ func (s *OutboxService) RelayPendingEvents(
 	workerID string,
 	batchLimit int,
 	leaseDuration time.Duration,
-) (int, error) {
+) (spanResult0 int, spanErr error) {
 	_, span := s.tracer.StartSpan(ctx, "outbox.relay_pending")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	input := &contracts.ClaimOutboxEventsInput{
 		TenantID:      tenantID,
@@ -63,12 +66,12 @@ func (s *OutboxService) RelayPendingEvents(
 	for _, event := range events {
 		payloadBytes, err := json.Marshal(event.Payload)
 		if err != nil {
-			_ = s.repo.ParkEvent(ctx, &contracts.ParkOutboxEventInput{
+			observability.NoteSwallowed(s.repo.ParkEvent(ctx, &contracts.ParkOutboxEventInput{
 				TenantID: tenantID,
 				EventID:  event.ID,
 				WorkerID: workerID,
 				Reason:   "failed to marshal payload JSON: " + err.Error(),
-			})
+			}))
 			continue
 		}
 
@@ -86,23 +89,26 @@ func (s *OutboxService) RelayPendingEvents(
 				publishedCount++
 			}
 		case contracts.OutboxStatusParked:
-			_ = s.repo.ParkEvent(ctx, &contracts.ParkOutboxEventInput{
+			observability.NoteSwallowed(s.repo.ParkEvent(ctx, &contracts.ParkOutboxEventInput{
 				TenantID: tenantID,
 				EventID:  event.ID,
 				WorkerID: workerID,
 				Reason:   pubErr.Error(),
-			})
+			}))
 		case contracts.OutboxStatusPending:
-			_ = s.repo.ReleaseInFlightToPending(ctx, tenantID, event.ID, pubErr.Error())
+			observability.NoteSwallowed(s.repo.ReleaseInFlightToPending(ctx, tenantID, event.ID, pubErr.Error()))
 		}
 	}
 
 	return publishedCount, nil
 }
 
-func (s *OutboxService) GetOutboxEvent(ctx context.Context, tenantID string, eventID string) (*contracts.OutboxEventInstance, error) {
+func (s *OutboxService) GetOutboxEvent(ctx context.Context, tenantID string, eventID string) (spanResult0 *contracts.OutboxEventInstance, spanErr error) {
 	_, span := s.tracer.StartSpan(ctx, "outbox.get_event")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	if tenantID == "" || eventID == "" {
 		return nil, errors.NewValidationError("tenantId and eventId cannot be empty")

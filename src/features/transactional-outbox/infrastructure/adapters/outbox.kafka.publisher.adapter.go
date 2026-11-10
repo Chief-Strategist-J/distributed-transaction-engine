@@ -2,14 +2,14 @@ package adapters
 
 import (
 	"context"
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"encoding/json"
 	"fmt"
+	"github.com/segmentio/kafka-go"
 	"net"
 	"strconv"
 	"time"
-
-	"github.com/segmentio/kafka-go"
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 type KafkaPublisherAdapter struct {
@@ -41,7 +41,8 @@ func (a *KafkaPublisherAdapter) PublishMessage(
 	partitionKey string,
 	headers map[string]interface{},
 	payload []byte,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	var kafkaHeaders []kafka.Header
 	for k, v := range headers {
 		var valBytes []byte
@@ -93,7 +94,8 @@ func (a *MemoryKafkaPublisherAdapter) PublishMessage(
 	partitionKey string,
 	headers map[string]interface{},
 	payload []byte,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	var kafkaHeaders []kafka.Header
 	for k, v := range headers {
 		valBytes, _ := json.Marshal(v)
@@ -108,7 +110,8 @@ func (a *MemoryKafkaPublisherAdapter) PublishMessage(
 	return nil
 }
 
-func EnsureKafkaTopic(brokerHost string, brokerPort int, topic string) error {
+func EnsureKafkaTopic(brokerHost string, brokerPort int, topic string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	conn, err := kafka.Dial("tcp", net.JoinHostPort(brokerHost, strconv.Itoa(brokerPort)))
 	if err != nil {
 		return err
