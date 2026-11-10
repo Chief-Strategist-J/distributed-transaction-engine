@@ -3,11 +3,11 @@ package adapters
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-
 	contracts "distributed-transaction-engine/src/features/inbox-deduplication/contracts"
 	queries "distributed-transaction-engine/src/features/inbox-deduplication/infrastructure/queries"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"encoding/json"
 )
 
 type PostgresInboxDeduplicationRepositoryAdapter struct {
@@ -18,7 +18,8 @@ func NewPostgresInboxDeduplicationRepositoryAdapter(db *sql.DB) *PostgresInboxDe
 	return &PostgresInboxDeduplicationRepositoryAdapter{db: db}
 }
 
-func (a *PostgresInboxDeduplicationRepositoryAdapter) InsertInboxRecord(ctx context.Context, msg *contracts.InboxMessage) (bool, error) {
+func (a *PostgresInboxDeduplicationRepositoryAdapter) InsertInboxRecord(ctx context.Context, msg *contracts.InboxMessage) (spanResult0 bool, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	payloadBytes, err := json.Marshal(msg.Payload)
 	if err != nil {
 		return false, errors.NewInternalError("failed to serialize payload")
@@ -49,7 +50,8 @@ func (a *PostgresInboxDeduplicationRepositoryAdapter) GetInboxRecord(
 	handlerName string,
 	handlerGeneration int,
 	externalID string,
-) (*contracts.InboxMessage, error) {
+) (spanResult0 *contracts.InboxMessage, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	row := a.db.QueryRowContext(
 		ctx,
 		queries.FLOW_GET_INBOX_RECORD,
@@ -74,12 +76,13 @@ func (a *PostgresInboxDeduplicationRepositoryAdapter) GetInboxRecord(
 
 	msg.Status = contracts.InboxMessageStatus(statusStr)
 	msg.Payload = make(map[string]interface{})
-	_ = json.Unmarshal(payloadBytes, &msg.Payload)
+	observability.NoteSwallowed(json.Unmarshal(payloadBytes, &msg.Payload))
 
 	return &msg, nil
 }
 
-func (a *PostgresInboxDeduplicationRepositoryAdapter) MarkQuarantined(ctx context.Context, tenantID string, id string, reason string) error {
+func (a *PostgresInboxDeduplicationRepositoryAdapter) MarkQuarantined(ctx context.Context, tenantID string, id string, reason string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	res, err := a.db.ExecContext(ctx, queries.FLOW_MARK_QUARANTINED, tenantID, id)
 	if err != nil {
 		return errors.NewInternalError("failed to mark record quarantined")
@@ -94,4 +97,3 @@ func (a *PostgresInboxDeduplicationRepositoryAdapter) MarkQuarantined(ctx contex
 	}
 	return nil
 }
-

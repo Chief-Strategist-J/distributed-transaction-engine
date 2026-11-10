@@ -66,7 +66,7 @@ func (h *InboxDeduplicationHandler) setStandardHeaders(w http.ResponseWriter, r 
 
 func (h *InboxDeduplicationHandler) writeResponse(w http.ResponseWriter, r *http.Request, statusCode int, data interface{}, start time.Time) {
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(types.ApiResponse{
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(types.ApiResponse{
 		Success:    true,
 		StatusCode: statusCode,
 		Data:       data,
@@ -78,7 +78,7 @@ func (h *InboxDeduplicationHandler) writeResponse(w http.ResponseWriter, r *http
 			ExecutionTimeMs: time.Since(start).Milliseconds(),
 			APIVersion:      "v1",
 		},
-	})
+	}))
 }
 
 func (h *InboxDeduplicationHandler) writeError(w http.ResponseWriter, r *http.Request, err error, start time.Time) {
@@ -93,7 +93,7 @@ func (h *InboxDeduplicationHandler) writeError(w http.ResponseWriter, r *http.Re
 	}
 
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(types.ApiResponse{
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(types.ApiResponse{
 		Success:    false,
 		StatusCode: statusCode,
 		Error: &types.ResponseError{
@@ -109,6 +109,5 @@ func (h *InboxDeduplicationHandler) writeError(w http.ResponseWriter, r *http.Re
 			ExecutionTimeMs: time.Since(start).Milliseconds(),
 			APIVersion:      "v1",
 		},
-	})
+	}))
 }
-

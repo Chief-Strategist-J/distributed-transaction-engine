@@ -2,16 +2,17 @@ package contracts
 
 import (
 	"crypto/sha256"
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"encoding/hex"
 	"encoding/json"
 	"regexp"
-
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 var publicIDPattern = regexp.MustCompile(`^inb_[0-9a-zA-Z]{26}$`)
 
-func ComputeCanonicalPayloadHash(payload map[string]interface{}) (string, error) {
+func ComputeCanonicalPayloadHash(payload map[string]interface{}) (spanResult0 string, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	bytes, err := json.Marshal(payload)
 	if err != nil {
 		return "", errors.NewValidationError("failed to serialize canonical payload")
@@ -20,7 +21,8 @@ func ComputeCanonicalPayloadHash(payload map[string]interface{}) (string, error)
 	return hex.EncodeToString(hash[:]), nil
 }
 
-func ValidateIngestMessageInput(input *IngestMessageInput) error {
+func ValidateIngestMessageInput(input *IngestMessageInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if input == nil {
 		return errors.NewValidationError("ingest message input cannot be nil")
 	}
@@ -47,4 +49,3 @@ func ValidateIngestMessageInput(input *IngestMessageInput) error {
 	}
 	return nil
 }
-

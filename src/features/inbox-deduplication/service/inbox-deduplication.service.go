@@ -31,9 +31,12 @@ func NewInboxDeduplicationService(deps InboxDeduplicationServiceDeps) *InboxDedu
 func (s *InboxDeduplicationService) ProcessIncomingMessage(
 	ctx context.Context,
 	input *contracts.IngestMessageInput,
-) (*contracts.IngestDecision, error) {
+) (spanResult0 *contracts.IngestDecision, spanErr error) {
 	_, span := s.tracer.StartSpan(ctx, "ProcessIncomingMessage")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	if err := contracts.ValidateIngestMessageInput(input); err != nil {
 		return nil, err
@@ -84,7 +87,7 @@ func (s *InboxDeduplicationService) ProcessIncomingMessage(
 
 	outcome := rules.EvaluateDuplicateContent(existing.ContentHash, incomingHash)
 	if outcome == contracts.OutcomeIntegrityMismatch {
-		_ = s.repo.MarkQuarantined(ctx, input.TenantID, existing.ID, "content hash mismatch detected")
+		observability.NoteSwallowed(s.repo.MarkQuarantined(ctx, input.TenantID, existing.ID, "content hash mismatch detected"))
 		return nil, errors.NewConflictError("inbox message integrity failure: event id reused with mismatched payload")
 	}
 
@@ -101,10 +104,12 @@ func (s *InboxDeduplicationService) GetRecord(
 	handlerName string,
 	handlerGen int,
 	externalID string,
-) (*contracts.InboxMessage, error) {
+) (spanResult0 *contracts.InboxMessage, spanErr error) {
 	_, span := s.tracer.StartSpan(ctx, "GetRecord")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	return s.repo.GetInboxRecord(ctx, tenantID, handlerName, handlerGen, externalID)
 }
-

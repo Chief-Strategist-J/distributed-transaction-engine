@@ -2,11 +2,11 @@ package adapters
 
 import (
 	"context"
+	contracts "distributed-transaction-engine/src/features/inbox-deduplication/contracts"
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"fmt"
 	"sync"
-
-	contracts "distributed-transaction-engine/src/features/inbox-deduplication/contracts"
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 type MemoryInboxDeduplicationRepositoryAdapter struct {
@@ -22,7 +22,8 @@ func NewMemoryInboxDeduplicationRepositoryAdapter() *MemoryInboxDeduplicationRep
 	}
 }
 
-func (a *MemoryInboxDeduplicationRepositoryAdapter) InsertInboxRecord(ctx context.Context, msg *contracts.InboxMessage) (bool, error) {
+func (a *MemoryInboxDeduplicationRepositoryAdapter) InsertInboxRecord(ctx context.Context, msg *contracts.InboxMessage) (spanResult0 bool, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -43,7 +44,8 @@ func (a *MemoryInboxDeduplicationRepositoryAdapter) GetInboxRecord(
 	handlerName string,
 	handlerGeneration int,
 	externalID string,
-) (*contracts.InboxMessage, error) {
+) (spanResult0 *contracts.InboxMessage, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -57,7 +59,8 @@ func (a *MemoryInboxDeduplicationRepositoryAdapter) GetInboxRecord(
 	return &copied, nil
 }
 
-func (a *MemoryInboxDeduplicationRepositoryAdapter) MarkQuarantined(ctx context.Context, tenantID string, id string, reason string) error {
+func (a *MemoryInboxDeduplicationRepositoryAdapter) MarkQuarantined(ctx context.Context, tenantID string, id string, reason string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -69,4 +72,3 @@ func (a *MemoryInboxDeduplicationRepositoryAdapter) MarkQuarantined(ctx context.
 	}
 	return errors.NewNotFoundError("inbox record to quarantine not found")
 }
-
