@@ -2,11 +2,11 @@ package adapters
 
 import (
 	"context"
+	sagaContracts "distributed-transaction-engine/src/features/saga-orchestration/contracts"
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"sync"
 	"time"
-
-	sagaContracts "distributed-transaction-engine/src/features/saga-orchestration/contracts"
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 type MemorySagaRepositoryAdapter struct {
@@ -24,7 +24,8 @@ func NewMemorySagaRepositoryAdapter() *MemorySagaRepositoryAdapter {
 	}
 }
 
-func (a *MemorySagaRepositoryAdapter) CreateSaga(ctx context.Context, instance *sagaContracts.SagaInstance) error {
+func (a *MemorySagaRepositoryAdapter) CreateSaga(ctx context.Context, instance *sagaContracts.SagaInstance) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -52,7 +53,8 @@ func (a *MemorySagaRepositoryAdapter) CreateSaga(ctx context.Context, instance *
 	return nil
 }
 
-func (a *MemorySagaRepositoryAdapter) GetSagaByID(ctx context.Context, tenantID string, id string) (*sagaContracts.SagaInstance, error) {
+func (a *MemorySagaRepositoryAdapter) GetSagaByID(ctx context.Context, tenantID string, id string) (spanResult0 *sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -64,7 +66,8 @@ func (a *MemorySagaRepositoryAdapter) GetSagaByID(ctx context.Context, tenantID 
 	return instance, nil
 }
 
-func (a *MemorySagaRepositoryAdapter) GetSagaByPublicID(ctx context.Context, tenantID string, publicID string) (*sagaContracts.SagaInstance, error) {
+func (a *MemorySagaRepositoryAdapter) GetSagaByPublicID(ctx context.Context, tenantID string, publicID string) (spanResult0 *sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -76,7 +79,8 @@ func (a *MemorySagaRepositoryAdapter) GetSagaByPublicID(ctx context.Context, ten
 	return instance, nil
 }
 
-func (a *MemorySagaRepositoryAdapter) GetSagaByExternalID(ctx context.Context, tenantID string, workflowDefinitionID string, externalID string) (*sagaContracts.SagaInstance, error) {
+func (a *MemorySagaRepositoryAdapter) GetSagaByExternalID(ctx context.Context, tenantID string, workflowDefinitionID string, externalID string) (spanResult0 *sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -88,7 +92,8 @@ func (a *MemorySagaRepositoryAdapter) GetSagaByExternalID(ctx context.Context, t
 	return instance, nil
 }
 
-func (a *MemorySagaRepositoryAdapter) UpdateSagaState(ctx context.Context, tenantID string, id string, expectedVersion int64, nextState sagaContracts.SagaState) error {
+func (a *MemorySagaRepositoryAdapter) UpdateSagaState(ctx context.Context, tenantID string, id string, expectedVersion int64, nextState sagaContracts.SagaState) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -108,7 +113,8 @@ func (a *MemorySagaRepositoryAdapter) UpdateSagaState(ctx context.Context, tenan
 	return nil
 }
 
-func (a *MemorySagaRepositoryAdapter) UpdateSagaStateWithFencing(ctx context.Context, tenantID string, id string, expectedVersion int64, fencingToken int64, nextState sagaContracts.SagaState) error {
+func (a *MemorySagaRepositoryAdapter) UpdateSagaStateWithFencing(ctx context.Context, tenantID string, id string, expectedVersion int64, fencingToken int64, nextState sagaContracts.SagaState) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -131,7 +137,8 @@ func (a *MemorySagaRepositoryAdapter) UpdateSagaStateWithFencing(ctx context.Con
 	return nil
 }
 
-func (a *MemorySagaRepositoryAdapter) AcquireNextLease(ctx context.Context, workerID string, leaseDuration time.Duration) (*sagaContracts.SagaInstance, error) {
+func (a *MemorySagaRepositoryAdapter) AcquireNextLease(ctx context.Context, workerID string, leaseDuration time.Duration) (spanResult0 *sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -173,7 +180,8 @@ func (a *MemorySagaRepositoryAdapter) AcquireNextLease(ctx context.Context, work
 	return nil, nil
 }
 
-func (a *MemorySagaRepositoryAdapter) ReleaseLease(ctx context.Context, tenantID string, id string, fencingToken int64) error {
+func (a *MemorySagaRepositoryAdapter) ReleaseLease(ctx context.Context, tenantID string, id string, fencingToken int64) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -193,7 +201,8 @@ func (a *MemorySagaRepositoryAdapter) ReleaseLease(ctx context.Context, tenantID
 	return nil
 }
 
-func (a *MemorySagaRepositoryAdapter) AcquireLeaseForSaga(ctx context.Context, tenantID string, id string, workerID string, leaseDuration time.Duration) (*sagaContracts.SagaInstance, error) {
+func (a *MemorySagaRepositoryAdapter) AcquireLeaseForSaga(ctx context.Context, tenantID string, id string, workerID string, leaseDuration time.Duration) (spanResult0 *sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -216,7 +225,8 @@ func (a *MemorySagaRepositoryAdapter) AcquireLeaseForSaga(ctx context.Context, t
 	return &copied, nil
 }
 
-func (a *MemorySagaRepositoryAdapter) UpdateStepExecution(ctx context.Context, tenantID string, sagaID string, updatedStep *sagaContracts.SagaStepExecution) error {
+func (a *MemorySagaRepositoryAdapter) UpdateStepExecution(ctx context.Context, tenantID string, sagaID string, updatedStep *sagaContracts.SagaStepExecution) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -242,7 +252,8 @@ func (a *MemorySagaRepositoryAdapter) UpdateStepExecution(ctx context.Context, t
 	return nil
 }
 
-func (a *MemorySagaRepositoryAdapter) ListSagas(ctx context.Context, tenantID string, limit int, offset int) ([]sagaContracts.SagaInstance, error) {
+func (a *MemorySagaRepositoryAdapter) ListSagas(ctx context.Context, tenantID string, limit int, offset int) (spanResult0 []sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 

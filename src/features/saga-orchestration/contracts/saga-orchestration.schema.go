@@ -1,11 +1,11 @@
 package sagaorchestration
 
 import (
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"fmt"
 	"regexp"
 	"strings"
-
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 var (
@@ -14,7 +14,8 @@ var (
 	stepPublicIDRegex = regexp.MustCompile(`^stx_[0-9a-zA-Z]{26}$`)
 )
 
-func ValidateExecuteSagaInput(input ExecuteSagaInput) error {
+func ValidateExecuteSagaInput(input ExecuteSagaInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if strings.TrimSpace(input.TenantID) == "" {
 		return errors.NewValidationError("tenantId cannot be empty")
 	}
@@ -36,7 +37,8 @@ func ValidateExecuteSagaInput(input ExecuteSagaInput) error {
 	return nil
 }
 
-func ValidateSagaPublicID(publicID string) error {
+func ValidateSagaPublicID(publicID string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if !sagaPublicIDRegex.MatchString(publicID) {
 		return errors.NewValidationError(fmt.Sprintf("invalid saga publicId: %s", publicID))
 	}

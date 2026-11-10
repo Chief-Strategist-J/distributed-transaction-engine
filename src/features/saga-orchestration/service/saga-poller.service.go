@@ -37,7 +37,8 @@ func NewSagaPoller(
 	}
 }
 
-func (p *SagaPoller) PollAndExecuteNext(ctx context.Context) (bool, error) {
+func (p *SagaPoller) PollAndExecuteNext(ctx context.Context) (spanResult0 bool, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	instance, err := p.repo.AcquireNextLease(ctx, p.workerID, p.leaseDuration)
 	if err != nil {
 		return false, err
@@ -56,6 +57,7 @@ func (p *SagaPoller) PollAndExecuteNext(ctx context.Context) (bool, error) {
 }
 
 func (p *SagaPoller) Start(ctx context.Context, pollInterval time.Duration) {
+	defer observability.TraceEnter(nil)()
 	if pollInterval <= 0 {
 		pollInterval = 200 * time.Millisecond
 	}
@@ -76,4 +78,3 @@ func (p *SagaPoller) Start(ctx context.Context, pollInterval time.Duration) {
 		}
 	}
 }
-

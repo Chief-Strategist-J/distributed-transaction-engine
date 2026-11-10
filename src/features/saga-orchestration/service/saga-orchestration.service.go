@@ -97,8 +97,7 @@ func (s *SagaOrchestrationService) recordStepTransition(
 	if stepErr != nil {
 		stepExec.ErrorMessage = stepErr.Error()
 	}
-
-	_ = s.repo.UpdateStepExecution(ctx, tenantID, sagaID, stepExec)
+	observability.NoteSwallowed(s.repo.UpdateStepExecution(ctx, tenantID, sagaID, stepExec))
 }
 
 func (s *SagaOrchestrationService) StartSaga(ctx context.Context, input sagaContracts.ExecuteSagaInput) (*sagaContracts.SagaInstance, error) {
@@ -333,8 +332,8 @@ func (s *SagaOrchestrationService) ProcessSaga(ctx context.Context, instance *sa
 			)
 
 			targetState := sagaRules.EvaluatePostPivotFailureState()
-			_ = s.transitionSagaState(ctx, instance.TenantID, instance, targetState)
-			_ = s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken)
+			observability.NoteSwallowed(s.transitionSagaState(ctx, instance.TenantID, instance, targetState))
+			observability.NoteSwallowed(s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken))
 			return stepFailureError
 		}
 
@@ -349,10 +348,9 @@ func (s *SagaOrchestrationService) ProcessSaga(ctx context.Context, instance *sa
 			eligibleForCompensation[stepID] = true
 		}
 		for i := range instance.Steps {
-			_ = s.repo.UpdateStepExecution(ctx, instance.TenantID, instance.ID, &instance.Steps[i])
+			observability.NoteSwallowed(s.repo.UpdateStepExecution(ctx, instance.TenantID, instance.ID, &instance.Steps[i]))
 		}
-
-		_ = s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCompensating)
+		observability.NoteSwallowed(s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCompensating))
 
 		compensationChain := sagaRules.ComputeReverseCompensationChain(workflowDef.Steps, topoResult.TopologicalOrder, eligibleForCompensation)
 		allCompensated := true
@@ -375,14 +373,13 @@ func (s *SagaOrchestrationService) ProcessSaga(ctx context.Context, instance *sa
 		}
 
 		terminalCompState := sagaRules.EvaluatePostCompensationState(allCompensated)
-		_ = s.transitionSagaState(ctx, instance.TenantID, instance, terminalCompState)
-		_ = s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken)
+		observability.NoteSwallowed(s.transitionSagaState(ctx, instance.TenantID, instance, terminalCompState))
+		observability.NoteSwallowed(s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken))
 
 		return stepFailureError
 	}
-
-	_ = s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCompleted)
-	_ = s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken)
+	observability.NoteSwallowed(s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCompleted))
+	observability.NoteSwallowed(s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken))
 
 	s.logger.Info(ctx, "saga successfully completed",
 		observability.String("saga_id", instance.PublicID),
@@ -392,7 +389,8 @@ func (s *SagaOrchestrationService) ProcessSaga(ctx context.Context, instance *sa
 	return nil
 }
 
-func (s *SagaOrchestrationService) ExecuteSaga(ctx context.Context, input sagaContracts.ExecuteSagaInput) (*sagaContracts.SagaInstance, error) {
+func (s *SagaOrchestrationService) ExecuteSaga(ctx context.Context, input sagaContracts.ExecuteSagaInput) (spanResult0 *sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	instance, err := s.StartSaga(ctx, input)
 	if err != nil {
 		return nil, err
@@ -411,7 +409,8 @@ func (s *SagaOrchestrationService) ExecuteSaga(ctx context.Context, input sagaCo
 	return instance, processErr
 }
 
-func (s *SagaOrchestrationService) GetSaga(ctx context.Context, tenantID string, id string) (*sagaContracts.SagaInstance, error) {
+func (s *SagaOrchestrationService) GetSaga(ctx context.Context, tenantID string, id string) (spanResult0 *sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if tenantID == "" || id == "" {
 		return nil, errors.NewValidationError("tenantId and id are required")
 	}
@@ -464,21 +463,20 @@ func (s *SagaOrchestrationService) CancelSaga(ctx context.Context, tenantID stri
 	}
 
 	if instance.CurrentState == sagaContracts.SagaStateCreated {
-		_ = s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCancelled)
-		_ = s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken)
+		observability.NoteSwallowed(s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCancelled))
+		observability.NoteSwallowed(s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken))
 		s.logger.Info(ctx, "saga successfully cancelled before execution started",
 			observability.String("saga_id", instance.PublicID),
 			observability.String("tenant_id", instance.TenantID),
 		)
 		return instance, nil
 	}
-
-	_ = s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCompensating)
+	observability.NoteSwallowed(s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCompensating))
 
 	drainedSteps, compSet := sagaRules.DeriveDrainPlan(instance.Steps, map[string]bool{})
 	instance.Steps = drainedSteps
 	for i := range instance.Steps {
-		_ = s.repo.UpdateStepExecution(ctx, instance.TenantID, instance.ID, &instance.Steps[i])
+		observability.NoteSwallowed(s.repo.UpdateStepExecution(ctx, instance.TenantID, instance.ID, &instance.Steps[i]))
 	}
 
 	topoResult := workflowRules.ValidateDAGTopology(workflowDef.Steps)
@@ -491,13 +489,12 @@ func (s *SagaOrchestrationService) CancelSaga(ctx context.Context, tenantID stri
 		s.recordStepTransition(ctx, instance.TenantID, instance.ID, compExec, sagaContracts.StepStateCompensating, nil, nil)
 
 		compKey := sagaRules.DeriveCompensationIdempotencyKey(instance.ID, compStepID)
-		_ = s.dispatcher.CompensateStep(ctx, compDef, instance.InitialPayload, compExec.StepOutput, compKey)
+		observability.NoteSwallowed(s.dispatcher.CompensateStep(ctx, compDef, instance.InitialPayload, compExec.StepOutput, compKey))
 
 		s.recordStepTransition(ctx, instance.TenantID, instance.ID, compExec, sagaContracts.StepStateCompensated, nil, nil)
 	}
-
-	_ = s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCancelled)
-	_ = s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken)
+	observability.NoteSwallowed(s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCancelled))
+	observability.NoteSwallowed(s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken))
 
 	s.logger.Info(ctx, "saga successfully cancelled",
 		observability.String("saga_id", instance.PublicID),
@@ -507,7 +504,8 @@ func (s *SagaOrchestrationService) CancelSaga(ctx context.Context, tenantID stri
 	return instance, nil
 }
 
-func (s *SagaOrchestrationService) ListSagas(ctx context.Context, tenantID string, limit int, offset int) ([]sagaContracts.SagaInstance, error) {
+func (s *SagaOrchestrationService) ListSagas(ctx context.Context, tenantID string, limit int, offset int) (spanResult0 []sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if tenantID == "" {
 		return nil, errors.NewValidationError("tenantId is required")
 	}
@@ -520,7 +518,8 @@ func (s *SagaOrchestrationService) ListSagas(ctx context.Context, tenantID strin
 	return s.repo.ListSagas(ctx, tenantID, limit, offset)
 }
 
-func (s *SagaOrchestrationService) CreateSaga(ctx context.Context, instance *sagaContracts.SagaInstance) error {
+func (s *SagaOrchestrationService) CreateSaga(ctx context.Context, instance *sagaContracts.SagaInstance) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if instance == nil {
 		return errors.NewValidationError("instance cannot be nil")
 	}

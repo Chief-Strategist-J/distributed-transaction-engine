@@ -3,15 +3,15 @@ package adapters
 import (
 	"bytes"
 	"context"
+	ports "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/ports"
+	workflowContracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
-
-	ports "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/ports"
-	workflowContracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 type AmbiguousStepError struct {
@@ -24,6 +24,7 @@ func (e *AmbiguousStepError) Error() string {
 }
 
 func IsAmbiguousError(err error) bool {
+	defer observability.TraceEnter(nil)()
 	if err == nil {
 		return false
 	}
@@ -45,7 +46,8 @@ func NewHttpStepDispatcherAdapter() *HttpStepDispatcherAdapter {
 	}
 }
 
-func (d *HttpStepDispatcherAdapter) DispatchStep(ctx context.Context, stepDef workflowContracts.StepDefinition, input map[string]interface{}, idempotencyKey string) (map[string]interface{}, error) {
+func (d *HttpStepDispatcherAdapter) DispatchStep(ctx context.Context, stepDef workflowContracts.StepDefinition, input map[string]interface{}, idempotencyKey string) (spanResult0 map[string]interface{}, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if !strings.HasPrefix(stepDef.ActionEndpoint, "http://") && !strings.HasPrefix(stepDef.ActionEndpoint, "https://") {
 		return map[string]interface{}{"status": "simulated_success", "step_id": stepDef.StepID}, nil
 	}
@@ -85,14 +87,15 @@ func (d *HttpStepDispatcherAdapter) DispatchStep(ctx context.Context, stepDef wo
 	}
 
 	var output map[string]interface{}
-	_ = json.NewDecoder(resp.Body).Decode(&output)
+	observability.NoteSwallowed(json.NewDecoder(resp.Body).Decode(&output))
 	if output == nil {
 		output = map[string]interface{}{"status": "success"}
 	}
 	return output, nil
 }
 
-func (d *HttpStepDispatcherAdapter) CompensateStep(ctx context.Context, stepDef workflowContracts.StepDefinition, input map[string]interface{}, output map[string]interface{}, idempotencyKey string) error {
+func (d *HttpStepDispatcherAdapter) CompensateStep(ctx context.Context, stepDef workflowContracts.StepDefinition, input map[string]interface{}, output map[string]interface{}, idempotencyKey string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if stepDef.CompensationEndpoint == "" {
 		return nil
 	}

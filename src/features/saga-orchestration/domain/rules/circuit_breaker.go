@@ -1,10 +1,10 @@
 package rules
 
 import (
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"sync"
 	"time"
-
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 type CircuitState string
@@ -56,6 +56,7 @@ func NewCircuitBreakerRegistry() *CircuitBreakerRegistry {
 }
 
 func (r *CircuitBreakerRegistry) GetBreaker(actionKey string) *ActionCircuitBreaker {
+	defer observability.TraceEnter(nil)()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if b, ok := r.breakers[actionKey]; ok {
@@ -66,7 +67,8 @@ func (r *CircuitBreakerRegistry) GetBreaker(actionKey string) *ActionCircuitBrea
 	return b
 }
 
-func (cb *ActionCircuitBreaker) AcquirePermission() error {
+func (cb *ActionCircuitBreaker) AcquirePermission() (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
@@ -88,6 +90,7 @@ func (cb *ActionCircuitBreaker) AcquirePermission() error {
 }
 
 func (cb *ActionCircuitBreaker) ReleasePermission(err error) {
+	defer observability.TraceEnter(nil)()
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
@@ -108,8 +111,8 @@ func (cb *ActionCircuitBreaker) ReleasePermission(err error) {
 }
 
 func (cb *ActionCircuitBreaker) GetState() CircuitState {
+	defer observability.TraceEnter(nil)()
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 	return cb.state
 }
-

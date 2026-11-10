@@ -103,7 +103,7 @@ func (h *SagaHandler) ExecuteSaga(w http.ResponseWriter, r *http.Request) {
 			APIVersion:      "v1",
 		},
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }
 
 func (h *SagaHandler) CancelSaga(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +152,7 @@ func (h *SagaHandler) CancelSaga(w http.ResponseWriter, r *http.Request) {
 			APIVersion:      "v1",
 		},
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }
 
 func (h *SagaHandler) GetSaga(w http.ResponseWriter, r *http.Request) {
@@ -205,7 +205,7 @@ func (h *SagaHandler) GetSaga(w http.ResponseWriter, r *http.Request) {
 			APIVersion:      "v1",
 		},
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }
 
 func (h *SagaHandler) ListSagas(w http.ResponseWriter, r *http.Request) {
@@ -263,10 +263,11 @@ func (h *SagaHandler) ListSagas(w http.ResponseWriter, r *http.Request) {
 			APIVersion:      "v1",
 		},
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }
 
 func (h *SagaHandler) CreateSaga(w http.ResponseWriter, r *http.Request) {
+	defer observability.TraceEnter(nil)()
 	start := time.Now()
 	w.Header().Set("Content-Type", "application/json")
 	traceparent := r.Header.Get(constants.HeaderTraceparent)
@@ -306,7 +307,7 @@ func (h *SagaHandler) CreateSaga(w http.ResponseWriter, r *http.Request) {
 			APIVersion:      "v1",
 		},
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }
 
 func (h *SagaHandler) writeError(w http.ResponseWriter, code int, errCode string, msg string, start time.Time, reqID string, corrID string) {
@@ -327,5 +328,5 @@ func (h *SagaHandler) writeError(w http.ResponseWriter, code int, errCode string
 			APIVersion:      "v1",
 		},
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }

@@ -3,14 +3,14 @@ package adapters
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"strings"
-	"time"
-
 	sagaContracts "distributed-transaction-engine/src/features/saga-orchestration/contracts"
 	ports "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/ports"
 	"distributed-transaction-engine/src/features/saga-orchestration/infrastructure/queries"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"encoding/json"
+	"strings"
+	"time"
 )
 
 type PostgresSagaRepositoryAdapter struct {
@@ -23,7 +23,8 @@ func NewPostgresSagaRepositoryAdapter(db *sql.DB) *PostgresSagaRepositoryAdapter
 	return &PostgresSagaRepositoryAdapter{db: db}
 }
 
-func (a *PostgresSagaRepositoryAdapter) CreateSaga(ctx context.Context, instance *sagaContracts.SagaInstance) error {
+func (a *PostgresSagaRepositoryAdapter) CreateSaga(ctx context.Context, instance *sagaContracts.SagaInstance) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
 		return errors.NewInternalError(err.Error())
@@ -130,22 +131,26 @@ func (a *PostgresSagaRepositoryAdapter) CreateSaga(ctx context.Context, instance
 	return nil
 }
 
-func (a *PostgresSagaRepositoryAdapter) GetSagaByID(ctx context.Context, tenantID string, id string) (*sagaContracts.SagaInstance, error) {
+func (a *PostgresSagaRepositoryAdapter) GetSagaByID(ctx context.Context, tenantID string, id string) (spanResult0 *sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	row := a.db.QueryRowContext(ctx, queries.SelectSagaByID, tenantID, id)
 	return a.scanSagaWithSteps(ctx, row, tenantID)
 }
 
-func (a *PostgresSagaRepositoryAdapter) GetSagaByPublicID(ctx context.Context, tenantID string, publicID string) (*sagaContracts.SagaInstance, error) {
+func (a *PostgresSagaRepositoryAdapter) GetSagaByPublicID(ctx context.Context, tenantID string, publicID string) (spanResult0 *sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	row := a.db.QueryRowContext(ctx, queries.SelectSagaByPublicID, tenantID, publicID)
 	return a.scanSagaWithSteps(ctx, row, tenantID)
 }
 
-func (a *PostgresSagaRepositoryAdapter) GetSagaByExternalID(ctx context.Context, tenantID string, workflowDefinitionID string, externalID string) (*sagaContracts.SagaInstance, error) {
+func (a *PostgresSagaRepositoryAdapter) GetSagaByExternalID(ctx context.Context, tenantID string, workflowDefinitionID string, externalID string) (spanResult0 *sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	row := a.db.QueryRowContext(ctx, queries.SelectSagaByExternalID, tenantID, workflowDefinitionID, externalID)
 	return a.scanSagaWithSteps(ctx, row, tenantID)
 }
 
-func (a *PostgresSagaRepositoryAdapter) UpdateSagaState(ctx context.Context, tenantID string, id string, expectedVersion int64, nextState sagaContracts.SagaState) error {
+func (a *PostgresSagaRepositoryAdapter) UpdateSagaState(ctx context.Context, tenantID string, id string, expectedVersion int64, nextState sagaContracts.SagaState) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	now := time.Now().UTC()
 	res, err := a.db.ExecContext(ctx, queries.UpdateSagaStateCAS, string(nextState), now, tenantID, id, expectedVersion)
 	if err != nil {
@@ -162,7 +167,8 @@ func (a *PostgresSagaRepositoryAdapter) UpdateSagaState(ctx context.Context, ten
 	return nil
 }
 
-func (a *PostgresSagaRepositoryAdapter) UpdateSagaStateWithFencing(ctx context.Context, tenantID string, id string, expectedVersion int64, fencingToken int64, nextState sagaContracts.SagaState) error {
+func (a *PostgresSagaRepositoryAdapter) UpdateSagaStateWithFencing(ctx context.Context, tenantID string, id string, expectedVersion int64, fencingToken int64, nextState sagaContracts.SagaState) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	now := time.Now().UTC()
 	res, err := a.db.ExecContext(ctx, queries.UpdateSagaStateWithFencing, string(nextState), now, tenantID, id, expectedVersion, fencingToken)
 	if err != nil {
@@ -179,7 +185,8 @@ func (a *PostgresSagaRepositoryAdapter) UpdateSagaStateWithFencing(ctx context.C
 	return nil
 }
 
-func (a *PostgresSagaRepositoryAdapter) AcquireNextLease(ctx context.Context, workerID string, leaseDuration time.Duration) (*sagaContracts.SagaInstance, error) {
+func (a *PostgresSagaRepositoryAdapter) AcquireNextLease(ctx context.Context, workerID string, leaseDuration time.Duration) (spanResult0 *sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	now := time.Now().UTC()
 	leaseUntil := now.Add(leaseDuration)
 
@@ -226,8 +233,8 @@ func (a *PostgresSagaRepositoryAdapter) AcquireNextLease(ctx context.Context, wo
 	if lUntil.Valid {
 		s.LeaseUntil = lUntil.Time.Format(time.RFC3339Nano)
 	}
-	_ = json.Unmarshal(initJSON, &s.InitialPayload)
-	_ = json.Unmarshal(finalJSON, &s.FinalOutput)
+	observability.NoteSwallowed(json.Unmarshal(initJSON, &s.InitialPayload))
+	observability.NoteSwallowed(json.Unmarshal(finalJSON, &s.FinalOutput))
 
 	stepRows, err := a.db.QueryContext(ctx, queries.SelectSagaSteps, s.TenantID, s.ID)
 	if err != nil {
@@ -272,8 +279,8 @@ func (a *PostgresSagaRepositoryAdapter) AcquireNextLease(ctx context.Context, wo
 		if completed.Valid {
 			step.CompletedAt = completed.Time.Format(time.RFC3339Nano)
 		}
-		_ = json.Unmarshal(stepInJSON, &step.StepInput)
-		_ = json.Unmarshal(stepOutJSON, &step.StepOutput)
+		observability.NoteSwallowed(json.Unmarshal(stepInJSON, &step.StepInput))
+		observability.NoteSwallowed(json.Unmarshal(stepOutJSON, &step.StepOutput))
 
 		s.Steps = append(s.Steps, step)
 	}
@@ -281,7 +288,8 @@ func (a *PostgresSagaRepositoryAdapter) AcquireNextLease(ctx context.Context, wo
 	return &s, nil
 }
 
-func (a *PostgresSagaRepositoryAdapter) ReleaseLease(ctx context.Context, tenantID string, id string, fencingToken int64) error {
+func (a *PostgresSagaRepositoryAdapter) ReleaseLease(ctx context.Context, tenantID string, id string, fencingToken int64) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	now := time.Now().UTC()
 	res, err := a.db.ExecContext(ctx, queries.ReleaseSagaLease, now, tenantID, id, fencingToken)
 	if err != nil {
@@ -297,7 +305,8 @@ func (a *PostgresSagaRepositoryAdapter) ReleaseLease(ctx context.Context, tenant
 	return nil
 }
 
-func (a *PostgresSagaRepositoryAdapter) AcquireLeaseForSaga(ctx context.Context, tenantID string, id string, workerID string, leaseDuration time.Duration) (*sagaContracts.SagaInstance, error) {
+func (a *PostgresSagaRepositoryAdapter) AcquireLeaseForSaga(ctx context.Context, tenantID string, id string, workerID string, leaseDuration time.Duration) (spanResult0 *sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	now := time.Now().UTC()
 	leaseUntil := now.Add(leaseDuration)
 
@@ -305,7 +314,8 @@ func (a *PostgresSagaRepositoryAdapter) AcquireLeaseForSaga(ctx context.Context,
 	return a.scanSagaWithSteps(ctx, row, tenantID)
 }
 
-func (a *PostgresSagaRepositoryAdapter) UpdateStepExecution(ctx context.Context, tenantID string, sagaID string, step *sagaContracts.SagaStepExecution) error {
+func (a *PostgresSagaRepositoryAdapter) UpdateStepExecution(ctx context.Context, tenantID string, sagaID string, step *sagaContracts.SagaStepExecution) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	stepOutputJSON, _ := json.Marshal(step.StepOutput)
 	now := time.Now().UTC()
 
@@ -343,7 +353,8 @@ func (a *PostgresSagaRepositoryAdapter) UpdateStepExecution(ctx context.Context,
 	return nil
 }
 
-func (a *PostgresSagaRepositoryAdapter) ListSagas(ctx context.Context, tenantID string, limit int, offset int) ([]sagaContracts.SagaInstance, error) {
+func (a *PostgresSagaRepositoryAdapter) ListSagas(ctx context.Context, tenantID string, limit int, offset int) (spanResult0 []sagaContracts.SagaInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	rows, err := a.db.QueryContext(ctx, queries.ListSagasByTenant, tenantID, limit, offset)
 	if err != nil {
 		return nil, errors.NewInternalError(err.Error())
@@ -391,8 +402,8 @@ func (a *PostgresSagaRepositoryAdapter) ListSagas(ctx context.Context, tenantID 
 		if leaseUntil.Valid {
 			s.LeaseUntil = leaseUntil.Time.Format(time.RFC3339Nano)
 		}
-		_ = json.Unmarshal(initJSON, &s.InitialPayload)
-		_ = json.Unmarshal(finalJSON, &s.FinalOutput)
+		observability.NoteSwallowed(json.Unmarshal(initJSON, &s.InitialPayload))
+		observability.NoteSwallowed(json.Unmarshal(finalJSON, &s.FinalOutput))
 
 		sagas = append(sagas, s)
 	}
@@ -443,8 +454,8 @@ func (a *PostgresSagaRepositoryAdapter) scanSagaWithSteps(ctx context.Context, r
 	if leaseUntil.Valid {
 		s.LeaseUntil = leaseUntil.Time.Format(time.RFC3339Nano)
 	}
-	_ = json.Unmarshal(initJSON, &s.InitialPayload)
-	_ = json.Unmarshal(finalJSON, &s.FinalOutput)
+	observability.NoteSwallowed(json.Unmarshal(initJSON, &s.InitialPayload))
+	observability.NoteSwallowed(json.Unmarshal(finalJSON, &s.FinalOutput))
 
 	stepRows, err := a.db.QueryContext(ctx, queries.SelectSagaSteps, tenantID, s.ID)
 	if err != nil {
@@ -489,8 +500,8 @@ func (a *PostgresSagaRepositoryAdapter) scanSagaWithSteps(ctx context.Context, r
 		if completed.Valid {
 			step.CompletedAt = completed.Time.Format(time.RFC3339Nano)
 		}
-		_ = json.Unmarshal(stepInJSON, &step.StepInput)
-		_ = json.Unmarshal(stepOutJSON, &step.StepOutput)
+		observability.NoteSwallowed(json.Unmarshal(stepInJSON, &step.StepInput))
+		observability.NoteSwallowed(json.Unmarshal(stepOutJSON, &step.StepOutput))
 
 		s.Steps = append(s.Steps, step)
 	}
