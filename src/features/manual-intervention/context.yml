@@ -1,2 +1,27 @@
+entity: manual_intervention_audit_log
+owner: core-platform
+fields:
+  - name: id             type: uuid          null: no   default: uuidv7()            constraint: PK, UNIQUE(tenant_id, id), immutable
+  - name: public_id      type: text          null: no   default: generated          constraint: UNIQUE, immutable, format 'ops_' + 26 chars
+  - name: tenant_id      type: text          null: no   constraint: immutable
+  - name: source         type: text          null: no   constraint: CHECK (source = btrim(source) AND source <> '')
+  - name: external_id    type: text          null: no   normalize: trim            constraint: UNIQUE(tenant_id, source, external_id), length 1..128
+  - name: correlation_id type: uuid          null: no   constraint: immutable, no FK
+  - name: saga_id        type: uuid          null: no   constraint: immutable
+  - name: operator_id    type: text          null: no   constraint: CHECK (operator_id = btrim(operator_id) AND operator_id <> '')
+  - name: operator_role  type: text          null: no   constraint: CHECK <> ''
+  - name: action_type    type: text          null: no   constraint: CHECK IN ('FORCE_RETRY', 'FORCE_COMPENSATE', 'FORCE_COMPLETE', 'FORCE_TERMINATE')
+  - name: reason         type: text          null: no   constraint: CHECK (reason = btrim(reason) AND reason <> '')
+  - name: approval_ticket_id type: text      null: no   default: ''
+  - name: synthetic_payload type: text       null: no   default: ''
+  - name: old_state      type: text          null: no   constraint: CHECK <> ''
+  - name: new_state      type: text          null: no   constraint: CHECK <> ''
+  - name: version        type: bigint        null: no   default: 1
+invariants:
+  - operator action produces an immutable audit record
+  - public_id follows 'ops_' prefix with 26 characters
+  - unauthorized operator role is rejected before state mutation
+pii: [none]
+source_of_truth: db
 feature: manual-intervention
 mode: stateless_hexagonal
