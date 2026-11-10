@@ -24,8 +24,20 @@ import (
 	inboxAdapters "distributed-transaction-engine/src/features/inbox-deduplication/infrastructure/adapters"
 	idempotencyKeys "distributed-transaction-engine/src/features/idempotency-keys"
 	retryPolicies "distributed-transaction-engine/src/features/retry-policies"
+	reconciliationEngine "distributed-transaction-engine/src/features/reconciliation-engine"
+	manualIntervention "distributed-transaction-engine/src/features/manual-intervention"
+	tenantIsolation "distributed-transaction-engine/src/features/tenant-isolation"
+	scheduledExecution "distributed-transaction-engine/src/features/scheduled-execution"
 	fencingTokens "distributed-transaction-engine/src/features/fencing-tokens"
 	compensationRetry "distributed-transaction-engine/src/features/compensation-retry"
+	deadLetterQueue "distributed-transaction-engine/src/features/dead-letter-queue"
+	occ "distributed-transaction-engine/src/features/optimistic-concurrency-control"
+	workflowVersioning "distributed-transaction-engine/src/features/workflow-versioning"
+	audittrail "distributed-transaction-engine/src/features/audit-trail"
+	auth "distributed-transaction-engine/src/features/authentication-authorization"
+	dashboard "distributed-transaction-engine/src/features/operational-dashboard"
+	queryapi "distributed-transaction-engine/src/features/transaction-query-api"
+	tracing "distributed-transaction-engine/src/features/distributed-tracing"
 	transactionalOutbox "distributed-transaction-engine/src/features/transactional-outbox"
 	outboxMachines "distributed-transaction-engine/src/features/transactional-outbox/domain/machines"
 	compensationEngine "distributed-transaction-engine/src/features/compensation-engine"
@@ -229,6 +241,141 @@ func describeService() chassis.ServiceSpec {
 			compRetryHandler := handlers.NewCompensationRetryHandler(compRetrySvc)
 			compRetryRouter := routers.NewCompensationRetryRouter(compRetryHandler)
 
+			var reconRepo reconciliationEngine.RepositoryPort = reconciliationEngine.NewMemoryAdapter()
+			if deps.DB != nil {
+				reconRepo = reconciliationEngine.NewPostgresAdapter(deps.DB)
+			}
+			reconSvc := reconciliationEngine.NewService(reconciliationEngine.ServiceDeps{
+				Repo:    reconRepo,
+				Rules:   reconciliationEngine.NewReconciliationRules(),
+				Machine: reconciliationEngine.NewReconciliationMachine(),
+			})
+			reconHandler := handlers.NewReconciliationHandler(reconSvc)
+			reconRouter := routers.NewReconciliationRouter(reconHandler)
+
+			var manualRepo manualIntervention.RepositoryPort = manualIntervention.NewMemoryAdapter()
+			if deps.DB != nil {
+				manualRepo = manualIntervention.NewPostgresAdapter(deps.DB)
+			}
+			manualSvc := manualIntervention.NewService(manualIntervention.ServiceDeps{
+				Repo:    manualRepo,
+				Rules:   manualIntervention.NewManualInterventionRules(),
+				Machine: manualIntervention.NewManualInterventionMachine(),
+			})
+			manualHandler := handlers.NewManualInterventionHandler(manualSvc)
+			manualRouter := routers.NewManualInterventionRouter(manualHandler)
+
+			tenantMemory := tenantIsolation.NewMemoryAdapter()
+			tenantRuntime := tenantIsolation.NewSystemRuntimeAdapter()
+			tenantServicesDeps := tenantIsolation.ServicesDeps{
+				Registry: tenantMemory, Quota: tenantMemory, Quarantine: tenantMemory, Security: tenantMemory,
+				Clock: tenantRuntime, IDs: tenantRuntime, Tracer: observability.NewTracer("tenant-isolation"),
+			}
+			if deps.DB != nil {
+				tenantPostgres := tenantIsolation.NewPostgresAdapter(deps.DB)
+				tenantServicesDeps.Registry, tenantServicesDeps.Quota = tenantPostgres, tenantPostgres
+				tenantServicesDeps.Quarantine, tenantServicesDeps.Security = tenantPostgres, tenantPostgres
+			}
+			tenantServices := tenantIsolation.NewServices(tenantServicesDeps)
+
+			var schedRepo scheduledExecution.RepositoryPort = scheduledExecution.NewMemoryAdapter()
+			if deps.DB != nil {
+				schedRepo = scheduledExecution.NewPostgresAdapter(deps.DB)
+			}
+			schedSvc := scheduledExecution.NewService(scheduledExecution.ServiceDeps{
+				Repo:    schedRepo,
+				Rules:   scheduledExecution.NewScheduledExecutionRules(),
+				Machine: scheduledExecution.NewScheduledExecutionMachine(),
+			})
+			schedHandler := handlers.NewScheduledExecutionHandler(schedSvc)
+			schedRouter := routers.NewScheduledExecutionRouter(schedHandler)
+
+			var dlqRepo deadLetterQueue.RepositoryPort = deadLetterQueue.NewMemoryAdapter()
+			if deps.DB != nil {
+				dlqRepo = deadLetterQueue.NewPostgresAdapter(deps.DB)
+			}
+			dlqSvc := deadLetterQueue.NewService(deadLetterQueue.ServiceDeps{
+				Repo:    dlqRepo,
+				Rules:   deadLetterQueue.NewDeadLetterRules(),
+				Machine: deadLetterQueue.NewDeadLetterMachine(),
+				Tracer:  observability.NewTracer("dead-letter-queue"),
+			})
+			dlqHandler := handlers.NewDeadLetterQueueHandler(dlqSvc)
+			dlqRouter := routers.NewDeadLetterQueueRouter(dlqHandler)
+
+			var occRepo occ.RepositoryPort = occ.NewMemoryAdapter()
+			if deps.DB != nil {
+				occRepo = occ.NewPostgresAdapter(deps.DB)
+			}
+			occSvc := occ.NewService(occ.ServiceDeps{
+				Repo:    occRepo,
+				Rules:   occ.NewOCCRules(),
+				Machine: occ.NewOCCStrategyMachine(),
+				Tracer:  observability.NewTracer("optimistic-concurrency-control"),
+			})
+			occHandler := handlers.NewOCCHandler(occSvc)
+			occRouter := routers.NewOCCRouter(occHandler)
+
+			var wvRepo workflowVersioning.RepositoryPort = workflowVersioning.NewMemoryAdapter()
+			if deps.DB != nil {
+				wvRepo = workflowVersioning.NewPostgresAdapter(deps.DB)
+			}
+			wvSvc := workflowVersioning.NewService(workflowVersioning.ServiceDeps{
+				Repo:   wvRepo,
+				Tracer: observability.NewTracer("workflow-versioning"),
+			})
+			wvHandler := handlers.NewWorkflowVersioningHandler(wvSvc)
+			wvRouter := routers.NewWorkflowVersioningRouter(wvHandler)
+
+			var auditRepo audittrail.AuditTrailRepositoryPort = audittrail.NewMemoryRepository()
+			if deps.DB != nil {
+				auditRepo = audittrail.NewPostgresRepository(deps.DB)
+			}
+			auditSvc := audittrail.NewService(audittrail.ServiceDeps{
+				Repo:   auditRepo,
+				Tracer: observability.NewTracer("audit-trail"),
+			})
+			auditHandler := handlers.NewAuditTrailHandler(auditSvc)
+			auditRouter := routers.NewAuditTrailRouter(auditHandler)
+
+			var authRepo auth.AuthRepositoryPort = auth.NewMemoryRepository()
+			if deps.DB != nil {
+				authRepo = auth.NewPostgresRepository(deps.DB)
+			}
+			authSvc := auth.NewService(auth.ServiceDeps{
+				Repo:     authRepo,
+				AuditSvc: auditSvc,
+				Tracer:   observability.NewTracer("authentication-authorization"),
+			})
+			authHandler := handlers.NewAuthenticationAuthorizationHandler(authSvc)
+			authRouter := routers.NewAuthenticationAuthorizationRouter(authHandler)
+
+			var tracingRepo tracing.TracingRepositoryPort = tracing.NewMemoryRepository()
+			if deps.DB != nil {
+				tracingRepo = tracing.NewPostgresRepository(deps.DB)
+			}
+			tracingSvc := tracing.NewService(tracing.ServiceDeps{
+				Repo:   tracingRepo,
+				Tracer: observability.NewTracer("distributed-tracing"),
+			})
+			tracingHandler := handlers.NewDistributedTracingHandler(tracingSvc)
+			tracingRouter := routers.NewDistributedTracingRouter(tracingHandler)
+
+			var dashboardRepo dashboard.DashboardRepositoryPort = dashboard.NewMemoryRepository()
+			if deps.DB != nil {
+				dashboardRepo = dashboard.NewPostgresRepository(deps.DB)
+			}
+			dashboardSvc := dashboard.NewService(dashboard.DashboardServiceDeps{
+				Repo: dashboardRepo,
+			})
+			dashboardHandler := handlers.NewOperationalDashboardHandler(dashboardSvc)
+			dashboardRouter := routers.NewOperationalDashboardRouter(dashboardHandler)
+
+			queryMemRepo := queryapi.NewMemoryAdapter()
+			querySvc := queryapi.NewDefaultService(queryMemRepo)
+			queryHandler := handlers.NewTransactionQueryHandler(querySvc)
+			queryRouter := routers.NewTransactionQueryRouter(queryHandler)
+
 			poller := sagaService.NewSagaPoller(sagaRepo, sagaSvc, deps.Config.Poller.WorkerID, deps.Config.LeaseDuration())
 
 			return chassis.Services{
@@ -246,6 +393,18 @@ func describeService() chassis.ServiceSpec {
 					"compensationRouter":      compRouter,
 					"fencingRouter":           fencingRouter,
 					"compensationRetryRouter": compRetryRouter,
+					"reconciliationRouter":    reconRouter,
+					"manualInterventionRouter": manualRouter,
+					"scheduledExecutionRouter": schedRouter,
+					"dlqRouter":               dlqRouter,
+					"occRouter":               occRouter,
+					"workflowVersioningRouter": wvRouter,
+					"auditRouter":             auditRouter,
+					"authRouter":              authRouter,
+					"tenantIsolationServices": tenantServices,
+					"tracingRouter":           tracingRouter,
+					"dashboardRouter":         dashboardRouter,
+					"queryRouter":             queryRouter,
 					"poller":                  poller,
 					"recoverySvc":             recoverySvc,
 					"pollInterval":            deps.Config.PollInterval(),
@@ -292,6 +451,39 @@ func describeService() chassis.ServiceSpec {
 			}
 			if crR, ok := services.Instances["compensationRetryRouter"].(*routers.CompensationRetryRouter); ok && crR != nil {
 				crR.RegisterRoutes(router)
+			}
+			if rcR, ok := services.Instances["reconciliationRouter"].(*routers.ReconciliationRouter); ok && rcR != nil {
+				rcR.RegisterRoutes(router)
+			}
+			if miR, ok := services.Instances["manualInterventionRouter"].(*routers.ManualInterventionRouter); ok && miR != nil {
+				miR.RegisterRoutes(router)
+			}
+			if scR, ok := services.Instances["scheduledExecutionRouter"].(*routers.ScheduledExecutionRouter); ok && scR != nil {
+				scR.RegisterRoutes(router)
+			}
+			if dlqR, ok := services.Instances["dlqRouter"].(*routers.DeadLetterQueueRouter); ok && dlqR != nil {
+				dlqR.RegisterRoutes(router)
+			}
+			if occR, ok := services.Instances["occRouter"].(*routers.OCCRouter); ok && occR != nil {
+				occR.RegisterRoutes(router)
+			}
+			if wvR, ok := services.Instances["workflowVersioningRouter"].(*routers.WorkflowVersioningRouter); ok && wvR != nil {
+				wvR.RegisterRoutes(router)
+			}
+			if atR, ok := services.Instances["auditRouter"].(*routers.AuditTrailRouter); ok && atR != nil {
+				atR.RegisterRoutes(router)
+			}
+			if authR, ok := services.Instances["authRouter"].(*routers.AuthenticationAuthorizationRouter); ok && authR != nil {
+				authR.RegisterRoutes(router)
+			}
+			if dtR, ok := services.Instances["tracingRouter"].(*routers.DistributedTracingRouter); ok && dtR != nil {
+				dtR.RegisterRoutes(router)
+			}
+			if dsbR, ok := services.Instances["dashboardRouter"].(*routers.OperationalDashboardRouter); ok && dsbR != nil {
+				dsbR.RegisterRoutes(router)
+			}
+			if qR, ok := services.Instances["queryRouter"].(*routers.TransactionQueryRouter); ok && qR != nil {
+				qR.RegisterRoutes(router)
 			}
 		},
 		Jobs: func(services chassis.Services) []chassis.JobSpec {

@@ -227,7 +227,7 @@ INB_ID=$(generate_uuid)
 INB_PUB="inb_$(python3 -c 'import uuid; print(uuid.uuid4().hex[:26])')"
 assert_endpoint "inbox-deduplication" "POST" "http://127.0.0.1:${PORT}/api/v1/inbox/ingest" \
     "{\"id\":\"${INB_ID}\",\"publicId\":\"${INB_PUB}\",\"tenantId\":\"${TENANT_ID}\",\"source\":\"ORDERS\",\"externalId\":\"ext_inb_1\",\"correlationId\":\"$(generate_uuid)\",\"handlerName\":\"order_handler\",\"handlerGeneration\":1,\"producerEventTime\":\"2026-11-10T00:00:00Z\",\"payload\":{}}" \
-    "200"
+    "201"
 
 # 8. idempotency-keys
 IDK_ID=$(generate_uuid)

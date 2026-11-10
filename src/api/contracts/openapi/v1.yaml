@@ -1091,6 +1091,914 @@ paths:
           description: Record retrieved
         '404':
           description: Record not found
+  /api/v1/reconciliation/evaluate:
+    post:
+      summary: Cross-check engine state against external record and evaluate anomalies
+      operationId: evaluateReconciliation
+      parameters:
+        - name: traceparent
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-tenant-id
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - tenantId
+                - sagaId
+                - internalStatus
+                - externalStatus
+                - internalAmountCents
+                - externalAmountCents
+                - currency
+              properties:
+                tenantId:
+                  type: string
+                sagaId:
+                  type: string
+                  format: uuid
+                internalStatus:
+                  type: string
+                externalStatus:
+                  type: string
+                internalAmountCents:
+                  type: integer
+                  minimum: 0
+                externalAmountCents:
+                  type: integer
+                  minimum: 0
+                currency:
+                  type: string
+                  pattern: '^[A-Z]{3}$'
+      responses:
+        '200':
+          description: Reconciliation evaluated successfully
+        '400':
+          description: Bad request
+  /api/v1/reconciliation/anomalies:
+    get:
+      summary: List reconciliation anomalies by tenant and status
+      operationId: listReconciliationAnomalies
+      parameters:
+        - name: tenantId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Anomalies retrieved successfully
+        '400':
+          description: Missing tenantId query param
+  /api/v1/dlq/admit:
+    post:
+      summary: Admit a failed saga step attempt to DLQ quarantine
+      operationId: admitDLQRecord
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tenantId, sagaId, stepIndex, stepType, attemptId, idempotencyKey, outcomeClass, failureClass, errorFingerprint, rawMessage, payloadRef, schemaVersion, moneyAtStakeCents, currency]
+              properties:
+                tenantId: { type: string }
+                correlationId: { type: string, format: uuid }
+                sagaId: { type: string, format: uuid }
+                stepIndex: { type: integer, minimum: 0 }
+                stepType: { type: string }
+                attemptId: { type: string, format: uuid }
+                idempotencyKey: { type: string }
+                outcomeClass: { type: string, enum: [NOT_EXECUTED, UNKNOWN, FAILED] }
+                failureClass: { type: string, enum: [POISON, DEFINITION_DEFECT, RETRY_EXHAUSTED, BUSINESS_REJECTION, COMPENSATION_FAILURE, INTEGRITY_VIOLATION] }
+                errorFingerprint: { type: string }
+                rawMessage: { type: string }
+                payloadRef: { type: string }
+                schemaVersion: { type: integer, minimum: 1 }
+                moneyAtStakeCents: { type: integer, minimum: 0 }
+                currency: { type: string, minLength: 3, maxLength: 3 }
+                businessDeadline: { type: string, format: date-time }
+      responses:
+        '201':
+          description: Dead letter record admitted and saga transitioned to NEEDS_ATTENTION
+        '400':
+          description: Validation error
+        '409':
+          description: Duplicate attempt or conflict
+  /api/v1/dlq/triage:
+    post:
+      summary: Transition DLQ record from QUARANTINED to TRIAGED
+      operationId: triageDLQRecord
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tenantId, recordId, actorId]
+              properties:
+                tenantId: { type: string }
+                recordId: { type: string, format: uuid }
+                actorId: { type: string }
+      responses:
+        '200':
+          description: Record triaged successfully
+  /api/v1/dlq/retry:
+    post:
+      summary: Safe same-key retry of quarantined DLQ step
+      operationId: retryDLQRecord
+      parameters:
+        - name: sagaState
+          in: query
+          required: false
+          schema: { type: string }
+        - name: stepIndex
+          in: query
+          required: false
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tenantId, recordId, actorId]
+              properties:
+                tenantId: { type: string }
+                recordId: { type: string, format: uuid }
+                actorId: { type: string }
+      responses:
+        '200':
+          description: Retry dispatched successfully
+        '409':
+          description: Replay precondition failed
+  /api/v1/dlq/resolve-evidence:
+    post:
+      summary: Resolve DLQ record based on external execution evidence
+      operationId: resolveDLQEvidence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tenantId, recordId, actorId, executed, evidenceRef, reason]
+              properties:
+                tenantId: { type: string }
+                recordId: { type: string, format: uuid }
+                actorId: { type: string }
+                executed: { type: boolean }
+                evidenceRef: { type: string }
+                reason: { type: string }
+      responses:
+        '200':
+          description: Record resolved with evidence
+  /api/v1/dlq/corrective-action:
+    post:
+      summary: Supersede failed attempt with new command and identity
+      operationId: correctiveActionDLQ
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tenantId, recordId, actorId, newAttemptId, newIdempotencyKey, reason]
+              properties:
+                tenantId: { type: string }
+                recordId: { type: string, format: uuid }
+                actorId: { type: string }
+                secondApproverId: { type: string }
+                newAttemptId: { type: string, format: uuid }
+                newIdempotencyKey: { type: string }
+                reason: { type: string }
+      responses:
+        '200':
+          description: Corrective action applied
+        '403':
+          description: Second approver required for money-impacting corrective actions
+  /api/v1/dlq/write-off:
+    post:
+      summary: Approve monetary or business write-off
+      operationId: writeOffDLQRecord
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tenantId, recordId, actorId, reason]
+              properties:
+                tenantId: { type: string }
+                recordId: { type: string, format: uuid }
+                actorId: { type: string }
+                secondApproverId: { type: string }
+                reason: { type: string }
+      responses:
+        '200':
+          description: Record written off
+        '403':
+          description: Second approver required for monetary write-offs
+  /api/v1/dlq/resolve-saga:
+    post:
+      summary: Resolve DLQ record with saga-level forward/compensate/manual disposition
+      operationId: resolveSagaDLQRecord
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tenantId, recordId, actorId, disposition, reason]
+              properties:
+                tenantId: { type: string }
+                recordId: { type: string, format: uuid }
+                actorId: { type: string }
+                disposition: { type: string, enum: [SAGA_COMPENSATED, SAGA_ROLLED_FORWARD, SAGA_COMPLETED_MANUALLY] }
+                reason: { type: string }
+      responses:
+        '200':
+          description: Saga disposition recorded
+  /api/v1/dlq/record:
+    get:
+      summary: Get dead letter record by ID
+      operationId: getDLQRecord
+      parameters:
+        - name: tenantId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Dead letter record retrieved
+        '404':
+          description: Record not found
+  /api/v1/dlq/records:
+    get:
+      summary: List dead letter records with optional status filter
+      operationId: listDLQRecords
+      parameters:
+        - name: tenantId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [QUARANTINED, TRIAGED, ACTION_IN_PROGRESS, RESOLVED, ESCALATED] }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          description: List of dead letter records
+  /api/v1/occ/mutate:
+    post:
+      summary: Execute atomic CAS mutation on root saga aggregate
+      operationId: mutateSagaOCC
+      parameters:
+        - name: maxRetries
+          in: query
+          required: false
+          schema: { type: integer, default: 5 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tenantId, sagaId, expectedVersion, expectedEpoch, targetState, workerId, inputId, inputType]
+              properties:
+                tenantId: { type: string }
+                sagaId: { type: string, format: uuid }
+                expectedVersion: { type: integer, minimum: 0 }
+                expectedEpoch: { type: integer, minimum: 0 }
+                targetState: { type: string }
+                workerId: { type: string }
+                inputId: { type: string }
+                inputType: { type: string, enum: [REPLY, TIMER, OPERATOR_COMMAND] }
+                inputPayload: { type: string }
+      responses:
+        '200':
+          description: CAS mutation succeeded or input already applied
+        '403':
+          description: Stale epoch or unauthorized writer
+        '404':
+          description: Saga root aggregate not found
+        '409':
+          description: Optimistic concurrency version conflict or state conflict
+  /api/v1/occ/client-edit:
+    post:
+      summary: Apply client-driven edit with client-supplied expected version
+      operationId: clientEditOCC
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tenantId, sagaId, expectedVersion, parameters, actorId]
+              properties:
+                tenantId: { type: string }
+                sagaId: { type: string, format: uuid }
+                expectedVersion: { type: integer, minimum: 1 }
+                parameters: { type: string }
+                actorId: { type: string }
+      responses:
+        '200':
+          description: Client edit committed
+        '409':
+          description: Version conflict; client must refresh and re-submit
+  /api/v1/occ/diagnose:
+    get:
+      summary: Diagnose current version, epoch, and state of saga aggregate
+      operationId: diagnoseSagaAggregate
+      parameters:
+        - name: tenantId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: sagaId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Aggregate state retrieved
+        '404':
+          description: Aggregate not found
+  /api/v1/occ/strategy:
+    get:
+      summary: Evaluate concurrency strategy based on recent contention
+      operationId: evaluateOCCStrategy
+      parameters:
+        - name: tenantId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: sagaId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Concurrency strategy returned
+  /api/v1/workflow-versions/bundles:
+    post:
+      summary: Register and integrity-verify a workflow bundle
+      operationId: registerWorkflowBundle
+      responses:
+        '201':
+          description: Workflow bundle registered in DRAFT status
+        '400':
+          description: Validation error
+        '409':
+          description: Version tag or content hash collision
+  /api/v1/workflow-versions/promotions/propose:
+    post:
+      summary: Propose bundle promotion, deprecation, block, or archive
+      operationId: proposeWorkflowPromotion
+      responses:
+        '202':
+          description: Promotion proposed awaiting dual approval
+        '400':
+          description: Validation error
+        '409':
+          description: Invalid FSM transition
+  /api/v1/workflow-versions/promotions/decide:
+    post:
+      summary: Decide on proposed promotion with maker-checker enforcement
+      operationId: decideWorkflowPromotion
+      responses:
+        '200':
+          description: Promotion finalized
+        '400':
+          description: Validation error
+        '403':
+          description: Maker-checker violation (approver equals proposer)
+        '409':
+          description: Already finalized
+  /api/v1/workflow-versions/resolve:
+    post:
+      summary: Idempotently resolve active bundle for an entity with sticky canary assignment
+      operationId: resolveWorkflowVersion
+      responses:
+        '200':
+          description: Resolved workflow bundle and live inputs snapshot
+        '400':
+          description: Validation error
+        '404':
+          description: Active bundle not found
+  /api/v1/workflow-versions/verify:
+    post:
+      summary: Verify bundle content hash integrity
+      operationId: verifyWorkflowBundleIntegrity
+      responses:
+        '200':
+          description: Integrity match result
+        '404':
+          description: Bundle not found
+  /api/v1/workflow-versions/migrate:
+    post:
+      summary: Execute saga state migration at declared safe point
+      operationId: migrateWorkflowSaga
+      responses:
+        '200':
+          description: Migration recorded and state mapping applied
+        '400':
+          description: Validation error
+        '409':
+          description: Safe point mismatch
+        '412':
+          description: Target bundle not ACTIVE
+  /api/v1/audit/events/capture:
+    post:
+      summary: Capture unchained audit record to transactional outbox
+      operationId: captureAuditEvent
+      responses:
+        '202':
+          description: Audit event captured to outbox
+        '400':
+          description: Missing attribution or invalid command
+  /api/v1/audit/events/chain:
+    post:
+      summary: Process outbox events and append to tamper-evident ledger
+      operationId: processAuditChainer
+      responses:
+        '200':
+          description: Batch chained successfully
+        '400':
+          description: Validation error
+  /api/v1/audit/checkpoints:
+    post:
+      summary: Create signed checkpoint anchor for audit segment
+      operationId: createAuditCheckpoint
+      responses:
+        '201':
+          description: Checkpoint created
+        '404':
+          description: No chained events in segment
+  /api/v1/audit/chain/verify:
+    post:
+      summary: Cryptographically verify audit chain continuity and HMAC signatures
+      operationId: verifyAuditChain
+      responses:
+        '200':
+          description: Verification report returned
+        '400':
+          description: Validation error
+  /api/v1/audit/events:
+    get:
+      summary: Query scoped and masked immutable audit events
+      operationId: listAuditEvents
+      responses:
+        '200':
+          description: List of audit events
+        '400':
+          description: Validation error
+  /api/v1/auth/tokens/authenticate:
+    post:
+      summary: Authenticate OIDC JWT bearer token
+      operationId: authenticateToken
+      responses:
+        '200':
+          description: Authenticated principal context
+        '401':
+          description: Invalid or revoked token
+  /api/v1/auth/api-keys/authenticate:
+    post:
+      summary: Authenticate tenant API key
+      operationId: authenticateAPIKey
+      responses:
+        '200':
+          description: Authenticated API client context
+        '401':
+          description: Invalid or expired API key
+  /api/v1/auth/services/authenticate:
+    post:
+      summary: Authenticate mesh service via SPIFFE ID and method policy
+      operationId: authenticateService
+      responses:
+        '200':
+          description: Authenticated service context
+        '403':
+          description: Service method not allowed
+  /api/v1/auth/webhooks/authenticate:
+    post:
+      summary: Authenticate external provider webhook with replay protection
+      operationId: authenticateWebhook
+      responses:
+        '200':
+          description: Authenticated provider context
+        '401':
+          description: Signature mismatch or timestamp skew
+        '409':
+          description: Replay nonce detected
+  /api/v1/auth/authorize:
+    post:
+      summary: 5-layer authorization decision engine
+      operationId: authorizeRequest
+      responses:
+        '200':
+          description: Authorized
+        '401':
+          description: Step-up required
+        '403':
+          description: Permission denied or dual approval required
+        '404':
+          description: Resource not found (anti-enumeration)
+        '409':
+          description: Post-pivot state rule conflict
+  /api/v1/auth/api-keys:
+    post:
+      summary: Provision new API key for tenant
+      operationId: registerAPIKey
+      responses:
+        '201':
+          description: API key provisioned
+        '400':
+          description: Validation error
+  /api/v1/auth/services:
+    post:
+      summary: Register SPIFFE service identity and allowed methods
+      operationId: registerServiceIdentity
+      responses:
+        '201':
+          description: Service identity registered
+        '400':
+          description: Validation error
+  /api/v1/auth/revocations:
+    post:
+      summary: Revoke credential, token, or session immediately
+      operationId: revokeCredential
+      responses:
+        '200':
+          description: Revocation recorded
+        '400':
+          description: Validation error
+  /api/v1/tracing/context/start:
+    post:
+      summary: Parse W3C traceparent or initialize fresh 128-bit trace context
+      operationId: startTraceContext
+      responses:
+        '200':
+          description: Initialized trace context
+        '400':
+          description: Validation error
+  /api/v1/tracing/spans:
+    post:
+      summary: Record and buffer OpenTelemetry span
+      operationId: recordTraceSpan
+      responses:
+        '201':
+          description: Span buffered
+        '409':
+          description: Span budget exceeded (1000 max)
+    get:
+      summary: Retrieve buffered spans by trace ID
+      operationId: getTraceSpans
+      responses:
+        '200':
+          description: List of spans in trace
+        '400':
+          description: Missing parameters
+  /api/v1/tracing/links/register:
+    post:
+      summary: Register asynchronous boundary trace link (outbox, relay, timer)
+      operationId: registerAsyncTraceLink
+      responses:
+        '201':
+          description: Async link registered
+        '400':
+          description: Validation error
+  /api/v1/tracing/links/resolve:
+    post:
+      summary: Resolve asynchronous boundary span link for consumer or continuation
+      operationId: resolveAsyncTraceLink
+      responses:
+        '200':
+          description: Resolved span link
+        '404':
+          description: Link context not found
+  /api/v1/tracing/deep-sessions:
+    post:
+      summary: Provision time-boxed LEVEL E deep trace session
+      operationId: activateDeepTraceSession
+      responses:
+        '201':
+          description: Deep session activated
+        '400':
+          description: Validation error
+  /api/v1/dashboard/overview:
+    get:
+      summary: Get authoritative operational dashboard overview with data age and freshness markers
+      operationId: getDashboardOverview
+      responses:
+        '200':
+          description: Overview metrics and status
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+  /api/v1/dashboard/stream:
+    get:
+      summary: Stream real-time dashboard events via SSE with heartbeats and client backpressure
+      operationId: streamDashboardEvents
+      responses:
+        '200':
+          description: Event stream established
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+  /api/v1/dashboard/actions/preview:
+    post:
+      summary: Generate server-computed impact preview for operator action bound to saga snapshot version
+      operationId: previewDashboardAction
+      responses:
+        '200':
+          description: Action preview created
+        '400':
+          description: Invalid request
+        '412':
+          description: Precondition failed
+  /api/v1/dashboard/actions/execute:
+    post:
+      summary: Execute operator action with CSRF, snapshot version matching, and dual approver check
+      operationId: executeDashboardAction
+      responses:
+        '200':
+          description: Action executed
+        '400':
+          description: Invalid request
+        '403':
+          description: Forbidden
+        '412':
+          description: Precondition failed / version mismatch
+  /api/v1/transactions:search:
+    post:
+      summary: Execute TQL search over transaction read model with AST authorization injection and keyset pagination
+      operationId: searchTransactions
+      responses:
+        '200':
+          description: Search results with consistency metadata
+        '400':
+          description: Invalid syntax or unknown field
+        '403':
+          description: Field not permitted
+  /api/v1/transactions:aggregate:
+    post:
+      summary: Execute grouped aggregates over transaction read model with currency-bound money checks
+      operationId: aggregateTransactions
+      responses:
+        '200':
+          description: Aggregation groups
+        '400':
+          description: Invalid aggregate specification
+  /api/v1/transactions/{id}:
+    get:
+      summary: Fetch single transaction by public ID with entitlement-based field masking
+      operationId: getTransactionDetail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Transaction detail
+        '404':
+          description: Transaction not found
+  /api/v1/transactions/{id}/timeline:
+    get:
+      summary: Fetch saga execution timeline including step attempts and compensations
+      operationId: getTransactionTimeline
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Timeline events
+        '404':
+          description: Transaction not found
+  /api/v1/transactions:export:
+    post:
+      summary: Initiate asynchronous snapshot transaction export job
+      operationId: exportTransactions
+      responses:
+        '202':
+          description: Export job accepted
+  /api/v1/transactions/saved-queries:
+    get:
+      summary: List stored TQL queries for current tenant
+      operationId: listSavedQueries
+      responses:
+        '200':
+          description: Saved queries list
+    post:
+      summary: Create stored TQL query for current tenant
+      operationId: createSavedQuery
+      responses:
+        '201':
+          description: Saved query created
+  /api/v1/manual-intervention/intervene:
+    post:
+      summary: Execute manual operator intervention on a stuck, failed, or waiting saga
+      operationId: executeManualIntervention
+      parameters:
+        - name: traceparent
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-tenant-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-audit-actor-id
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - tenantId
+                - sagaId
+                - operatorId
+                - operatorRole
+                - actionType
+                - currentSagaState
+                - reason
+              properties:
+                tenantId:
+                  type: string
+                sagaId:
+                  type: string
+                  format: uuid
+                operatorId:
+                  type: string
+                operatorRole:
+                  type: string
+                actionType:
+                  type: string
+                  enum: [FORCE_RETRY, FORCE_COMPENSATE, FORCE_COMPLETE, FORCE_TERMINATE]
+                currentSagaState:
+                  type: string
+                reason:
+                  type: string
+                approvalTicketId:
+                  type: string
+                syntheticPayload:
+                  type: string
+      responses:
+        '200':
+          description: Manual intervention processed successfully
+        '400':
+          description: Validation failure or missing approval ticket
+        '403':
+          description: Unauthorized operator role
+        '409':
+          description: Target saga is not in an intervenable state
+  /api/v1/scheduled-execution/schedules:
+    post:
+      summary: Register a new timezone-aware execution schedule
+      operationId: createSchedule
+      parameters:
+        - name: traceparent
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-request-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-correlation-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-tenant-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-audit-actor-id
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - tenantId
+                - workflowId
+                - scheduleType
+                - timeZone
+                - runAsPrincipal
+              properties:
+                tenantId:
+                  type: string
+                workflowId:
+                  type: string
+                scheduleType:
+                  type: string
+                  enum: [ONE_OFF, RECURRING_CRON]
+                cronExpression:
+                  type: string
+                timeZone:
+                  type: string
+                dstPolicy:
+                  type: string
+                  enum: [RUN_AT_NEXT_VALID, SKIP, RUN_FIRST, RUN_SECOND]
+                misfirePolicy:
+                  type: string
+                  enum: [RUN_ALL_MISSED, RUN_ONCE, SKIP_MISSED]
+                overlapPolicy:
+                  type: string
+                  enum: [ALLOW, SKIP_IF_RUNNING, QUEUE_ONE, CANCEL_PREVIOUS]
+                maxLatenessSeconds:
+                  type: integer
+                runAsPrincipal:
+                  type: string
+                requiredPermission:
+                  type: string
+                frozenPayload:
+                  type: string
+                firstOccurrenceAt:
+                  type: string
+                  format: date-time
+      responses:
+        '201':
+          description: Schedule created successfully
+        '400':
+          description: Validation failure
   /api/v1/compensation-retry/pause-step-type:
     post:
       summary: Pause compensations for a step type

@@ -107,8 +107,8 @@ Legend: [ ] todo · every WP has an **AC** (acceptance criteria) — a WP is not
 
 ### WP-12 DLQ and manual intervention (`dead-letter-queue`, `manual-intervention`)
 - [ ] Use `messaging/policies/dlq_policy.yaml`; DLQ record keeps original payload, headers, error, attempts
-- [ ] Operator actions: retry, skip, force-compensate, edit-and-retry (dual-control approval), all audited
-- [ ] **AC:** an operator action cannot bypass RBAC; every action produces an immutable audit row
+- [ ] Operator actions aligned with `docs/features/manual-intervention/business-logic.md`: FORCE_RETRY, FORCE_COMPENSATE, FORCE_COMPLETE (with approval ticket + synthetic payload), FORCE_TERMINATE, all audited
+- [ ] AC: an operator action cannot bypass RBAC (`admin:saga:intervene`); every action produces an immutable audit row in `manual_intervention_audit_log`
 
 ### WP-13 Versioning (`workflow-versioning`)
 - [ ] In-flight sagas pinned to starting version; new version only for new sagas; deprecation + drain procedure
@@ -116,9 +116,9 @@ Legend: [ ] todo · every WP has an **AC** (acceptance criteria) — a WP is not
 
 ### WP-14 Tenancy, authN/Z, audit, tracing (`tenant-isolation`, `authentication-authorization`, `audit-trail`, `distributed-tracing`)
 - [ ] tenant_id in every PK/index and every query (enforce with Postgres RLS); per-tenant rate limits and quotas
-- [ ] mTLS/JWT between services; scopes for operator vs. service vs. read-only
-- [ ] Hash-chained audit log (each row includes hash of previous); verification job
-- [ ] W3C trace context carried through outbox -> broker -> consumer; one trace per saga
+- [x] mTLS/JWT between services; scopes for operator vs. service vs. read-only (v2: 5-layer authorization, SPIFFE mesh mapping, webhook replay protection, fail-closed revocation)
+- [x] Hash-chained audit log (each row includes hash of previous); verification job (v2: outbox capture, keyed HMAC-SHA256, quarantine, signed checkpoints, segment sealing)
+- [x] W3C trace context carried through outbox -> broker -> consumer; one trace per saga (v2: W3C traceparent parse/inject, async link registry, adaptive tail sampling, LEVEL E deep sessions, span budget)
 - [ ] **AC:** noisy-neighbour test: tenant A floods; tenant B p99 unaffected beyond a stated bound
 
 ### WP-15 Query API + dashboard (`transaction-query-api`, `operational-dashboard`)
