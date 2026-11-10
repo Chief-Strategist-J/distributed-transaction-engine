@@ -35,6 +35,7 @@ func NewCrashRecoveryService(
 }
 
 func (s *CrashRecoveryService) GetConfig() contracts.CrashRecoveryConfig {
+	defer observability.TraceEnter(nil)()
 	return s.cfg
 }
 
@@ -59,6 +60,7 @@ func (s *CrashRecoveryService) GetOrphans(ctx context.Context, limit int) ([]con
 }
 
 func (s *CrashRecoveryService) Start(ctx context.Context) {
+	defer observability.TraceEnter(nil)()
 	ticker := time.NewTicker(s.cfg.ScanInterval)
 	defer ticker.Stop()
 
@@ -137,7 +139,7 @@ func (s *CrashRecoveryService) SweepAndReclaim(ctx context.Context) (int, error)
 				observability.String("saga_id", orphan.ID),
 				observability.Int("takeover_count", takeoverRes.TakeoverCount),
 			)
-			_ = s.repo.MarkPoisoned(ctx, orphan.TenantID, orphan.ID, takeoverRes.NewToken)
+			observability.NoteSwallowed(s.repo.MarkPoisoned(ctx, orphan.TenantID, orphan.ID, takeoverRes.NewToken))
 			continue
 		}
 
@@ -147,7 +149,7 @@ func (s *CrashRecoveryService) SweepAndReclaim(ctx context.Context) (int, error)
 				observability.String("saga_id", orphan.ID),
 				observability.String("error", err.Error()),
 			)
-			_ = s.repo.ReleaseLease(ctx, orphan.TenantID, orphan.ID, takeoverRes.NewToken)
+			observability.NoteSwallowed(s.repo.ReleaseLease(ctx, orphan.TenantID, orphan.ID, takeoverRes.NewToken))
 			continue
 		}
 
@@ -155,7 +157,7 @@ func (s *CrashRecoveryService) SweepAndReclaim(ctx context.Context) (int, error)
 			action := rules.ClassifyStepReconciliation(steps[i].ExecutionState)
 			if action == rules.ActionRedispatchForward && steps[i].ExecutionState == sagaContracts.StepStateDispatched {
 				steps[i].ExecutionState = sagaContracts.StepStateUnknown
-				_ = s.repo.UpdateStepExecution(ctx, orphan.TenantID, orphan.ID, &steps[i])
+				observability.NoteSwallowed(s.repo.UpdateStepExecution(ctx, orphan.TenantID, orphan.ID, &steps[i]))
 			}
 		}
 

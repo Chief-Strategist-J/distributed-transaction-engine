@@ -3,13 +3,13 @@ package adapters
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"time"
-
 	"distributed-transaction-engine/src/features/crash-recovery/contracts"
 	"distributed-transaction-engine/src/features/crash-recovery/infrastructure/queries"
 	sagaContracts "distributed-transaction-engine/src/features/saga-orchestration/contracts"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"encoding/json"
+	"time"
 )
 
 type PostgresCrashRecoveryRepositoryAdapter struct {
@@ -20,7 +20,8 @@ func NewPostgresCrashRecoveryRepositoryAdapter(db *sql.DB) *PostgresCrashRecover
 	return &PostgresCrashRecoveryRepositoryAdapter{db: db}
 }
 
-func (a *PostgresCrashRecoveryRepositoryAdapter) FindExpiredLeases(ctx context.Context, batchSize int) ([]contracts.OrphanCandidate, error) {
+func (a *PostgresCrashRecoveryRepositoryAdapter) FindExpiredLeases(ctx context.Context, batchSize int) (spanResult0 []contracts.OrphanCandidate, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	now := time.Now().UTC()
 	rows, err := a.db.QueryContext(ctx, queries.FLOW_FIND_EXPIRED_LEASES, now, batchSize)
 	if err != nil {
@@ -78,7 +79,8 @@ func (a *PostgresCrashRecoveryRepositoryAdapter) TakeoverLease(
 	observedToken int64,
 	incarnationID string,
 	leaseDuration time.Duration,
-) (*contracts.TakeoverResult, error) {
+) (spanResult0 *contracts.TakeoverResult, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	now := time.Now().UTC()
 	leaseUntil := now.Add(leaseDuration)
 
@@ -112,7 +114,8 @@ func (a *PostgresCrashRecoveryRepositoryAdapter) TakeoverLease(
 	}, nil
 }
 
-func (a *PostgresCrashRecoveryRepositoryAdapter) MarkPoisoned(ctx context.Context, tenantID string, sagaID string, token int64) error {
+func (a *PostgresCrashRecoveryRepositoryAdapter) MarkPoisoned(ctx context.Context, tenantID string, sagaID string, token int64) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	now := time.Now().UTC()
 	_, err := a.db.ExecContext(ctx, queries.FLOW_MARK_POISONED, now, tenantID, sagaID, token)
 	if err != nil {
@@ -128,7 +131,8 @@ func (a *PostgresCrashRecoveryRepositoryAdapter) RenewHeartbeat(
 	incarnationID string,
 	token int64,
 	leaseDuration time.Duration,
-) (bool, error) {
+) (spanResult0 bool, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	now := time.Now().UTC()
 	leaseUntil := now.Add(leaseDuration)
 
@@ -145,7 +149,8 @@ func (a *PostgresCrashRecoveryRepositoryAdapter) RenewHeartbeat(
 	return affected > 0, nil
 }
 
-func (a *PostgresCrashRecoveryRepositoryAdapter) LoadStepExecutions(ctx context.Context, tenantID string, sagaID string) ([]sagaContracts.SagaStepExecution, error) {
+func (a *PostgresCrashRecoveryRepositoryAdapter) LoadStepExecutions(ctx context.Context, tenantID string, sagaID string) (spanResult0 []sagaContracts.SagaStepExecution, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	rows, err := a.db.QueryContext(ctx, queries.FLOW_LOAD_STEP_EXECUTIONS, tenantID, sagaID)
 	if err != nil {
 		return nil, errors.NewInternalError(err.Error())
@@ -177,10 +182,10 @@ func (a *PostgresCrashRecoveryRepositoryAdapter) LoadStepExecutions(ctx context.
 
 		s.ExecutionState = sagaContracts.StepExecutionState(stateStr)
 		if len(inputBytes) > 0 {
-			_ = json.Unmarshal(inputBytes, &s.StepInput)
+			observability.NoteSwallowed(json.Unmarshal(inputBytes, &s.StepInput))
 		}
 		if len(outputBytes) > 0 {
-			_ = json.Unmarshal(outputBytes, &s.StepOutput)
+			observability.NoteSwallowed(json.Unmarshal(outputBytes, &s.StepOutput))
 		}
 		steps = append(steps, s)
 	}
@@ -188,7 +193,8 @@ func (a *PostgresCrashRecoveryRepositoryAdapter) LoadStepExecutions(ctx context.
 	return steps, nil
 }
 
-func (a *PostgresCrashRecoveryRepositoryAdapter) UpdateStepExecution(ctx context.Context, tenantID string, sagaID string, step *sagaContracts.SagaStepExecution) error {
+func (a *PostgresCrashRecoveryRepositoryAdapter) UpdateStepExecution(ctx context.Context, tenantID string, sagaID string, step *sagaContracts.SagaStepExecution) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	now := time.Now().UTC()
 	outBytes, err := json.Marshal(step.StepOutput)
 	if err != nil {
@@ -214,7 +220,8 @@ func (a *PostgresCrashRecoveryRepositoryAdapter) UpdateStepExecution(ctx context
 	return nil
 }
 
-func (a *PostgresCrashRecoveryRepositoryAdapter) ReleaseLease(ctx context.Context, tenantID string, sagaID string, token int64) error {
+func (a *PostgresCrashRecoveryRepositoryAdapter) ReleaseLease(ctx context.Context, tenantID string, sagaID string, token int64) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	now := time.Now().UTC()
 	_, err := a.db.ExecContext(ctx, queries.FLOW_RELEASE_LEASE, now, tenantID, sagaID, token)
 	if err != nil {

@@ -1,13 +1,14 @@
 package contracts
 
 import (
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"strings"
 	"time"
-
-	"distributed-transaction-engine/src/shared/errors"
 )
 
-func ValidateCrashRecoveryConfig(cfg CrashRecoveryConfig) error {
+func ValidateCrashRecoveryConfig(cfg CrashRecoveryConfig) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if strings.TrimSpace(cfg.IncarnationID) == "" {
 		return errors.NewValidationError("incarnationId cannot be empty")
 	}
@@ -28,4 +29,3 @@ func ValidateCrashRecoveryConfig(cfg CrashRecoveryConfig) error {
 	}
 	return nil
 }
-

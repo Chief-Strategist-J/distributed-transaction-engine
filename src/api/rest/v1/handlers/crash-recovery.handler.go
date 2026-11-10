@@ -156,7 +156,7 @@ func (h *CrashRecoveryHandler) writeSuccess(
 			APIVersion:      "v1",
 		},
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }
 
 func (h *CrashRecoveryHandler) writeFailure(
@@ -186,5 +186,5 @@ func (h *CrashRecoveryHandler) writeFailure(
 			APIVersion:      "v1",
 		},
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }
