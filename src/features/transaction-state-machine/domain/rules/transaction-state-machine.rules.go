@@ -2,9 +2,11 @@ package rules
 
 import (
 	contracts "distributed-transaction-engine/src/features/transaction-state-machine/contracts"
+	"distributed-transaction-engine/src/infra/observability"
 )
 
 func IsTerminal(state contracts.TransactionState) bool {
+	defer observability.TraceEnter(nil)()
 	switch state {
 	case contracts.StateCompleted, contracts.StateCancelled, contracts.StateCompensated, contracts.StateFailed:
 		return true
@@ -14,6 +16,7 @@ func IsTerminal(state contracts.TransactionState) bool {
 }
 
 func CanTransition(from contracts.TransactionState, to contracts.TransactionState) bool {
+	defer observability.TraceEnter(nil)()
 	if IsTerminal(from) {
 		return false
 	}

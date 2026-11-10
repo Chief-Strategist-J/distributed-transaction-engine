@@ -1,17 +1,18 @@
 package contracts
 
 import (
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"regexp"
 	"strings"
-
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 var (
 	sagaPublicIDRegex = regexp.MustCompile(`^sag_[0-9a-zA-Z]{26}$`)
 )
 
-func ValidateInitializeStateInput(input InitializeStateInput) error {
+func ValidateInitializeStateInput(input InitializeStateInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if strings.TrimSpace(input.ID) == "" {
 		return errors.NewValidationError("id is required")
 	}
@@ -33,7 +34,8 @@ func ValidateInitializeStateInput(input InitializeStateInput) error {
 	return nil
 }
 
-func ValidateTransitionStateInput(input TransitionStateInput) error {
+func ValidateTransitionStateInput(input TransitionStateInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if strings.TrimSpace(input.TenantID) == "" {
 		return errors.NewValidationError("tenantId is required")
 	}

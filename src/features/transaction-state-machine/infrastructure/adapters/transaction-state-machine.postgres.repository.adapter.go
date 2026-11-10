@@ -3,15 +3,14 @@ package adapters
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"strings"
-	"time"
-
-	"github.com/google/uuid"
-
 	contracts "distributed-transaction-engine/src/features/transaction-state-machine/contracts"
 	queries "distributed-transaction-engine/src/features/transaction-state-machine/infrastructure/queries"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"fmt"
+	"github.com/google/uuid"
+	"strings"
+	"time"
 )
 
 type PostgresTransactionStateMachineRepositoryAdapter struct {
@@ -22,7 +21,8 @@ func NewPostgresTransactionStateMachineRepositoryAdapter(db *sql.DB) *PostgresTr
 	return &PostgresTransactionStateMachineRepositoryAdapter{db: db}
 }
 
-func (a *PostgresTransactionStateMachineRepositoryAdapter) GetState(ctx context.Context, tenantID string, sagaID string) (*contracts.SagaStateRecord, error) {
+func (a *PostgresTransactionStateMachineRepositoryAdapter) GetState(ctx context.Context, tenantID string, sagaID string) (spanResult0 *contracts.SagaStateRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	row := a.db.QueryRowContext(ctx, queries.FlowSelectSagaState, tenantID, sagaID)
 	var record contracts.SagaStateRecord
 	var currentState string
@@ -54,7 +54,8 @@ func (a *PostgresTransactionStateMachineRepositoryAdapter) GetState(ctx context.
 	return &record, nil
 }
 
-func (a *PostgresTransactionStateMachineRepositoryAdapter) CreateState(ctx context.Context, record *contracts.SagaStateRecord) error {
+func (a *PostgresTransactionStateMachineRepositoryAdapter) CreateState(ctx context.Context, record *contracts.SagaStateRecord) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	now := time.Now().UTC()
 	_, err := a.db.ExecContext(
 		ctx,
@@ -86,7 +87,8 @@ func (a *PostgresTransactionStateMachineRepositoryAdapter) UpdateStateCAS(
 	expectedVersion int64,
 	fencingToken int64,
 	reason string,
-) (*contracts.SagaStateRecord, error) {
+) (spanResult0 *contracts.SagaStateRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, errors.NewInternalError("failed to initiate db transaction: " + err.Error())
@@ -162,7 +164,8 @@ func (a *PostgresTransactionStateMachineRepositoryAdapter) UpdateStateCAS(
 	return &record, nil
 }
 
-func (a *PostgresTransactionStateMachineRepositoryAdapter) GetTransitionAuditLogs(ctx context.Context, tenantID string, sagaID string) ([]contracts.StateTransitionAuditRecord, error) {
+func (a *PostgresTransactionStateMachineRepositoryAdapter) GetTransitionAuditLogs(ctx context.Context, tenantID string, sagaID string) (spanResult0 []contracts.StateTransitionAuditRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	rows, err := a.db.QueryContext(ctx, queries.FlowSelectStateAudits, tenantID, sagaID)
 	if err != nil {
 		return nil, a.mapDbError(err)

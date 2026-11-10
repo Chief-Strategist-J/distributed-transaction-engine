@@ -156,14 +156,16 @@ func (s *TransactionStateMachineService) TransitionState(ctx context.Context, in
 	return updatedRecord, nil
 }
 
-func (s *TransactionStateMachineService) GetState(ctx context.Context, tenantID string, sagaID string) (*contracts.SagaStateRecord, error) {
+func (s *TransactionStateMachineService) GetState(ctx context.Context, tenantID string, sagaID string) (spanResult0 *contracts.SagaStateRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if tenantID == "" || sagaID == "" {
 		return nil, errors.NewValidationError("tenantId and sagaId are required")
 	}
 	return s.repo.GetState(ctx, tenantID, sagaID)
 }
 
-func (s *TransactionStateMachineService) GetAuditLogs(ctx context.Context, tenantID string, sagaID string) ([]contracts.StateTransitionAuditRecord, error) {
+func (s *TransactionStateMachineService) GetAuditLogs(ctx context.Context, tenantID string, sagaID string) (spanResult0 []contracts.StateTransitionAuditRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if tenantID == "" || sagaID == "" {
 		return nil, errors.NewValidationError("tenantId and sagaId are required")
 	}

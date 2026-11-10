@@ -72,7 +72,7 @@ func (h *TransactionStateMachineHandler) InitializeState(w http.ResponseWriter, 
 			APIVersion:      "v1",
 		},
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }
 
 func (h *TransactionStateMachineHandler) TransitionState(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +121,7 @@ func (h *TransactionStateMachineHandler) TransitionState(w http.ResponseWriter, 
 			APIVersion:      "v1",
 		},
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }
 
 func (h *TransactionStateMachineHandler) writeError(w http.ResponseWriter, status int, code, msg string, start time.Time, reqID, corrID string) {
@@ -142,5 +142,5 @@ func (h *TransactionStateMachineHandler) writeError(w http.ResponseWriter, statu
 			APIVersion:      "v1",
 		},
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(resp))
 }

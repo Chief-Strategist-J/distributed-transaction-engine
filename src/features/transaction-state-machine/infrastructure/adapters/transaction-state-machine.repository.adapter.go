@@ -2,12 +2,12 @@ package adapters
 
 import (
 	"context"
+	contracts "distributed-transaction-engine/src/features/transaction-state-machine/contracts"
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"fmt"
 	"sync"
 	"time"
-
-	contracts "distributed-transaction-engine/src/features/transaction-state-machine/contracts"
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 type MemoryTransactionStateMachineRepositoryAdapter struct {
@@ -23,7 +23,8 @@ func NewMemoryTransactionStateMachineRepositoryAdapter() *MemoryTransactionState
 	}
 }
 
-func (a *MemoryTransactionStateMachineRepositoryAdapter) GetState(ctx context.Context, tenantID string, sagaID string) (*contracts.SagaStateRecord, error) {
+func (a *MemoryTransactionStateMachineRepositoryAdapter) GetState(ctx context.Context, tenantID string, sagaID string) (spanResult0 *contracts.SagaStateRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -37,7 +38,8 @@ func (a *MemoryTransactionStateMachineRepositoryAdapter) GetState(ctx context.Co
 	return &clone, nil
 }
 
-func (a *MemoryTransactionStateMachineRepositoryAdapter) CreateState(ctx context.Context, record *contracts.SagaStateRecord) error {
+func (a *MemoryTransactionStateMachineRepositoryAdapter) CreateState(ctx context.Context, record *contracts.SagaStateRecord) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -60,7 +62,8 @@ func (a *MemoryTransactionStateMachineRepositoryAdapter) UpdateStateCAS(
 	expectedVersion int64,
 	fencingToken int64,
 	reason string,
-) (*contracts.SagaStateRecord, error) {
+) (spanResult0 *contracts.SagaStateRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -117,7 +120,8 @@ func (a *MemoryTransactionStateMachineRepositoryAdapter) UpdateStateCAS(
 	return &clone, nil
 }
 
-func (a *MemoryTransactionStateMachineRepositoryAdapter) GetTransitionAuditLogs(ctx context.Context, tenantID string, sagaID string) ([]contracts.StateTransitionAuditRecord, error) {
+func (a *MemoryTransactionStateMachineRepositoryAdapter) GetTransitionAuditLogs(ctx context.Context, tenantID string, sagaID string) (spanResult0 []contracts.StateTransitionAuditRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 

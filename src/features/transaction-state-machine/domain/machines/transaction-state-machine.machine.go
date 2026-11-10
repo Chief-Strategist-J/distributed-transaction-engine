@@ -3,6 +3,7 @@ package machines
 import (
 	contracts "distributed-transaction-engine/src/features/transaction-state-machine/contracts"
 	rules "distributed-transaction-engine/src/features/transaction-state-machine/domain/rules"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
 )
 
@@ -12,7 +13,8 @@ func NewTransactionStateMachine() *TransactionStateMachine {
 	return &TransactionStateMachine{}
 }
 
-func (m *TransactionStateMachine) ComputeNextState(current contracts.TransactionState, event contracts.StateTransitionEvent) (contracts.TransactionState, error) {
+func (m *TransactionStateMachine) ComputeNextState(current contracts.TransactionState, event contracts.StateTransitionEvent) (spanResult0 contracts.TransactionState, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if rules.IsTerminal(current) {
 		return current, errors.NewConflictError("cannot transition from terminal state")
 	}
