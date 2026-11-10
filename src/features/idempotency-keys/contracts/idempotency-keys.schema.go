@@ -2,23 +2,23 @@ package contracts
 
 import (
 	"crypto/sha256"
+	"distributed-transaction-engine/src/infra/observability"
+	appErrors "distributed-transaction-engine/src/shared/errors"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"regexp"
 	"sort"
 	"strings"
-
-	appErrors "distributed-transaction-engine/src/shared/errors"
-
-	"github.com/google/uuid"
 )
 
 var (
 	idkPublicIDPattern = regexp.MustCompile(`^idk_[0-9a-zA-Z]{26}$`)
 )
 
-func ValidateIngestInput(input IngestIdempotencyInput) (*uuid.UUID, *uuid.UUID, error) {
+func ValidateIngestInput(input IngestIdempotencyInput) (spanResult0 *uuid.UUID, spanResult1 *uuid.UUID, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if strings.TrimSpace(input.ID) == "" {
 		return nil, nil, appErrors.NewValidationError("id cannot be empty")
 	}
@@ -74,7 +74,8 @@ func ValidateIngestInput(input IngestIdempotencyInput) (*uuid.UUID, *uuid.UUID, 
 	return &id, &corrID, nil
 }
 
-func ComputeCanonicalFingerprint(operationID string, payload map[string]interface{}) (string, error) {
+func ComputeCanonicalFingerprint(operationID string, payload map[string]interface{}) (spanResult0 string, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	canonicalJSON, err := canonicalizeValue(payload)
 	if err != nil {
 		return "", err
@@ -138,4 +139,3 @@ func canonicalizeSlice(s []interface{}) ([]byte, error) {
 	buf.WriteString("]")
 	return []byte(buf.String()), nil
 }
-

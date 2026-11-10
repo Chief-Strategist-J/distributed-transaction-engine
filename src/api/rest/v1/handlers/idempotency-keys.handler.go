@@ -108,7 +108,7 @@ func (h *IdempotencyKeysHandler) setStandardHeaders(w http.ResponseWriter, r *ht
 
 func (h *IdempotencyKeysHandler) writeResponse(w http.ResponseWriter, r *http.Request, statusCode int, data interface{}, start time.Time) {
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(types.ApiResponse{
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(types.ApiResponse{
 		Success:    true,
 		StatusCode: statusCode,
 		Data:       data,
@@ -120,7 +120,7 @@ func (h *IdempotencyKeysHandler) writeResponse(w http.ResponseWriter, r *http.Re
 			ExecutionTimeMs: time.Since(start).Milliseconds(),
 			APIVersion:      "v1",
 		},
-	})
+	}))
 }
 
 func (h *IdempotencyKeysHandler) writeError(w http.ResponseWriter, r *http.Request, err error, start time.Time) {
@@ -135,7 +135,7 @@ func (h *IdempotencyKeysHandler) writeError(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(types.ApiResponse{
+	observability.NoteSwallowed(json.NewEncoder(w).Encode(types.ApiResponse{
 		Success:    false,
 		StatusCode: statusCode,
 		Error: &types.ResponseError{
@@ -151,6 +151,5 @@ func (h *IdempotencyKeysHandler) writeError(w http.ResponseWriter, r *http.Reque
 			ExecutionTimeMs: time.Since(start).Milliseconds(),
 			APIVersion:      "v1",
 		},
-	})
+	}))
 }
-

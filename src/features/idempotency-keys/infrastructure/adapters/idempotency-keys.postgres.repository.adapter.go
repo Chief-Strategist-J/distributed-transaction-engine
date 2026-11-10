@@ -3,13 +3,13 @@ package adapters
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"time"
-
 	"distributed-transaction-engine/src/features/idempotency-keys/contracts"
 	"distributed-transaction-engine/src/features/idempotency-keys/domain/rules"
 	"distributed-transaction-engine/src/features/idempotency-keys/infrastructure/queries"
+	"distributed-transaction-engine/src/infra/observability"
 	appErrors "distributed-transaction-engine/src/shared/errors"
+	"encoding/json"
+	"time"
 )
 
 type DBExecutor interface {
@@ -29,7 +29,8 @@ func NewPostgresIdempotencyRepositoryAdapter(db DBExecutor) *PostgresIdempotency
 func (a *PostgresIdempotencyRepositoryAdapter) Acquire(
 	ctx context.Context,
 	record contracts.IdempotencyRecord,
-) (*contracts.AcquireResult, error) {
+) (spanResult0 *contracts.AcquireResult, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	now := time.Now().UTC()
 	var insertedID string
 
@@ -97,7 +98,8 @@ func (a *PostgresIdempotencyRepositoryAdapter) Acquire(
 func (a *PostgresIdempotencyRepositoryAdapter) GetByScope(
 	ctx context.Context,
 	tenantID, principalID, operationID, idempotencyKey string,
-) (*contracts.IdempotencyRecord, error) {
+) (spanResult0 *contracts.IdempotencyRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	row := a.db.QueryRowContext(ctx, queries.FLOW_GET_BY_SCOPE, tenantID, principalID, operationID, idempotencyKey)
 
 	var rec contracts.IdempotencyRecord
@@ -144,10 +146,10 @@ func (a *PostgresIdempotencyRepositoryAdapter) GetByScope(
 		rec.ResponseStatus = &val
 	}
 	if len(headersBytes) > 0 {
-		_ = json.Unmarshal(headersBytes, &rec.ResponseHeaders)
+		observability.NoteSwallowed(json.Unmarshal(headersBytes, &rec.ResponseHeaders))
 	}
 	if len(bodyBytes) > 0 {
-		_ = json.Unmarshal(bodyBytes, &rec.ResponseBody)
+		observability.NoteSwallowed(json.Unmarshal(bodyBytes, &rec.ResponseBody))
 	}
 	if leaseUntil.Valid {
 		t := leaseUntil.Time.UTC()
@@ -167,7 +169,8 @@ func (a *PostgresIdempotencyRepositoryAdapter) CommitOutcome(
 	state contracts.IdempotencyState,
 	snapshot contracts.ResponseSnapshot,
 	resourceRef string,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	headersBytes, err := json.Marshal(snapshot.Headers)
 	if err != nil {
 		return appErrors.NewInternalError(err.Error())

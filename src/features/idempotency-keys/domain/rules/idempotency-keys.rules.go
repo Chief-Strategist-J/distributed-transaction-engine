@@ -2,11 +2,11 @@ package rules
 
 import (
 	"crypto/sha256"
+	"distributed-transaction-engine/src/features/idempotency-keys/contracts"
+	"distributed-transaction-engine/src/infra/observability"
 	"encoding/hex"
 	"fmt"
 	"time"
-
-	"distributed-transaction-engine/src/features/idempotency-keys/contracts"
 )
 
 func EvaluateExistingRecord(
@@ -14,6 +14,7 @@ func EvaluateExistingRecord(
 	incomingFingerprint string,
 	now time.Time,
 ) contracts.AcquireOutcome {
+	defer observability.TraceEnter(nil)()
 	if existing == nil {
 		return contracts.OutcomeAcquired
 	}
@@ -41,8 +42,8 @@ func EvaluateExistingRecord(
 }
 
 func DeriveDownstreamKey(rootKey string, stepID string) string {
+	defer observability.TraceEnter(nil)()
 	combined := fmt.Sprintf("%s:%s", rootKey, stepID)
 	sum := sha256.Sum256([]byte(combined))
 	return hex.EncodeToString(sum[:])
 }
-

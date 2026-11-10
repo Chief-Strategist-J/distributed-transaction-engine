@@ -2,12 +2,12 @@ package adapters
 
 import (
 	"context"
+	"distributed-transaction-engine/src/features/idempotency-keys/contracts"
+	"distributed-transaction-engine/src/features/idempotency-keys/domain/rules"
+	"distributed-transaction-engine/src/infra/observability"
 	"fmt"
 	"sync"
 	"time"
-
-	"distributed-transaction-engine/src/features/idempotency-keys/contracts"
-	"distributed-transaction-engine/src/features/idempotency-keys/domain/rules"
 )
 
 type MemoryIdempotencyRepositoryAdapter struct {
@@ -28,7 +28,8 @@ func (a *MemoryIdempotencyRepositoryAdapter) scopeKey(tenantID, principalID, ope
 func (a *MemoryIdempotencyRepositoryAdapter) Acquire(
 	ctx context.Context,
 	record contracts.IdempotencyRecord,
-) (*contracts.AcquireResult, error) {
+) (spanResult0 *contracts.AcquireResult, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -79,7 +80,8 @@ func (a *MemoryIdempotencyRepositoryAdapter) Acquire(
 func (a *MemoryIdempotencyRepositoryAdapter) GetByScope(
 	ctx context.Context,
 	tenantID, principalID, operationID, idempotencyKey string,
-) (*contracts.IdempotencyRecord, error) {
+) (spanResult0 *contracts.IdempotencyRecord, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -98,7 +100,8 @@ func (a *MemoryIdempotencyRepositoryAdapter) CommitOutcome(
 	state contracts.IdempotencyState,
 	snapshot contracts.ResponseSnapshot,
 	resourceRef string,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -118,4 +121,3 @@ func (a *MemoryIdempotencyRepositoryAdapter) CommitOutcome(
 	}
 	return nil
 }
-
