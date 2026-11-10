@@ -2,11 +2,11 @@ package adapters
 
 import (
 	"context"
+	contracts "distributed-transaction-engine/src/features/parallel-execution/contracts"
+	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/errors"
 	"fmt"
 	"sync"
-
-	contracts "distributed-transaction-engine/src/features/parallel-execution/contracts"
-	"distributed-transaction-engine/src/shared/errors"
 )
 
 type MemoryParallelExecutionRepositoryAdapter struct {
@@ -20,7 +20,8 @@ func NewMemoryParallelExecutionRepositoryAdapter() *MemoryParallelExecutionRepos
 	}
 }
 
-func (m *MemoryParallelExecutionRepositoryAdapter) CreateGroupAtomic(_ context.Context, group *contracts.ParallelGroupInstance, branches []contracts.ParallelBranchInstance) error {
+func (m *MemoryParallelExecutionRepositoryAdapter) CreateGroupAtomic(_ context.Context, group *contracts.ParallelGroupInstance, branches []contracts.ParallelBranchInstance) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -36,7 +37,8 @@ func (m *MemoryParallelExecutionRepositoryAdapter) CreateGroupAtomic(_ context.C
 	return nil
 }
 
-func (m *MemoryParallelExecutionRepositoryAdapter) GetGroup(_ context.Context, tenantID string, groupID string) (*contracts.ParallelGroupInstance, error) {
+func (m *MemoryParallelExecutionRepositoryAdapter) GetGroup(_ context.Context, tenantID string, groupID string) (spanResult0 *contracts.ParallelGroupInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -49,7 +51,8 @@ func (m *MemoryParallelExecutionRepositoryAdapter) GetGroup(_ context.Context, t
 	return &cp, nil
 }
 
-func (m *MemoryParallelExecutionRepositoryAdapter) UpdateBranchOutcome(_ context.Context, tenantID string, groupID string, branchID string, state contracts.BranchState, output map[string]interface{}, errMsg string) error {
+func (m *MemoryParallelExecutionRepositoryAdapter) UpdateBranchOutcome(_ context.Context, tenantID string, groupID string, branchID string, state contracts.BranchState, output map[string]interface{}, errMsg string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -71,7 +74,8 @@ func (m *MemoryParallelExecutionRepositoryAdapter) UpdateBranchOutcome(_ context
 	return errors.NewNotFoundError("branch not found")
 }
 
-func (m *MemoryParallelExecutionRepositoryAdapter) UpdateGroupCAS(_ context.Context, tenantID string, groupID string, expectedVersion int64, newState contracts.GroupState, succeededCount int, failedCount int) error {
+func (m *MemoryParallelExecutionRepositoryAdapter) UpdateGroupCAS(_ context.Context, tenantID string, groupID string, expectedVersion int64, newState contracts.GroupState, succeededCount int, failedCount int) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -102,21 +106,24 @@ func NewMemoryParallelDispatcherAdapter() *MemoryParallelDispatcherAdapter {
 	return &MemoryParallelDispatcherAdapter{}
 }
 
-func (a *MemoryParallelDispatcherAdapter) DispatchBranch(_ context.Context, _ string, _ string, _ string, branch contracts.ParallelBranchInstance) error {
+func (a *MemoryParallelDispatcherAdapter) DispatchBranch(_ context.Context, _ string, _ string, _ string, branch contracts.ParallelBranchInstance) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.Dispatched = append(a.Dispatched, branch.BranchID)
 	return nil
 }
 
-func (a *MemoryParallelDispatcherAdapter) CancelBranch(_ context.Context, _ string, _ string, _ string, branchID string) error {
+func (a *MemoryParallelDispatcherAdapter) CancelBranch(_ context.Context, _ string, _ string, _ string, branchID string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.Cancelled = append(a.Cancelled, branchID)
 	return nil
 }
 
-func (a *MemoryParallelDispatcherAdapter) CompensateBranch(_ context.Context, _ string, _ string, _ string, branchID string) error {
+func (a *MemoryParallelDispatcherAdapter) CompensateBranch(_ context.Context, _ string, _ string, _ string, branchID string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.Compensated = append(a.Compensated, branchID)

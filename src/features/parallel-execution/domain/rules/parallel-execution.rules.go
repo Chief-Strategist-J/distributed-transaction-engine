@@ -2,12 +2,13 @@ package rules
 
 import (
 	contracts "distributed-transaction-engine/src/features/parallel-execution/contracts"
+	"distributed-transaction-engine/src/infra/observability"
 )
 
 type JoinEvaluationResult struct {
-	IsDecided    bool
-	IsSuccess    bool
-	State        contracts.GroupState
+	IsDecided bool
+	IsSuccess bool
+	State     contracts.GroupState
 }
 
 func EvaluateJoinPolicy(
@@ -15,6 +16,7 @@ func EvaluateJoinPolicy(
 	quorumCount int,
 	branches []contracts.ParallelBranchInstance,
 ) JoinEvaluationResult {
+	defer observability.TraceEnter(nil)()
 	total := len(branches)
 	succeeded := 0
 	failed := 0
@@ -79,6 +81,7 @@ func EvaluateJoinPolicy(
 }
 
 func NeedsCompensation(b contracts.ParallelBranchInstance) bool {
+	defer observability.TraceEnter(nil)()
 	if b.CurrentState != contracts.BranchStateSucceeded {
 		return false
 	}

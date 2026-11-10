@@ -1,17 +1,18 @@
 package contracts
 
 import (
-	"regexp"
-
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"regexp"
 )
 
 var (
-	uuidRegex    = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-7][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
-	parPubRegex  = regexp.MustCompile(`^par_[0-9a-zA-Z]{26}$`)
+	uuidRegex   = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-7][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
+	parPubRegex = regexp.MustCompile(`^par_[0-9a-zA-Z]{26}$`)
 )
 
-func ValidateStartParallelGroupInput(input *StartParallelGroupInput) error {
+func ValidateStartParallelGroupInput(input *StartParallelGroupInput) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	if input == nil {
 		return errors.NewValidationError("input must not be nil")
 	}

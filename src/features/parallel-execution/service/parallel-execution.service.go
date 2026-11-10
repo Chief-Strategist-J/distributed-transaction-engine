@@ -36,9 +36,12 @@ func NewParallelExecutionService(deps ParallelExecutionServiceDeps) *ParallelExe
 	}
 }
 
-func (s *ParallelExecutionService) StartParallelGroup(ctx context.Context, input *contracts.StartParallelGroupInput) (*contracts.ParallelGroupInstance, error) {
+func (s *ParallelExecutionService) StartParallelGroup(ctx context.Context, input *contracts.StartParallelGroupInput) (spanResult0 *contracts.ParallelGroupInstance, spanErr error) {
 	_, span := s.tracer.StartSpan(ctx, "StartParallelGroup")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	if err := contracts.ValidateStartParallelGroupInput(input); err != nil {
 		return nil, err
@@ -100,7 +103,7 @@ func (s *ParallelExecutionService) StartParallelGroup(ctx context.Context, input
 	}
 
 	for _, b := range branches {
-		_ = s.dispatcher.DispatchBranch(ctx, group.TenantID, group.SagaID, group.ID, b)
+		observability.NoteSwallowed(s.dispatcher.DispatchBranch(ctx, group.TenantID, group.SagaID, group.ID, b))
 	}
 
 	group.Branches = branches
@@ -115,9 +118,12 @@ func (s *ParallelExecutionService) HandleBranchCompletion(
 	isSuccess bool,
 	output map[string]interface{},
 	errMsg string,
-) error {
+) (spanErr error) {
 	_, span := s.tracer.StartSpan(ctx, "HandleBranchCompletion")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	branchState := contracts.BranchStateSucceeded
 	if !isSuccess {
@@ -159,18 +165,21 @@ func (s *ParallelExecutionService) HandleBranchCompletion(
 	for _, cmd := range dec.Commands {
 		switch cmd.Type {
 		case machines.CommandCancelBranch:
-			_ = s.dispatcher.CancelBranch(ctx, tenantID, group.SagaID, groupID, cmd.BranchID)
+			observability.NoteSwallowed(s.dispatcher.CancelBranch(ctx, tenantID, group.SagaID, groupID, cmd.BranchID))
 		case machines.CommandCompensateBranch:
-			_ = s.dispatcher.CompensateBranch(ctx, tenantID, group.SagaID, groupID, cmd.BranchID)
+			observability.NoteSwallowed(s.dispatcher.CompensateBranch(ctx, tenantID, group.SagaID, groupID, cmd.BranchID))
 		}
 	}
 
 	return nil
 }
 
-func (s *ParallelExecutionService) GetGroup(ctx context.Context, tenantID string, groupID string) (*contracts.ParallelGroupInstance, error) {
+func (s *ParallelExecutionService) GetGroup(ctx context.Context, tenantID string, groupID string) (spanResult0 *contracts.ParallelGroupInstance, spanErr error) {
 	_, span := s.tracer.StartSpan(ctx, "GetGroup")
-	defer span.End()
+	defer func() {
+		observability.RecordError(span, spanErr)
+		span.End()
+	}()
 
 	if tenantID == "" || groupID == "" {
 		return nil, errors.NewValidationError("tenantId and groupId cannot be empty")

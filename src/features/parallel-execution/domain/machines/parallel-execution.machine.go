@@ -3,6 +3,7 @@ package machines
 import (
 	contracts "distributed-transaction-engine/src/features/parallel-execution/contracts"
 	rules "distributed-transaction-engine/src/features/parallel-execution/domain/rules"
+	"distributed-transaction-engine/src/infra/observability"
 )
 
 type ParallelCommandType string
@@ -35,6 +36,7 @@ func (m *ParallelExecutionMachine) EvaluateGroupJoin(
 	quorumCount int,
 	branches []contracts.ParallelBranchInstance,
 ) ParallelTransitionDecision {
+	defer observability.TraceEnter(nil)()
 	res := rules.EvaluateJoinPolicy(policy, quorumCount, branches)
 
 	if !res.IsDecided {

@@ -3,11 +3,11 @@ package adapters
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-
 	contracts "distributed-transaction-engine/src/features/parallel-execution/contracts"
 	queries "distributed-transaction-engine/src/features/parallel-execution/infrastructure/queries"
+	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"encoding/json"
 )
 
 type PostgresParallelExecutionRepositoryAdapter struct {
@@ -22,7 +22,8 @@ func (a *PostgresParallelExecutionRepositoryAdapter) CreateGroupAtomic(
 	ctx context.Context,
 	group *contracts.ParallelGroupInstance,
 	branches []contracts.ParallelBranchInstance,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
 		return errors.NewInternalError("failed to begin transaction")
@@ -57,7 +58,8 @@ func (a *PostgresParallelExecutionRepositoryAdapter) CreateGroupAtomic(
 	return tx.Commit()
 }
 
-func (a *PostgresParallelExecutionRepositoryAdapter) GetGroup(ctx context.Context, tenantID string, groupID string) (*contracts.ParallelGroupInstance, error) {
+func (a *PostgresParallelExecutionRepositoryAdapter) GetGroup(ctx context.Context, tenantID string, groupID string) (spanResult0 *contracts.ParallelGroupInstance, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	row := a.db.QueryRowContext(ctx, queries.FLOW_GET_PARALLEL_GROUP, tenantID, groupID)
 
 	var g contracts.ParallelGroupInstance
@@ -96,8 +98,8 @@ func (a *PostgresParallelExecutionRepositoryAdapter) GetGroup(ctx context.Contex
 		b.Role = contracts.BranchRole(roleStr)
 		b.EffectType = contracts.BranchEffectType(effectStr)
 		b.CurrentState = contracts.BranchState(bStateStr)
-		_ = json.Unmarshal(inBytes, &b.BranchInput)
-		_ = json.Unmarshal(outBytes, &b.BranchOutput)
+		observability.NoteSwallowed(json.Unmarshal(inBytes, &b.BranchInput))
+		observability.NoteSwallowed(json.Unmarshal(outBytes, &b.BranchOutput))
 		g.Branches = append(g.Branches, b)
 	}
 
@@ -112,7 +114,8 @@ func (a *PostgresParallelExecutionRepositoryAdapter) UpdateBranchOutcome(
 	state contracts.BranchState,
 	output map[string]interface{},
 	errMsg string,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	outBytes, _ := json.Marshal(output)
 	res, err := a.db.ExecContext(
 		ctx,
@@ -137,7 +140,8 @@ func (a *PostgresParallelExecutionRepositoryAdapter) UpdateGroupCAS(
 	newState contracts.GroupState,
 	succeededCount int,
 	failedCount int,
-) error {
+) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
 	res, err := a.db.ExecContext(
 		ctx,
 		queries.FLOW_UPDATE_GROUP_CAS,
