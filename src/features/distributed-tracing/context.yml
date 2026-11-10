@@ -1,2 +1,246 @@
 feature: distributed-tracing
 mode: stateless_hexagonal
+invariants:
+  - DT-01: W3C TraceContext parsed and propagated across all boundaries; malformed context replaced with fresh 128-bit TraceID
+  - DT-02: Async boundaries preserve and link context via outbox, relay, timers, and compensations
+  - DT-03: Zero spans in hot loops and pure serialization utilities; continuous profiling provides function flame graphs
+  - DT-04: Adaptive tail sampling captures 100% of errors, compensations, and VIP tenant flows
+  - DT-05: Sampling decisions for healthy traffic are deterministic across hops keyed by correlation/saga id
+  - DT-06: On-demand deep mode (LEVEL E) is time-boxed, scoped via baggage, and subject to hard span caps
+  - DT-07: Span budgets enforce a maximum ceiling of 1000 spans per trace to prevent backend drops
+  - DT-08: Sanitized attributes and span events prevent PII and credential leakage in trace payloads
+status: implementation_complete
+
+entities:
+  - entity: deep_trace_sessions
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'dts_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'SRE_OPS'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: target_type
+        type: text
+        null: no
+        constraint: CHECK (target_type IN ('SAGA_ID', 'CORRELATION_ID', 'TENANT_ID', 'ROUTE'))
+      - name: target_value
+        type: text
+        null: no
+      - name: sampling_rate
+        type: double precision
+        null: no
+        default: 1.0
+      - name: max_spans
+        type: int
+        null: no
+        default: 1000
+      - name: expires_at
+        type: timestamptz
+        null: no
+      - name: status
+        type: text
+        null: no
+        default: 'ACTIVE'
+        constraint: CHECK (status IN ('ACTIVE', 'EXPIRED', 'CANCELLED', 'CAPPED'))
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
+
+  - entity: trace_sampling_rules
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'tsr_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'OBS_ADMIN'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: rule_name
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, rule_name)
+      - name: match_criteria
+        type: jsonb
+        null: no
+        default: '{}'::jsonb
+      - name: sample_rate
+        type: double precision
+        null: no
+        default: 0.05
+      - name: is_vip
+        type: boolean
+        null: no
+        default: false
+      - name: enabled
+        type: boolean
+        null: no
+        default: true
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
+
+  - entity: trace_spans_buffer
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'spn_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'OTEL_TRACER'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: trace_id
+        type: text
+        null: no
+        constraint: CHECK (length(trace_id) = 32)
+      - name: span_id
+        type: text
+        null: no
+        constraint: CHECK (length(span_id) = 16)
+      - name: parent_span_id
+        type: text
+        null: no
+        default: ''
+      - name: span_name
+        type: text
+        null: no
+      - name: span_kind
+        type: text
+        null: no
+        default: 'INTERNAL'
+      - name: start_time
+        type: timestamptz
+        null: no
+      - name: end_time
+        type: timestamptz
+        null: no
+      - name: duration_ns
+        type: bigint
+        null: no
+      - name: status_code
+        type: text
+        null: no
+        default: 'UNSET'
+        constraint: CHECK (status_code IN ('UNSET', 'OK', 'ERROR'))
+      - name: attributes
+        type: jsonb
+        null: no
+        default: '{}'::jsonb
+      - name: events
+        type: jsonb
+        null: no
+        default: '[]'::jsonb
+      - name: links
+        type: jsonb
+        null: no
+        default: '[]'::jsonb
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
+
+  - entity: trace_links_registry
+    owner: core-platform
+    fields:
+      - name: id
+        type: uuid
+        null: no
+        constraint: PK, UNIQUE(tenant_id, id), immutable
+      - name: public_id
+        type: text
+        null: no
+        constraint: UNIQUE, immutable, format 'tlr_' + 26 chars
+      - name: tenant_id
+        type: text
+        null: no
+        constraint: immutable, leading composite UK
+      - name: source
+        type: text
+        null: no
+        default: 'ASYNC_RELAY'
+      - name: external_id
+        type: text
+        null: no
+        constraint: UNIQUE(tenant_id, source, external_id)
+      - name: correlation_id
+        type: uuid
+        null: no
+        constraint: immutable
+      - name: saga_id
+        type: uuid
+        null: no
+      - name: step_name
+        type: text
+        null: no
+      - name: traceparent
+        type: text
+        null: no
+      - name: tracestate
+        type: text
+        null: no
+        default: ''
+      - name: link_type
+        type: text
+        null: no
+        constraint: CHECK (link_type IN ('DISPATCH', 'REPLY', 'TIMER', 'COMPENSATION', 'INTERVENTION'))
+      - name: created_at
+        type: timestamptz
+        null: no
+        default: NOW()
