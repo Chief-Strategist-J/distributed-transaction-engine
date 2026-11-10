@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+const rollbackSuffix = ".rollback.sql"
+
 func RunMigrations(ctx context.Context, db *sql.DB, migrationsDir string) error {
 	if migrationsDir == "" {
 		migrationsDir = "database/migrations/sql"
@@ -33,7 +35,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 	var files []string
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") && !strings.HasSuffix(entry.Name(), rollbackSuffix) {
 			files = append(files, entry.Name())
 		}
 	}

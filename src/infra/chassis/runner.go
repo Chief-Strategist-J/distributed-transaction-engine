@@ -49,7 +49,7 @@ func Run(spec ServiceSpec, args []string, env []string) int {
 
 	var db *sql.DB
 	if spec.Needs.Database && cfg.Database.Host != "" {
-		openedDB, dbErr := sql.Open("postgres", cfg.ConnString())
+		openedDB, dbErr := observability.OpenTracedPostgres(cfg.ConnString())
 		if dbErr != nil {
 			log.Printf("PostgreSQL open failed: %v\n", dbErr)
 		} else {

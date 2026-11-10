@@ -104,6 +104,12 @@ func ExtractTenantID(ctx context.Context) string {
 }
 
 func (l *LokiLogger) log(ctx context.Context, level LogLevel, msg string, fields ...Field) {
+	switch level {
+	case LogLevelWarn:
+		NoteLogged("warn", msg)
+	case LogLevelError:
+		NoteLogged("error", msg)
+	}
 	traceID, spanID := ExtractTraceAndSpanIDs(ctx)
 	tenantID := ExtractTenantID(ctx)
 
@@ -137,7 +143,6 @@ func (l *LokiLogger) log(ctx context.Context, level LogLevel, msg string, fields
 		l.mu.Unlock()
 	}
 
-	// Asynchronously forward to OpenTelemetry Collector logs endpoint (which ships to Loki)
 	go l.forwardToOtel(now, level, msg, traceID, spanID, tenantID, attrs)
 }
 
@@ -157,7 +162,7 @@ func (l *LokiLogger) forwardToOtel(now time.Time, level LogLevel, msg, traceID, 
 	}
 
 	timeNs := fmt.Sprintf("%d", now.UnixNano())
-	
+
 	recordAttrs := []map[string]interface{}{
 		{"key": "service.name", "value": map[string]interface{}{"stringValue": l.service}},
 		{"key": "level", "value": map[string]interface{}{"stringValue": string(level)}},
