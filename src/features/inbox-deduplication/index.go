@@ -1,6 +1,8 @@
 package inboxdeduplication
 
 import (
+	"time"
+
 	contracts "distributed-transaction-engine/src/features/inbox-deduplication/contracts"
 	adapters "distributed-transaction-engine/src/features/inbox-deduplication/infrastructure/adapters"
 	ports "distributed-transaction-engine/src/features/inbox-deduplication/infrastructure/ports"
@@ -17,6 +19,7 @@ type Outcome = contracts.IngestOutcome
 type RepositoryPort = ports.InboxDeduplicationRepositoryPort
 type MemoryAdapter = adapters.MemoryInboxDeduplicationRepositoryAdapter
 type PostgresAdapter = adapters.PostgresInboxDeduplicationRepositoryAdapter
+type Pruner = service.InboxPruner
 
 func NewService(deps ServiceDeps) *Service {
 	return service.NewInboxDeduplicationService(deps)
@@ -30,3 +33,6 @@ func NewPostgresAdapter(db adapters.PostgresInboxDeduplicationRepositoryAdapter)
 	return &db
 }
 
+func NewPruner(svc *Service, retention time.Duration, interval time.Duration, batchSize int) *Pruner {
+	return service.NewInboxPruner(svc, retention, interval, batchSize)
+}

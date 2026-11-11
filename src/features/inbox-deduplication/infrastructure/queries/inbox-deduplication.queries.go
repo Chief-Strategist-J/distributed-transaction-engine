@@ -23,3 +23,15 @@ SET status = 'QUARANTINED', updated_at = NOW()
 WHERE tenant_id = $1 AND id = $2;
 `
 
+
+const FLOW_PRUNE_APPLIED_INBOX_RECORDS = `
+DELETE FROM inbox_messages
+WHERE (tenant_id, id) IN (
+    SELECT tenant_id, id
+    FROM inbox_messages
+    WHERE status = 'APPLIED' AND created_at < $1
+    ORDER BY created_at ASC
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+);
+`

@@ -7,6 +7,7 @@ import (
 	"distributed-transaction-engine/src/shared/errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
 type MemoryInboxDeduplicationRepositoryAdapter struct {
@@ -71,4 +72,25 @@ func (a *MemoryInboxDeduplicationRepositoryAdapter) MarkQuarantined(ctx context.
 		}
 	}
 	return errors.NewNotFoundError("inbox record to quarantine not found")
+}
+
+func (a *MemoryInboxDeduplicationRepositoryAdapter) PruneApplied(ctx context.Context, olderThan time.Time, limit int) (spanResult0 int, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
+	if limit <= 0 {
+		return 0, errors.NewValidationError("prune limit must be positive")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	deleted := 0
+	for key, record := range a.records {
+		if deleted >= limit {
+			break
+		}
+		if record.Status == contracts.StatusApplied && record.CreatedAt.Before(olderThan) {
+			delete(a.records, key)
+			delete(a.byPublic, fmt.Sprintf("%s:%s", record.TenantID, record.PublicID))
+			deleted++
+		}
+	}
+	return deleted, nil
 }

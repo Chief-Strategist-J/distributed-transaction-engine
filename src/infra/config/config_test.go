@@ -13,7 +13,7 @@ var ambientVariables = []string{
 	"SHUTDOWN_DEADLINE_SECONDS", "MAX_REQUEST_BODY_BYTES", "EXPOSE_ERROR_DETAILS", "WORKER_ID", "POLLER_ENABLED",
 	"POLLER_LEASE_DURATION_SECONDS", "POLLER_INTERVAL_MILLIS", "KAFKA_BROKERS", "KAFKA_WRITE_TIMEOUT_MS", "KAFKA_BATCH_TIMEOUT_MS",
 	"KAFKA_REPLICATION_FACTOR", "KAFKA_TOPICS_MANIFEST", "KAFKA_TLS_ENABLED", "KAFKA_CA_FILE", "KAFKA_SASL_MECHANISM", "KAFKA_SASL_USERNAME", "KAFKA_SASL_PASSWORD", "KAFKA_SASL_PASSWORD_FILE", "DB_SSLROOTCERT", "KAFKA_AUTO_CREATE_TOPICS", "OUTBOX_RELAY_ENABLED",
-	"OUTBOX_RELAY_INTERVAL_MILLIS", "OUTBOX_RELAY_BATCH_SIZE", "AUTH_MODE", "AUTH_JWKS_FILE", "AUTH_ISSUER", "AUTH_AUDIENCE",
+	"OUTBOX_RELAY_INTERVAL_MILLIS", "OUTBOX_RELAY_BATCH_SIZE", "INBOX_PRUNE_ENABLED", "INBOX_RETENTION_DAYS", "INBOX_PRUNE_INTERVAL_MINUTES", "INBOX_PRUNE_BATCH_SIZE", "AUTH_MODE", "AUTH_JWKS_FILE", "AUTH_ISSUER", "AUTH_AUDIENCE",
 	"AUTH_LEEWAY_SECONDS",
 }
 
@@ -441,5 +441,38 @@ func TestKafkaSecurityEnvironment_AppliesFlagsAndSecrets(t *testing.T) {
 	cfg, _ = Load("")
 	if cfg.Kafka.SASLPassword != "direct" {
 		t.Fatalf("an explicit password must win over the file, got %q", cfg.Kafka.SASLPassword)
+	}
+}
+
+func TestInboxConfig_DefaultsAndOverrides(t *testing.T) {
+	defaults, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaults.Inbox.Retention() != 30*24*time.Hour || defaults.Inbox.PruneInterval() != time.Hour || defaults.Inbox.BatchSize() != 5000 || defaults.Inbox.PruneDisabled {
+		t.Fatalf("unexpected inbox defaults: %#v", defaults.Inbox)
+	}
+	t.Setenv("INBOX_RETENTION_DAYS", "45")
+	t.Setenv("INBOX_PRUNE_INTERVAL_MINUTES", "15")
+	t.Setenv("INBOX_PRUNE_BATCH_SIZE", "250")
+	t.Setenv("INBOX_PRUNE_ENABLED", "false")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Inbox.Retention() != 45*24*time.Hour || cfg.Inbox.PruneInterval() != 15*time.Minute || cfg.Inbox.BatchSize() != 250 || !cfg.Inbox.PruneDisabled {
+		t.Fatalf("overrides not applied: %#v", cfg.Inbox)
+	}
+}
+
+func TestInboxConfig_InvalidOverridesKeepSafeDefaults(t *testing.T) {
+	t.Setenv("INBOX_RETENTION_DAYS", "0")
+	t.Setenv("INBOX_PRUNE_BATCH_SIZE", "-4")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Inbox.Retention() != 30*24*time.Hour || cfg.Inbox.BatchSize() != 5000 {
+		t.Fatalf("a non-positive retention or batch must fall back to the safe default: %#v", cfg.Inbox)
 	}
 }

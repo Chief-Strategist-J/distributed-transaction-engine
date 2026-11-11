@@ -124,3 +124,41 @@ func (k *KafkaConfig) validateSecurity() error {
 	}
 	return nil
 }
+
+const (
+	defaultInboxRetentionDays = 30
+	defaultPruneIntervalMin   = 60
+	defaultPruneBatchSize     = 5000
+)
+
+func (i *InboxConfig) ApplyEnvironment() {
+	if enabled := strings.ToLower(strings.TrimSpace(os.Getenv("INBOX_PRUNE_ENABLED"))); enabled == "false" || enabled == "0" {
+		i.PruneDisabled = true
+	} else if enabled == "true" || enabled == "1" {
+		i.PruneDisabled = false
+	}
+	i.RetentionDays = positiveInt("INBOX_RETENTION_DAYS", i.RetentionDays)
+	i.PruneIntervalMinutes = positiveInt("INBOX_PRUNE_INTERVAL_MINUTES", i.PruneIntervalMinutes)
+	i.PruneBatchSize = positiveInt("INBOX_PRUNE_BATCH_SIZE", i.PruneBatchSize)
+}
+
+func (i *InboxConfig) Retention() time.Duration {
+	if i.RetentionDays <= 0 {
+		return defaultInboxRetentionDays * 24 * time.Hour
+	}
+	return time.Duration(i.RetentionDays) * 24 * time.Hour
+}
+
+func (i *InboxConfig) PruneInterval() time.Duration {
+	if i.PruneIntervalMinutes <= 0 {
+		return defaultPruneIntervalMin * time.Minute
+	}
+	return time.Duration(i.PruneIntervalMinutes) * time.Minute
+}
+
+func (i *InboxConfig) BatchSize() int {
+	if i.PruneBatchSize <= 0 {
+		return defaultPruneBatchSize
+	}
+	return i.PruneBatchSize
+}

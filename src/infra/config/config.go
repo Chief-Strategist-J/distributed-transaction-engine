@@ -83,7 +83,15 @@ type AuthConfig struct {
 	LeewaySeconds int    `yaml:"leeway_seconds"`
 }
 
+type InboxConfig struct {
+	PruneDisabled        bool `yaml:"prune_disabled"`
+	RetentionDays        int  `yaml:"retention_days"`
+	PruneIntervalMinutes int  `yaml:"prune_interval_minutes"`
+	PruneBatchSize       int  `yaml:"prune_batch_size"`
+}
+
 type AppConfig struct {
+	Inbox     InboxConfig     `yaml:"inbox"`
 	Auth      AuthConfig      `yaml:"auth"`
 	Server    ServerConfig    `yaml:"server"`
 	Database  DatabaseConfig  `yaml:"database"`
@@ -306,6 +314,7 @@ func Load(path string) (*AppConfig, error) {
 	cfg.Database.ApplyEnvironment()
 	cfg.Kafka.ApplyEnvironment()
 	cfg.Outbox.ApplyEnvironment()
+	cfg.Inbox.ApplyEnvironment()
 	cfg.Auth.ApplyEnvironment()
 	if err := cfg.Auth.Validate(os.Getenv("ENV")); err != nil {
 		return nil, err

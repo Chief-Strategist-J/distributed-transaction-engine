@@ -28,6 +28,7 @@
     "0024_create_operational_dashboard_tables.sql": "f636acfae501a22d0af0de7e963f016af1c75622309f055714103e0dd01c1c74",
     "0025_enforce_outbox_partition_key.sql": "c171f93395f9087d5b5b9730844dbfa9dad03a94ed74a9b4a635c435f0afe460",
     "0026_enforce_row_level_security.sql": "1053a558299de1ef2daefeda21c867fa1a2a22964092d7bf155710847d048a66",
-    "0027_outbox_relay_backoff.sql": "8f16cd2dfba2b85f85313696bb48566038ac1678aa90240ac6ae729b8ac3bdeb"
+    "0027_outbox_relay_backoff.sql": "8f16cd2dfba2b85f85313696bb48566038ac1678aa90240ac6ae729b8ac3bdeb",
+    "0028_inbox_prune_index.sql": "0507be51692df8c6298ac4399041c4ad4f413d602c521ef29dea8e1d0d2627c7"
   }
 }

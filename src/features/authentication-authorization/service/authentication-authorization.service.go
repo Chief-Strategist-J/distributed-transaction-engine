@@ -323,6 +323,19 @@ func (s *AuthenticationAuthorizationService) Authorize(ctx context.Context, cmd 
 	return &decisionResult, nil
 }
 
+const (
+	apiKeyPrefixBytes = 4
+	apiKeySecretBytes = 24
+)
+
+func secureRandomHex(byteCount int) (string, error) {
+	buffer := make([]byte, byteCount)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buffer), nil
+}
+
 func (s *AuthenticationAuthorizationService) RegisterAPIKey(ctx context.Context, cmd contracts.RegisterAPIKeyCommand) (spanResult0 *contracts.RegisterAPIKeyResult, spanErr error) {
 	ctx, span := s.tracer.StartSpan(ctx, "auth.service_register_api_key")
 	defer func() {
@@ -335,15 +348,15 @@ func (s *AuthenticationAuthorizationService) RegisterAPIKey(ctx context.Context,
 		return nil, err
 	}
 
-	prefixBytes := make([]byte, 4)
-	_, swallowedErr2 := rand.Read(prefixBytes)
-	observability.NoteSwallowed(swallowedErr2)
-	prefix := "apk_" + hex.EncodeToString(prefixBytes)
-
-	secretBytes := make([]byte, 24)
-	_, swallowedErr3 := rand.Read(secretBytes)
-	observability.NoteSwallowed(swallowedErr3)
-	secret := hex.EncodeToString(secretBytes)
+	prefixPart, err := secureRandomHex(apiKeyPrefixBytes)
+	if err != nil {
+		return nil, appErrors.NewInternalError("failed to generate api key prefix")
+	}
+	secret, err := secureRandomHex(apiKeySecretBytes)
+	if err != nil {
+		return nil, appErrors.NewInternalError("failed to generate api key secret")
+	}
+	prefix := "apk_" + prefixPart
 
 	keyHash := rules.HashAPIKeySecret(secret)
 	record := &contracts.APIKeyRecord{

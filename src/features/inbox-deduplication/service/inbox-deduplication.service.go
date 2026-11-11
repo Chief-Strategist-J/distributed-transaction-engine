@@ -113,3 +113,33 @@ func (s *InboxDeduplicationService) GetRecord(
 
 	return s.repo.GetInboxRecord(ctx, tenantID, handlerName, handlerGen, externalID)
 }
+
+const defaultPruneBatchSize = 5000
+
+func (s *InboxDeduplicationService) PruneExpired(
+	ctx context.Context,
+	retention time.Duration,
+	batchSize int,
+	maxBatches int,
+) (spanResult0 int, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
+	if retention <= 0 {
+		return 0, errors.NewValidationError("retention must be positive")
+	}
+	if batchSize <= 0 {
+		batchSize = defaultPruneBatchSize
+	}
+	cutoff := time.Now().UTC().Add(-retention)
+	total := 0
+	for batch := 0; batch < maxBatches && ctx.Err() == nil; batch++ {
+		deleted, err := s.repo.PruneApplied(ctx, cutoff, batchSize)
+		if err != nil {
+			return total, err
+		}
+		total += deleted
+		if deleted < batchSize {
+			break
+		}
+	}
+	return total, nil
+}

@@ -8,6 +8,7 @@ import (
 	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
 	"encoding/json"
+	"time"
 )
 
 type PostgresInboxDeduplicationRepositoryAdapter struct {
@@ -96,4 +97,20 @@ func (a *PostgresInboxDeduplicationRepositoryAdapter) MarkQuarantined(ctx contex
 		return errors.NewNotFoundError("inbox record to quarantine not found")
 	}
 	return nil
+}
+
+func (a *PostgresInboxDeduplicationRepositoryAdapter) PruneApplied(ctx context.Context, olderThan time.Time, limit int) (spanResult0 int, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
+	if limit <= 0 {
+		return 0, errors.NewValidationError("prune limit must be positive")
+	}
+	result, err := a.db.ExecContext(ctx, queries.FLOW_PRUNE_APPLIED_INBOX_RECORDS, olderThan, limit)
+	if err != nil {
+		return 0, errors.NewInternalError("failed to prune inbox records: " + err.Error())
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, errors.NewInternalError("failed to read pruned inbox record count: " + err.Error())
+	}
+	return int(deleted), nil
 }

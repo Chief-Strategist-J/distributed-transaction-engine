@@ -154,6 +154,7 @@ func describeService() chassis.ServiceSpec {
 				Repo:   inbRepo,
 				Tracer: observability.NewTracer("inbox-deduplication"),
 			})
+			inboxPruner := inboxDeduplication.NewPruner(inbSvc, deps.Config.Inbox.Retention(), deps.Config.Inbox.PruneInterval(), deps.Config.Inbox.BatchSize())
 			inbHandler := handlers.NewInboxDeduplicationHandler(inbSvc)
 			inbRouter := routers.NewInboxDeduplicationRouter(inbHandler)
 
@@ -424,6 +425,8 @@ func describeService() chassis.ServiceSpec {
 					"pollInterval":            deps.Config.PollInterval(),
 					"pollerEnabled":           !deps.Config.Poller.Disabled,
 					"hasDB":                   deps.DB != nil,
+					"inboxPruner":             inboxPruner,
+					"inboxPrunerEnabled":      !deps.Config.Inbox.PruneDisabled && deps.DB != nil,
 					"outboxRelay":             outboxRelay,
 					"outboxRelayEnabled":      !deps.Config.Outbox.RelayDisabled && deps.DB != nil && kafkaBrokers != "",
 				},
@@ -528,6 +531,21 @@ func describeService() chassis.ServiceSpec {
 					Name: "outbox-relay",
 					Start: func(ctx context.Context) error {
 						outboxRelay.Run(ctx)
+						return nil
+					},
+					Drain: func(_ context.Context) error {
+						return nil
+					},
+				})
+			}
+
+			inboxPruner, hasPruner := services.Instances["inboxPruner"].(*inboxDeduplication.Pruner)
+			prunerEnabled, _ := services.Instances["inboxPrunerEnabled"].(bool)
+			if hasPruner && prunerEnabled {
+				jobs = append(jobs, chassis.JobSpec{
+					Name: "inbox-pruner",
+					Start: func(ctx context.Context) error {
+						inboxPruner.Run(ctx)
 						return nil
 					},
 					Drain: func(_ context.Context) error {
