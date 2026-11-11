@@ -48,7 +48,7 @@ func ValidateDAGTopology(steps []contracts.StepDefinition) ValidationResult {
 		if componentCount > 1 {
 			return ValidationResult{
 				IsValid: false,
-				Error:   errors.NewConflictError("workflow graph contains disconnected components (must be a single weakly connected DAG)"),
+				Error:   errors.NewValidationError("workflow graph contains disconnected components (must be a single weakly connected DAG)"),
 			}
 		}
 	}
@@ -78,7 +78,7 @@ func ValidateDAGTopology(steps []contracts.StepDefinition) ValidationResult {
 		cyclePath := extractCyclePath(steps, adjList, inDegree)
 		return ValidationResult{
 			IsValid: false,
-			Error:   errors.NewConflictError(fmt.Sprintf("cyclic dependency detected in workflow DAG definition: %s", cyclePath)),
+			Error:   errors.NewValidationError(fmt.Sprintf("cyclic dependency detected in workflow DAG definition: %s", cyclePath)),
 		}
 	}
 

@@ -179,8 +179,8 @@ func TestEndToEnd_HTTPRejectionOnCyclicPayload(t *testing.T) {
 
 	wrappedMux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusConflict {
-		t.Fatalf("expected HTTP 409 Conflict for cyclic DAG, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected HTTP 400 for cyclic DAG, got %d: %s", w.Code, w.Body.String())
 	}
 	if w.Header().Get("X-Trace-Id") == "" {
 		t.Fatalf("expected X-Trace-Id header on rejection response")
