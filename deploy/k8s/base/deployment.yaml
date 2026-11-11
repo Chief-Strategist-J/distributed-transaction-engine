@@ -15,6 +15,7 @@ spec:
       labels:
         app.kubernetes.io/name: distributed-transaction-engine
     spec:
+      terminationGracePeriodSeconds: 45
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

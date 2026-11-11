@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"net"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -15,11 +17,25 @@ type HealthCoordinator struct {
 	isLive  atomic.Bool
 	isReady atomic.Bool
 	db      *sql.DB
+	brokers []string
 }
 
-func NewHealthCoordinator(db *sql.DB) *HealthCoordinator {
+const dependencyProbeTimeout = 2 * time.Second
+
+func ParseBrokers(raw string) []string {
+	brokers := make([]string, 0)
+	for _, candidate := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
+			brokers = append(brokers, trimmed)
+		}
+	}
+	return brokers
+}
+
+func NewHealthCoordinator(db *sql.DB, brokers ...string) *HealthCoordinator {
 	h := &HealthCoordinator{
-		db: db,
+		db:      db,
+		brokers: brokers,
 	}
 	h.isLive.Store(true)
 	h.isReady.Store(false)
@@ -64,7 +80,26 @@ func (h *HealthCoordinator) ReadyHandler() http.HandlerFunc {
 				return
 			}
 		}
+		if len(h.brokers) > 0 && !anyBrokerReachable(r.Context(), h.brokers) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": constants.StatusKafkaUnreachable})
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": constants.StatusReady})
 	}
+}
+
+func anyBrokerReachable(ctx context.Context, brokers []string) bool {
+	dialer := net.Dialer{Timeout: dependencyProbeTimeout}
+	for _, broker := range brokers {
+		probeCtx, cancel := context.WithTimeout(ctx, dependencyProbeTimeout)
+		connection, err := dialer.DialContext(probeCtx, "tcp", broker)
+		cancel()
+		if err == nil {
+			_ = connection.Close()
+			return true
+		}
+	}
+	return false
 }

@@ -304,7 +304,7 @@ resource "google_sql_database_instance" "postgres" {
     }
   }
 
-  deletion_protection = var.environment == "prod" || var.environment == "production" ? true : false
+  deletion_protection = contains(["prod", "production", "staging"], var.environment)
   depends_on          = [google_service_networking_connection.private_vpc_connection]
 }
 
@@ -325,9 +325,24 @@ resource "google_redis_instance" "cache" {
   memory_size_gb = 1
   region         = var.region
 
-  authorized_network = google_compute_network.vpc.id
-  redis_version      = "REDIS_7_2"
-  depends_on         = [google_service_networking_connection.private_vpc_connection]
+  authorized_network      = google_compute_network.vpc.id
+  redis_version           = "REDIS_7_2"
+  auth_enabled            = true
+  transit_encryption_mode = "SERVER_AUTHENTICATION"
+  depends_on              = [google_service_networking_connection.private_vpc_connection]
+}
+
+resource "google_secret_manager_secret" "redis_auth" {
+  secret_id = "${var.environment}-dist-tx-redis-auth"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "redis_auth" {
+  secret      = google_secret_manager_secret.redis_auth.id
+  secret_data = google_redis_instance.cache.auth_string
 }
 
 # ------------------------------------------------------------------------------
@@ -409,6 +424,12 @@ resource "google_service_account_iam_member" "workload_identity_user" {
 # Grant App SA permission to read DB password from Secret Manager
 resource "google_secret_manager_secret_iam_member" "app_db_password" {
   secret_id = google_secret_manager_secret.db_password.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "app_redis_auth_accessor" {
+  secret_id = google_secret_manager_secret.redis_auth.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.app_sa.email}"
 }

@@ -139,3 +139,25 @@ func TestPollerCanBeDisabledFromTheEnvironment(t *testing.T) {
 		t.Fatal("POLLER_ENABLED=true must keep the poller on")
 	}
 }
+
+func TestOperationalDefaultsAndEnvironmentOverrides(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Skipf("config load needs the default file: %v", err)
+	}
+	if cfg.ShutdownDeadline() < 35*time.Second || cfg.Database.MaxOpenConns != 50 || cfg.Database.MaxIdleConns != 10 || cfg.MaxBodyLimit() != 10<<20 {
+		t.Fatalf("production defaults missing: deadline=%v open=%d idle=%d body=%d", cfg.ShutdownDeadline(), cfg.Database.MaxOpenConns, cfg.Database.MaxIdleConns, cfg.MaxBodyLimit())
+	}
+	t.Setenv("DB_MAX_OPEN_CONNS", "80")
+	t.Setenv("DB_MAX_IDLE_CONNS", "20")
+	t.Setenv("DB_CONN_MAX_LIFETIME", "12m")
+	t.Setenv("SHUTDOWN_DEADLINE_SECONDS", "50")
+	t.Setenv("MAX_REQUEST_BODY_BYTES", "2048")
+	tuned, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tuned.Database.MaxOpenConns != 80 || tuned.Database.MaxIdleConns != 20 || tuned.ConnMaxLifetime() != 12*time.Minute || tuned.ShutdownDeadline() != 50*time.Second || tuned.MaxBodyLimit() != 2048 {
+		t.Fatalf("environment overrides not applied: %+v", tuned.Database)
+	}
+}

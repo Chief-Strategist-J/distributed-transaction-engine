@@ -18,6 +18,8 @@ type ServerConfig struct {
 	WriteTimeoutSeconds     int    `yaml:"write_timeout_seconds"`
 	IdleTimeoutSeconds      int    `yaml:"idle_timeout_seconds"`
 	ShutdownDeadlineSeconds int    `yaml:"shutdown_deadline_seconds"`
+	MaxBodyBytes            int64  `yaml:"max_body_bytes"`
+	ExposeErrorDetails      bool   `yaml:"expose_error_details"`
 }
 
 type DatabaseConfig struct {
@@ -88,9 +90,23 @@ func (c *AppConfig) IdleTimeout() time.Duration {
 	return time.Duration(c.Server.IdleTimeoutSeconds) * time.Second
 }
 
+const (
+	DefaultShutdownDeadline = 35 * time.Second
+	DefaultMaxBodyBytes     = int64(10 << 20)
+	DefaultMaxOpenConns     = 50
+	DefaultMaxIdleConns     = 10
+)
+
+func (c *AppConfig) MaxBodyLimit() int64 {
+	if c.Server.MaxBodyBytes <= 0 {
+		return DefaultMaxBodyBytes
+	}
+	return c.Server.MaxBodyBytes
+}
+
 func (c *AppConfig) ShutdownDeadline() time.Duration {
 	if c.Server.ShutdownDeadlineSeconds <= 0 {
-		return 15 * time.Second
+		return DefaultShutdownDeadline
 	}
 	return time.Duration(c.Server.ShutdownDeadlineSeconds) * time.Second
 }
@@ -125,15 +141,15 @@ func Load(path string) (*AppConfig, error) {
 			ReadTimeoutSeconds:      15,
 			WriteTimeoutSeconds:     15,
 			IdleTimeoutSeconds:      75,
-			ShutdownDeadlineSeconds: 15,
+			ShutdownDeadlineSeconds: int(DefaultShutdownDeadline / time.Second),
 		},
 		Database: DatabaseConfig{
 			Port:                   "5432",
 			User:                   "postgres",
 			Name:                   "dist_tx_engine",
 			SSLMode:                "disable",
-			MaxOpenConns:           25,
-			MaxIdleConns:           10,
+			MaxOpenConns:           DefaultMaxOpenConns,
+			MaxIdleConns:           DefaultMaxIdleConns,
 			ConnMaxLifetimeMinutes: 5,
 			MigrationsDir:          "database/migrations/sql",
 		},
@@ -208,6 +224,29 @@ func Load(path string) (*AppConfig, error) {
 		if val, err := strconv.Atoi(maxIdle); err == nil && val > 0 {
 			cfg.Database.MaxIdleConns = val
 		}
+	}
+	if lifetime := strings.TrimSpace(os.Getenv("DB_CONN_MAX_LIFETIME")); lifetime != "" {
+		if parsed, err := time.ParseDuration(lifetime); err == nil && parsed > 0 {
+			cfg.Database.ConnMaxLifetimeMinutes = int(parsed / time.Minute)
+			if cfg.Database.ConnMaxLifetimeMinutes < 1 {
+				cfg.Database.ConnMaxLifetimeMinutes = 1
+			}
+		} else if minutes, convErr := strconv.Atoi(lifetime); convErr == nil && minutes > 0 {
+			cfg.Database.ConnMaxLifetimeMinutes = minutes
+		}
+	}
+	if deadline := os.Getenv("SHUTDOWN_DEADLINE_SECONDS"); deadline != "" {
+		if val, err := strconv.Atoi(deadline); err == nil && val > 0 {
+			cfg.Server.ShutdownDeadlineSeconds = val
+		}
+	}
+	if limit := os.Getenv("MAX_REQUEST_BODY_BYTES"); limit != "" {
+		if val, err := strconv.ParseInt(limit, 10, 64); err == nil && val > 0 {
+			cfg.Server.MaxBodyBytes = val
+		}
+	}
+	if expose := strings.ToLower(os.Getenv("EXPOSE_ERROR_DETAILS")); expose == "true" || expose == "false" {
+		cfg.Server.ExposeErrorDetails = expose == "true"
 	}
 	if migDir := os.Getenv("MIGRATIONS_DIR"); migDir != "" {
 		cfg.Database.MigrationsDir = migDir

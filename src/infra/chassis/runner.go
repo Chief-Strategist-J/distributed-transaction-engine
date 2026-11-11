@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -81,7 +83,7 @@ func Run(spec ServiceSpec, args []string, env []string) int {
 		log.Printf("Warning: failed to initialize distributed tracing: %v\n", err)
 	}
 
-	health := NewHealthCoordinator(db)
+	health := NewHealthCoordinator(db, ParseBrokers(firstNonEmpty(cfg.Kafka.Brokers, os.Getenv("KAFKA_BROKERS")))...)
 	deps := Dependencies{
 		Context: rootCtx,
 		Config:  cfg,
@@ -190,11 +192,15 @@ func wireServe(app *App, lifecycle *Lifecycle) {
 		app.Spec.RegisterAPIRoutes(publicMux, app.Services)
 	}
 
-	publicHandler := observability.ObservabilityMiddleware(app.Config.Server.Name, publicMux)
+	hideServerDetails := !app.Config.Server.ExposeErrorDetails && strings.EqualFold(os.Getenv("ENV"), "production")
+	guarded := ErrorSanitizer(hideServerDetails, RequestSizeLimit(app.Config.MaxBodyLimit(), publicMux))
+	publicHandler := observability.ObservabilityMiddleware(app.Config.Server.Name, guarded)
 
+	handlerContext, cancelHandlers := context.WithCancel(context.Background())
 	publicServer := &http.Server{
 		Addr:         app.Config.Server.BindAddress,
 		Handler:      publicHandler,
+		BaseContext:  func(net.Listener) context.Context { return handlerContext },
 		ReadTimeout:  app.Config.ReadTimeout(),
 		WriteTimeout: app.Config.WriteTimeout(),
 		IdleTimeout:  app.Config.IdleTimeout(),
@@ -206,8 +212,26 @@ func wireServe(app *App, lifecycle *Lifecycle) {
 		}
 		return nil
 	}, func(ctx context.Context) error {
-		return publicServer.Shutdown(ctx)
+		return drainServer(ctx, publicServer, cancelHandlers)
 	})
+}
+
+func drainServer(ctx context.Context, server *http.Server, cancelHandlers context.CancelFunc) error {
+	err := server.Shutdown(ctx)
+	if err != nil {
+		cancelHandlers()
+		_ = server.Close()
+	}
+	return err
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func runLongLived(app *App, lifecycle *Lifecycle, rootCtx context.Context) int {

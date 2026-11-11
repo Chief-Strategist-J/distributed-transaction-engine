@@ -30,9 +30,10 @@ const (
 )
 
 const (
-	StatusAlive         = "alive"
-	StatusReady         = "ready"
-	StatusDBUnreachable = "database unreachable"
+	StatusAlive            = "alive"
+	StatusReady            = "ready"
+	StatusDBUnreachable    = "database unreachable"
+	StatusKafkaUnreachable = "kafka unreachable"
 )
 
 const (
