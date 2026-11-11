@@ -1,1 +1,33 @@
-{"version": "1.0.0", "last_applied_migration": "0012", "checksums": {"0008": "applied", "0009": "135c6171129b8ec2aaf1fbcc0a5c65b78b07eda86bf99b2e74075a0c7a48bd23", "0010": "dc21951c19962cc76055d0d73a279eefdb75e1bd70e0a54510ec8d01686db23c", "0011": "b3689fb02f36dfef62b39b81c2e5b40bab6e853c78a2c6137e44074741e63145", "0012": "bf96b859c3c5e6c53e2bb40ae1474927f43451c944347995e57eabc05791dc92"}}
+{
+  "version": "1.0.0",
+  "migrations": {
+    "0001_create_saga_state_machine_tables.sql": "a6d2b7dac7d014f5b509f7d353049949d97927aff00e18c932d90157bfbe7a79",
+    "0002_create_workflow_definitions_tables.sql": "bd5e10cf5f035906a96016695d63092d63e8d0e5e978c8a2bd094137a59c09c3",
+    "0003_create_saga_orchestration_tables.sql": "b3a50ff083c6b9d4c3427450227a5032b203c3e479a17dbcbfe08c8eec9fb0aa",
+    "0004_create_crash_recovery_tables.sql": "c31bc020ae603c26dffaa4185683155b397c41165d9c7d858454ba0679efd701",
+    "0005_create_sequential_execution_tables.sql": "f0aef8f731dfd6975dd814169b07fd0ede09d4106cf2a33d8a22ca450e4445ee",
+    "0006_create_parallel_execution_tables.sql": "2c086494fb3b4de113a02cb2f8e7af94131a29b03d42299625438c1e754adea4",
+    "0007_create_inbox_deduplication_tables.sql": "2c5eed3b8ecc6c8d2a599c3ff59240ece0d08e0de05c081685c569821e5ffbb7",
+    "0008_create_transactional_outbox_tables.sql": "c72418b1f2c3f9c53befc59965367c524bb25b08a1be2df6a5999e2304f0922b",
+    "0009_create_compensation_engine_tables.sql": "c87eed988dc7813bcba25ca5d075345412b419ce0f5e1a4bc1c80b78936250da",
+    "0009_create_idempotency_keys_tables.sql": "6926e1854546d673c4e1da834f6f1ef249656b81e353b2f0311a093955a38a52",
+    "0010_create_retry_policies_tables.sql": "bf432e600fa62b29ca0340bf4df64efe88d8072fa0f3d636c54f2cdaafc64f52",
+    "0011_create_fencing_tokens_tables.sql": "1eef653f9c1698993acd42b8c865b4ed7e22c88b519822505decc946b2d0a6b4",
+    "0012_create_compensation_retry_tables.sql": "bf96b859c3c5e6c53e2bb40ae1474927f43451c944347995e57eabc05791dc92",
+    "0013_create_reconciliation_engine_tables.sql": "3539de27c10811a5ae6f1ca2827349312f3100f26ce92f308f3f016757394a41",
+    "0014_create_dead_letter_queue_tables.sql": "61a6553ca5de3a6873fc6706a52f4c1b4df33b01b486cb44550cd4ad327d4e92",
+    "0015_create_manual_intervention_tables.sql": "0ab1c23ede7581bb1909d088f5942e023e75e5aa4993604731bd7c84508baa1a",
+    "0016_create_optimistic_concurrency_control_tables.sql": "04f9df0f5e83ce29b1d3b5c9ed86c93f06c503033f28339b198db87dc536cf49",
+    "0017_create_scheduled_execution_tables.sql": "f936305d31461b494276aa20a3bd73b8d3c87bc062477da9f2f60a492a15fc11",
+    "0018_create_workflow_versioning_tables.sql": "918568207e6ffc3d05c4d3fe36c0449a7888a0a884b7f1a7d4d3613918a07fdb",
+    "0019_create_audit_trail_tables.sql": "2a8858954b5fd795c37a4178a60ba250a52da15f3e2ebda6c375232fed676c5f",
+    "0020_create_auth_tables.sql": "63f18197515bc9ffac0cb7cecb32fb41b71ef304b26e4b84a3c5e17f30958bb6",
+    "0021_create_distributed_tracing_tables.sql": "6a5a64faa47ac80da3df4faf081267c25f41465ca46dc4563b83ebe7f99331d2",
+    "0022_create_tenant_isolation_tables.sql": "22dade207bf52b0b839c2a6cc585162e62072db2cc5107463103635d21ee7efe",
+    "0023_create_transaction_query_api_tables.sql": "6bdcc1c9fe74d44a4e48a4f313a77475e5ae6ca0e7c7461639eef1473c57e342",
+    "0024_create_operational_dashboard_tables.sql": "f636acfae501a22d0af0de7e963f016af1c75622309f055714103e0dd01c1c74",
+    "0025_enforce_outbox_partition_key.sql": "c171f93395f9087d5b5b9730844dbfa9dad03a94ed74a9b4a635c435f0afe460",
+    "0026_enforce_row_level_security.sql": "1053a558299de1ef2daefeda21c867fa1a2a22964092d7bf155710847d048a66",
+    "0027_outbox_relay_backoff.sql": "8f16cd2dfba2b85f85313696bb48566038ac1678aa90240ac6ae729b8ac3bdeb"
+  }
+}

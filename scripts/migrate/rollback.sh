@@ -4,7 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 MIGRATIONS_DIR="${ROOT_DIR}/database/migrations/sql"
-LOCK_FILE="${ROOT_DIR}/database/schema.lock"
 
 DB_HOST="${DB_HOST:-localhost}"
 DB_PORT="${DB_PORT:-5432}"
@@ -23,7 +22,6 @@ for rollback_file in $(ls -r "${MIGRATIONS_DIR}"/*.rollback.sql | sort -r); do
     else
         echo "[DRY-RUN] psql command not found in environment. Checked syntax of ${filename} successfully."
     fi
-    echo "{\"version\": \"1.0.0\", \"last_applied_migration\": \"0000\", \"checksums\": {}}" > "${LOCK_FILE}"
     break
 done
 
