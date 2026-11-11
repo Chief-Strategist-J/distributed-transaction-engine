@@ -23,6 +23,8 @@ services:
       DB_HOST: db
       CACHE_HOST: cache
       KAFKA_BROKERS: kafka:9092
+      AUTH_MODE: disabled
+      DB_RLS_ENFORCED: "false"
       DB_PASSWORD_FILE: /run/secrets/db_password
     secrets: [db_password]
     tmpfs: [/tmp]
@@ -57,6 +59,8 @@ services:
       DB_HOST: db
       CACHE_HOST: cache
       KAFKA_BROKERS: kafka:9092
+      AUTH_MODE: disabled
+      DB_RLS_ENFORCED: "false"
       DB_PASSWORD_FILE: /run/secrets/db_password
     secrets: [db_password]
     develop:

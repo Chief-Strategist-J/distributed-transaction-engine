@@ -54,7 +54,7 @@ ARG GID=10001
 
 RUN groupadd --gid ${GID} app 2>/dev/null || true \
  && useradd --uid ${UID} --gid ${GID} --no-create-home --shell /usr/sbin/nologin app 2>/dev/null || true \
- && mkdir -p /app/config /app/database /app/bin /app/lib && chown -R ${UID}:${GID} /app
+ && mkdir -p /app/config /app/database /app/messaging /app/bin /app/lib && chown -R ${UID}:${GID} /app
 
 WORKDIR /app
 
@@ -63,6 +63,7 @@ COPY --from=cpp-builder --chown=${UID}:${GID} /out/cpp/ /app/bin/
 COPY --from=rust-builder --chown=${UID}:${GID} /out/rust/ /app/lib/
 COPY --chown=${UID}:${GID} ${SERVICE_PATH}/config/ /app/config/
 COPY --chown=${UID}:${GID} ${SERVICE_PATH}/database/ /app/database/
+COPY --chown=${UID}:${GID} ${SERVICE_PATH}/messaging/ /app/messaging/
 
 ARG GIT_SHA=unknown
 ARG BUILD_DATE=unknown

@@ -4,6 +4,8 @@ kind: Kustomization
 resources:
   - configmap.yaml
   - otel-collector-config.yaml
+  - migrate-job.yaml
+  - provision-topics-job.yaml
   - deployment.yaml
   - service.yaml
   - hpa.yaml

@@ -9,16 +9,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${ROOT_DIR}"
 
-PORT=8098
-ADMIN_PORT=8099
-DB_HOST="127.0.0.1"
-DB_PORT=5432
-DB_USER="postgres"
-DB_PASSWORD="supersecretpgpassword"
-DB_NAME="dist_tx_engine"
-DB_SSLMODE="disable"
-KAFKA_BROKERS="127.0.0.1:9092"
-OTEL_EXPORTER_OTLP_ENDPOINT="127.0.0.1:4318"
+PORT="${PORT:-8098}"
+ADMIN_PORT="${ADMIN_PORT:-8099}"
+DB_HOST="${DB_HOST:-127.0.0.1}"
+DB_PORT="${DB_PORT:-5432}"
+DB_USER="${DB_USER:-postgres}"
+DB_PASSWORD="${DB_PASSWORD:-supersecretpgpassword}"
+DB_NAME="${DB_NAME:-dist_tx_engine}"
+DB_SSLMODE="${DB_SSLMODE:-disable}"
+KAFKA_BROKERS="${KAFKA_BROKERS:-127.0.0.1:9092}"
+OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-127.0.0.1:4318}"
 
 TMP_DIR=$(mktemp -d)
 ENGINE_PID=""
@@ -288,8 +288,6 @@ OX_EVENT_PUB_ID="oxe_$(python3 -c 'import uuid; print(uuid.uuid4().hex[:26])')"
 OX_TOPIC="dist-tx.live-verify.mat.${TENANT_ID}"
 docker exec dist_tx-kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic "${OX_TOPIC}" --partitions 1 --replication-factor 1 > /dev/null
 
-/snap/bin/docker exec dist_tx-kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic "${OX_TOPIC}" --partitions 1 --replication-factor 1 >/dev/null 2>&1
-
 PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -c \
     "INSERT INTO outbox_events (id, public_id, tenant_id, saga_id, aggregate_type, aggregate_id, aggregate_sequence, destination_topic, partition_key, event_type, payload, headers, status, attempt_count, version, created_at, updated_at)
      VALUES ('${OX_EVENT_ID}', '${OX_EVENT_PUB_ID}', '${TENANT_ID}', '${STATE_SAGA_ID}', 'SAGA', '${STATE_SAGA_ID}', 1, '${OX_TOPIC}', '${STATE_SAGA_ID}', 'PAYMENT_COMPLETED', '{\"amount\":500}'::jsonb, '{\"tenant\":\"${TENANT_ID}\"}'::jsonb, 'PENDING', 0, 1, NOW(), NOW());" 
@@ -315,8 +313,15 @@ fi
 echo "================================================================"
 echo " 4. KAFKA BROKER REAL EVENT ASSERTION"
 echo "================================================================"
-OUTBOX_STATUS=$(PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -t -A -c \
-    "SELECT status FROM outbox_events WHERE id = '${OX_EVENT_ID}';")
+OUTBOX_STATUS=""
+for attempt in $(seq 1 30); do
+    OUTBOX_STATUS=$(PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -t -A -c \
+        "SELECT status FROM outbox_events WHERE id = '${OX_EVENT_ID}';")
+    if [[ "${OUTBOX_STATUS}" == "PUBLISHED" ]]; then
+        break
+    fi
+    sleep 1
+done
 echo "Outbox Event DB Status: ${OUTBOX_STATUS}"
 if [[ "${OUTBOX_STATUS}" != "PUBLISHED" ]]; then
     echo "FAIL [transactional-outbox]: Outbox event was not marked as PUBLISHED in DB"

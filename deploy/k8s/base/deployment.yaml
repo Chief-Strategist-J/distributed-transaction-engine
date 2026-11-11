@@ -59,6 +59,11 @@ spec:
           env:
             - name: ENV
               value: production
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: engine-credentials
+                  key: db_password
           resources:
             requests:
               cpu: 100m

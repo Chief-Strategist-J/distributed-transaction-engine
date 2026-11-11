@@ -1,0 +1,73 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COMPOSE_PROJECT_NAME: dist_tx
+  DB_USER: postgres
+  DB_NAME: dist_tx_engine
+  DB_HOST: 127.0.0.1
+  DB_PORT: "5432"
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with:
+          go-version-file: go.mod
+      - name: Build and vet
+        run: |
+          go build ./...
+          go vet ./...
+      - name: Validate Kubernetes manifests
+        run: kubectl kustomize deploy/k8s/base > /dev/null
+      - name: Start PostgreSQL and Kafka
+        run: |
+          set -euo pipefail
+          secrets_dir="${RUNNER_TEMP}/secrets"
+          mkdir -p "${secrets_dir}"
+          db_password="$(openssl rand -hex 16)"
+          printf '%s' "${db_password}" > "${secrets_dir}/db_password.txt"
+          echo "::add-mask::${db_password}"
+          echo "DB_PASSWORD=${db_password}" >> "${GITHUB_ENV}"
+          echo "SECRETS_DIR=${secrets_dir}" >> "${GITHUB_ENV}"
+          echo "DATABASE_URL=postgres://postgres:${db_password}@127.0.0.1:5432/dist_tx_engine?sslmode=disable" >> "${GITHUB_ENV}"
+          SECRETS_DIR="${secrets_dir}" docker compose -f deploy/docker/compose/docker-compose.infra.yml up -d --wait db kafka
+      - name: Apply migrations
+        run: |
+          set -euo pipefail
+          export PGPASSWORD="${DB_PASSWORD}"
+          for file in $(ls database/migrations/sql/*.sql | grep -v '\.rollback\.sql' | sort); do
+            psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q -f "${file}" > /dev/null
+          done
+      - name: Unit, integration and real-infrastructure tests
+        run: |
+          set -euo pipefail
+          go test ./src/... -count=1 -v 2>&1 | tee "${RUNNER_TEMP}/go-test.log"
+          if grep -E '^\s*--- SKIP' "${RUNNER_TEMP}/go-test.log"; then
+            echo "::error::real-infrastructure tests must not be skipped in CI"
+            exit 1
+          fi
+      - name: 25-feature end-to-end matrix
+        run: bash scripts/test/test.all_25_features_matrix.sh
+      - name: Dump infrastructure logs on failure
+        if: failure()
+        run: |
+          docker compose -f deploy/docker/compose/docker-compose.infra.yml logs --tail 50 db kafka || true
+          tail -n 50 /tmp/engine_matrix_test.log || true
+      - name: Stop infrastructure
+        if: always()
+        run: docker compose -f deploy/docker/compose/docker-compose.infra.yml down -v || true

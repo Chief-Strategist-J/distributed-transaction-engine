@@ -19,7 +19,7 @@ data:
     database:
       host: ""
       port: "5432"
-      user: "postgres"
+      user: "dtx_login"
       password: ""
       name: "dist_tx_engine"
       sslmode: "disable"
@@ -27,12 +27,21 @@ data:
       max_idle_conns: 10
       conn_max_lifetime_minutes: 5
       migrations_dir: "database/migrations/sql"
+      rls_enforced: true
+      auto_migrate: false
     poller:
       worker_id: ""
       lease_duration_seconds: 30
       poll_interval_millis: 250
     kafka:
       brokers: ""
+      auto_create_topics: false
+      replication_factor: 3
+      write_timeout_millis: 5000
+      batch_timeout_millis: 10
+    outbox:
+      relay_interval_millis: 500
+      relay_batch_size: 100
     auth:
       mode: "jwt"
       jwks_file: "/etc/dtx/auth/jwks.json"

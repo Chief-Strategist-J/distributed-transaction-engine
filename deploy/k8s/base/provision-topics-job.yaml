@@ -1,0 +1,69 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: distributed-transaction-engine-provision-topics
+  labels:
+    app.kubernetes.io/name: distributed-transaction-engine
+    app.kubernetes.io/component: provision-topics
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: distributed-transaction-engine
+        app.kubernetes.io/component: provision-topics
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: provision-topics
+          image: gcr.io/dist-tx-engine/distributed-transaction-engine:1.0.0
+          imagePullPolicy: IfNotPresent
+          command: ["/app/bin/engine", "--config", "/app/config/default.yaml", "provision-topics"]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: ENV
+              value: production
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+            - name: auth-jwks
+              mountPath: /etc/dtx/auth
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: engine-config
+        - name: auth-jwks
+          secret:
+            secretName: engine-credentials
+            items:
+              - key: auth_jwks
+                path: jwks.json
