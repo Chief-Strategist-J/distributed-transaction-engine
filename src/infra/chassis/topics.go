@@ -14,6 +14,13 @@ import (
 
 const topicsReconcileTimeout = 30 * time.Second
 
+func KafkaSecurity(cfg *config.AppConfig) messaging.Security {
+	return messaging.Security{
+		TLSEnabled: cfg.Kafka.TLSEnabled, CAFile: cfg.Kafka.CAFile, Mechanism: cfg.Kafka.SASLMechanism,
+		Username: cfg.Kafka.SASLUsername, Password: cfg.Kafka.SASLPassword,
+	}
+}
+
 func kafkaBrokers(cfg *config.AppConfig) []string {
 	return ParseBrokers(firstNonEmpty(cfg.Kafka.Brokers, os.Getenv("KAFKA_BROKERS")))
 }
@@ -29,7 +36,7 @@ func reconcileTopics(cfg *config.AppConfig, create bool) (messaging.Report, erro
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), topicsReconcileTimeout)
 	defer cancel()
-	return messaging.Reconcile(ctx, brokers, manifest.WithReplicationFactor(cfg.Kafka.ReplicationFactor), create)
+	return messaging.ReconcileSecure(ctx, brokers, manifest.WithReplicationFactor(cfg.Kafka.ReplicationFactor), create, KafkaSecurity(cfg))
 }
 
 func runProvisionTopics(cfg *config.AppConfig) int {

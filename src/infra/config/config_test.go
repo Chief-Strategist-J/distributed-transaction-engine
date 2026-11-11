@@ -12,7 +12,7 @@ var ambientVariables = []string{
 	"DB_MAX_OPEN_CONNS", "DB_MAX_IDLE_CONNS", "DB_CONN_MAX_LIFETIME", "DB_RLS_ENFORCED", "AUTO_MIGRATE", "MIGRATIONS_DIR",
 	"SHUTDOWN_DEADLINE_SECONDS", "MAX_REQUEST_BODY_BYTES", "EXPOSE_ERROR_DETAILS", "WORKER_ID", "POLLER_ENABLED",
 	"POLLER_LEASE_DURATION_SECONDS", "POLLER_INTERVAL_MILLIS", "KAFKA_BROKERS", "KAFKA_WRITE_TIMEOUT_MS", "KAFKA_BATCH_TIMEOUT_MS",
-	"KAFKA_REPLICATION_FACTOR", "KAFKA_TOPICS_MANIFEST", "KAFKA_AUTO_CREATE_TOPICS", "OUTBOX_RELAY_ENABLED",
+	"KAFKA_REPLICATION_FACTOR", "KAFKA_TOPICS_MANIFEST", "KAFKA_TLS_ENABLED", "KAFKA_CA_FILE", "KAFKA_SASL_MECHANISM", "KAFKA_SASL_USERNAME", "KAFKA_SASL_PASSWORD", "KAFKA_SASL_PASSWORD_FILE", "DB_SSLROOTCERT", "KAFKA_AUTO_CREATE_TOPICS", "OUTBOX_RELAY_ENABLED",
 	"OUTBOX_RELAY_INTERVAL_MILLIS", "OUTBOX_RELAY_BATCH_SIZE", "AUTH_MODE", "AUTH_JWKS_FILE", "AUTH_ISSUER", "AUTH_AUDIENCE",
 	"AUTH_LEEWAY_SECONDS",
 }
@@ -255,14 +255,14 @@ func TestDatabaseConfig_ProductionRules(t *testing.T) {
 	}{
 		{"dev_defaults", DatabaseConfig{}, "", false, true},
 		{"dev_explicit_no_migrate", DatabaseConfig{AutoMigrate: &no}, "development", false, false},
-		{"production_requires_rls", DatabaseConfig{Host: "h", User: "dtx_login", Password: "p"}, "production", true, false},
+		{"production_requires_rls", DatabaseConfig{Host: "h", User: "dtx_login", Password: "p", SSLMode: "verify-full", SSLRootCert: "/ca.crt"}, "production", true, false},
 		{"production_rls_ok", productionDB(true), "production", false, false},
 		{"production_auto_migrate_refused", withAutoMigrate(productionDB(true), &yes), "production", true, true},
 		{"staging_requires_rls", productionDB(false), " Staging ", true, false},
 		{"production_case_insensitive", productionDB(true), "PRODUCTION", false, false},
-		{"production_requires_host", DatabaseConfig{User: "dtx_login", Password: "p", RLSEnforced: true}, "production", true, false},
-		{"production_requires_password", DatabaseConfig{Host: "h", User: "dtx_login", RLSEnforced: true}, "production", true, false},
-		{"production_refuses_superuser", DatabaseConfig{Host: "h", User: "Postgres", Password: "p", RLSEnforced: true}, "production", true, false},
+		{"production_requires_host", DatabaseConfig{User: "dtx_login", Password: "p", RLSEnforced: true, SSLMode: "verify-full", SSLRootCert: "/ca.crt"}, "production", true, false},
+		{"production_requires_password", DatabaseConfig{Host: "h", User: "dtx_login", RLSEnforced: true, SSLMode: "verify-full", SSLRootCert: "/ca.crt"}, "production", true, false},
+		{"production_refuses_superuser", DatabaseConfig{Host: "h", User: "Postgres", Password: "p", RLSEnforced: true, SSLMode: "verify-full", SSLRootCert: "/ca.crt"}, "production", true, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -289,7 +289,7 @@ func TestDatabaseConfig_EnvironmentOverrides(t *testing.T) {
 }
 
 func productionDB(rls bool) DatabaseConfig {
-	return DatabaseConfig{Host: "db.internal", User: "dtx_login", Password: "secret", RLSEnforced: rls}
+	return DatabaseConfig{Host: "db.internal", User: "dtx_login", Password: "secret", RLSEnforced: rls, SSLMode: "verify-full", SSLRootCert: "/ca.crt"}
 }
 
 func withAutoMigrate(cfg DatabaseConfig, value *bool) DatabaseConfig {
@@ -310,8 +310,12 @@ func TestKafkaConfig_ProductionRules(t *testing.T) {
 		{"dev_defaults_create_topics", KafkaConfig{}, "", "", false, true},
 		{"dev_explicit_off", KafkaConfig{AutoCreateTopics: &no}, "", "development", false, false},
 		{"production_requires_brokers", KafkaConfig{}, "", "production", true, false},
-		{"production_brokers_ok", KafkaConfig{}, "kafka:9092", "production", false, false},
-		{"production_refuses_auto_create", KafkaConfig{AutoCreateTopics: &yes}, "kafka:9092", "production", true, true},
+		{"production_brokers_ok", secureKafka(), "kafka:9092", "production", false, false},
+		{"production_refuses_auto_create", withAutoCreate(secureKafka(), &yes), "kafka:9092", "production", true, true},
+		{"production_requires_tls", KafkaConfig{SASLMechanism: "SCRAM-SHA-512", SASLUsername: "u", SASLPassword: "p"}, "kafka:9092", "production", true, false},
+		{"production_requires_sasl", KafkaConfig{TLSEnabled: true}, "kafka:9092", "production", true, false},
+		{"production_rejects_unknown_mechanism", withMechanism(secureKafka(), "GSSAPI"), "kafka:9092", "production", true, false},
+		{"production_requires_credentials", KafkaConfig{TLSEnabled: true, SASLMechanism: "PLAIN"}, "kafka:9092", "production", true, false},
 		{"staging_requires_brokers", KafkaConfig{}, "  ", "Staging", true, false},
 	}
 	for _, tc := range cases {
@@ -363,5 +367,79 @@ func TestKafkaAndOutboxConfig_InvalidOverridesFallBackToDefaults(t *testing.T) {
 	}
 	if cfg.Kafka.WriteTimeoutMillis != 0 || cfg.Outbox.RelayInterval() != 500*time.Millisecond || cfg.Outbox.BatchSize() != 100 {
 		t.Fatalf("invalid values must be ignored: %#v %#v", cfg.Kafka, cfg.Outbox)
+	}
+}
+
+func TestDatabaseDSN_QuotesEveryValueSoCredentialsCannotInjectParameters(t *testing.T) {
+	cfg := DatabaseConfig{Host: "db.internal", Port: "5432", User: "dtx", Password: `p w'd\x sslmode=disable`, Name: "dist_tx_engine", SSLMode: "verify-full", SSLRootCert: "/etc/ca.crt"}
+	want := `host='db.internal' port='5432' user='dtx' password='p w\'d\\x sslmode=disable' dbname='dist_tx_engine' sslmode='verify-full' sslrootcert='/etc/ca.crt'`
+	if got := cfg.DSN(); got != want {
+		t.Fatalf("unexpected DSN:\n got %s\nwant %s", got, want)
+	}
+}
+
+func TestDatabaseConfig_ProductionRequiresVerifiedTLS(t *testing.T) {
+	good := DatabaseConfig{Host: "h", User: "dtx_login", Password: "p", RLSEnforced: true, SSLMode: "verify-full", SSLRootCert: "/ca.crt"}
+	cases := map[string]func(*DatabaseConfig){
+		"disable":         func(d *DatabaseConfig) { d.SSLMode = "disable" },
+		"empty":           func(d *DatabaseConfig) { d.SSLMode = "" },
+		"require_only":    func(d *DatabaseConfig) { d.SSLMode = "require" },
+		"prefer":          func(d *DatabaseConfig) { d.SSLMode = "prefer" },
+		"missing_root":    func(d *DatabaseConfig) { d.SSLRootCert = " " },
+		"verify_ca_no_ca": func(d *DatabaseConfig) { d.SSLMode = "verify-ca"; d.SSLRootCert = "" },
+	}
+	if err := good.Validate("production"); err != nil {
+		t.Fatalf("verified TLS must be accepted: %v", err)
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			candidate := good
+			mutate(&candidate)
+			if candidate.Validate("production") == nil {
+				t.Fatalf("%s must be rejected in production", name)
+			}
+		})
+	}
+	insecure := DatabaseConfig{SSLMode: "disable"}
+	if err := insecure.Validate("development"); err != nil {
+		t.Fatalf("development must stay usable without TLS: %v", err)
+	}
+}
+
+func secureKafka() KafkaConfig {
+	return KafkaConfig{TLSEnabled: true, SASLMechanism: "SCRAM-SHA-512", SASLUsername: "dtx", SASLPassword: "secret"}
+}
+
+func withAutoCreate(cfg KafkaConfig, value *bool) KafkaConfig {
+	cfg.AutoCreateTopics = value
+	return cfg
+}
+
+func withMechanism(cfg KafkaConfig, mechanism string) KafkaConfig {
+	cfg.SASLMechanism = mechanism
+	return cfg
+}
+
+func TestKafkaSecurityEnvironment_AppliesFlagsAndSecrets(t *testing.T) {
+	passwordFile := filepath.Join(t.TempDir(), "kafka-password")
+	if err := os.WriteFile(passwordFile, []byte("from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KAFKA_TLS_ENABLED", "true")
+	t.Setenv("KAFKA_CA_FILE", "/etc/kafka/ca.pem")
+	t.Setenv("KAFKA_SASL_MECHANISM", "scram-sha-512")
+	t.Setenv("KAFKA_SASL_USERNAME", "dtx")
+	t.Setenv("KAFKA_SASL_PASSWORD_FILE", passwordFile)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Kafka.TLSEnabled || cfg.Kafka.CAFile != "/etc/kafka/ca.pem" || cfg.Kafka.SASLMechanism != "SCRAM-SHA-512" || cfg.Kafka.SASLUsername != "dtx" || cfg.Kafka.SASLPassword != "from-file" {
+		t.Fatalf("security settings not applied: %#v", cfg.Kafka)
+	}
+	t.Setenv("KAFKA_SASL_PASSWORD", "direct")
+	cfg, _ = Load("")
+	if cfg.Kafka.SASLPassword != "direct" {
+		t.Fatalf("an explicit password must win over the file, got %q", cfg.Kafka.SASLPassword)
 	}
 }

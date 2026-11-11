@@ -30,7 +30,15 @@ func (r Report) Healthy() bool {
 }
 
 func Reconcile(ctx context.Context, brokers []string, manifest Manifest, create bool) (Report, error) {
-	controller, err := dialController(ctx, brokers)
+	return ReconcileSecure(ctx, brokers, manifest, create, Security{})
+}
+
+func ReconcileSecure(ctx context.Context, brokers []string, manifest Manifest, create bool, security Security) (Report, error) {
+	dialer, err := security.Dialer()
+	if err != nil {
+		return Report{}, err
+	}
+	controller, err := dialController(ctx, brokers, dialer)
 	if err != nil {
 		return Report{}, err
 	}
@@ -52,9 +60,8 @@ func Reconcile(ctx context.Context, brokers []string, manifest Manifest, create 
 	return report, nil
 }
 
-func dialController(ctx context.Context, brokers []string) (*kafka.Conn, error) {
+func dialController(ctx context.Context, brokers []string, dialer *kafka.Dialer) (*kafka.Conn, error) {
 	var lastErr error
-	dialer := &kafka.Dialer{Timeout: dialTimeout}
 	for _, broker := range brokers {
 		conn, err := dialer.DialContext(ctx, "tcp", broker)
 		if err != nil {

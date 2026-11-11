@@ -39,6 +39,16 @@ spec:
           env:
             - name: ENV
               value: production
+            - name: KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: engine-credentials
+                  key: kafka_sasl_username
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: engine-credentials
+                  key: kafka_sasl_password
           resources:
             requests:
               cpu: 50m
@@ -55,6 +65,9 @@ spec:
             - name: auth-jwks
               mountPath: /etc/dtx/auth
               readOnly: true
+            - name: kafka-ca
+              mountPath: /etc/dtx/kafka
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
@@ -67,3 +80,9 @@ spec:
             items:
               - key: auth_jwks
                 path: jwks.json
+        - name: kafka-ca
+          secret:
+            secretName: engine-credentials
+            items:
+              - key: kafka_ca_cert
+                path: ca.crt

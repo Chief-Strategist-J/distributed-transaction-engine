@@ -301,6 +301,7 @@ resource "google_sql_database_instance" "postgres" {
     ip_configuration {
       ipv4_enabled    = false
       private_network = google_compute_network.vpc.id
+      ssl_mode        = "ENCRYPTED_ONLY"
     }
   }
 
@@ -407,6 +408,56 @@ resource "google_secret_manager_secret_version" "db_password" {
   secret_data = random_password.db_password.result
 }
 
+resource "google_secret_manager_secret" "db_owner_user" {
+  secret_id = "${var.environment}-dist-tx-db-owner-user"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "db_owner_user" {
+  secret      = google_secret_manager_secret.db_owner_user.id
+  secret_data = google_sql_user.db_user.name
+}
+
+resource "google_secret_manager_secret_iam_member" "app_db_owner_user" {
+  secret_id = google_secret_manager_secret.db_owner_user.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
+resource "random_password" "db_login_password" {
+  length  = 32
+  special = false
+}
+
+resource "google_secret_manager_secret" "db_login_password" {
+  secret_id = "${var.environment}-dist-tx-db-login-password"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "db_login_password" {
+  secret      = google_secret_manager_secret.db_login_password.id
+  secret_data = random_password.db_login_password.result
+}
+
+resource "google_secret_manager_secret" "db_ca" {
+  secret_id = "${var.environment}-dist-tx-db-ca"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "db_ca" {
+  secret      = google_secret_manager_secret.db_ca.id
+  secret_data = google_sql_database_instance.postgres.server_ca_cert[0].cert
+}
+
 # ------------------------------------------------------------------------------
 # 11. WORKLOAD IDENTITY SERVICE ACCOUNT & IAM BINDINGS
 # ------------------------------------------------------------------------------
@@ -424,6 +475,18 @@ resource "google_service_account_iam_member" "workload_identity_user" {
 # Grant App SA permission to read DB password from Secret Manager
 resource "google_secret_manager_secret_iam_member" "app_db_password" {
   secret_id = google_secret_manager_secret.db_password.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "app_db_login_password" {
+  secret_id = google_secret_manager_secret.db_login_password.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "app_db_ca" {
+  secret_id = google_secret_manager_secret.db_ca.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.app_sa.email}"
 }

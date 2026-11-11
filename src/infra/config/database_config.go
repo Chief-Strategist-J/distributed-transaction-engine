@@ -7,6 +7,9 @@ import (
 )
 
 func (d *DatabaseConfig) ApplyEnvironment() {
+	if root := strings.TrimSpace(os.Getenv("DB_SSLROOTCERT")); root != "" {
+		d.SSLRootCert = root
+	}
 	if enforced := strings.ToLower(strings.TrimSpace(os.Getenv("DB_RLS_ENFORCED"))); enforced == "true" || enforced == "false" {
 		d.RLSEnforced = enforced == "true"
 	}
@@ -33,6 +36,9 @@ func (d *DatabaseConfig) Validate(environment string) error {
 	if strings.EqualFold(strings.TrimSpace(d.User), "postgres") {
 		return errors.New("production and staging must connect with the restricted login role, not the postgres superuser")
 	}
+	if err := d.validateTransportSecurity(); err != nil {
+		return err
+	}
 	if !d.RLSEnforced {
 		return errors.New("DB_RLS_ENFORCED must be true in production and staging")
 	}
@@ -40,4 +46,35 @@ func (d *DatabaseConfig) Validate(environment string) error {
 		return errors.New("AUTO_MIGRATE must not be enabled in production and staging; run the migrate command as a separate job")
 	}
 	return nil
+}
+
+func (d *DatabaseConfig) validateTransportSecurity() error {
+	mode := strings.ToLower(strings.TrimSpace(d.SSLMode))
+	if mode != "verify-full" && mode != "verify-ca" {
+		return errors.New("DB_SSLMODE must be verify-full or verify-ca in production and staging so the server identity is verified")
+	}
+	if strings.TrimSpace(d.SSLRootCert) == "" {
+		return errors.New("DB_SSLROOTCERT is required in production and staging")
+	}
+	return nil
+}
+
+func (d *DatabaseConfig) DSN() string {
+	pairs := [][2]string{
+		{"host", d.Host}, {"port", d.Port}, {"user", d.User}, {"password", d.Password},
+		{"dbname", d.Name}, {"sslmode", d.SSLMode},
+	}
+	if d.SSLRootCert != "" {
+		pairs = append(pairs, [2]string{"sslrootcert", d.SSLRootCert})
+	}
+	parts := make([]string, 0, len(pairs))
+	for _, pair := range pairs {
+		parts = append(parts, pair[0]+"="+quoteDSNValue(pair[1]))
+	}
+	return strings.Join(parts, " ")
+}
+
+func quoteDSNValue(value string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(value)
+	return "'" + escaped + "'"
 }

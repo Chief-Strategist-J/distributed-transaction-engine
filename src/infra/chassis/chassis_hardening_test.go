@@ -328,6 +328,10 @@ func TestRun_ServeRefusesSuperuserDatabaseInProduction(t *testing.T) {
 	t.Setenv("DB_PASSWORD", "secret")
 	t.Setenv("DB_RLS_ENFORCED", "true")
 	t.Setenv("KAFKA_BROKERS", "127.0.0.1:1")
+	t.Setenv("KAFKA_TLS_ENABLED", "true")
+	t.Setenv("KAFKA_SASL_MECHANISM", "SCRAM-SHA-512")
+	t.Setenv("KAFKA_SASL_USERNAME", "dtx")
+	t.Setenv("KAFKA_SASL_PASSWORD", "secret")
 	var output strings.Builder
 	log.SetOutput(&output)
 	defer log.SetOutput(os.Stderr)

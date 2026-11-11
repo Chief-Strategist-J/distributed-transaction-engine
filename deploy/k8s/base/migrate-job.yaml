@@ -65,6 +65,9 @@ spec:
             - name: auth-jwks
               mountPath: /etc/dtx/auth
               readOnly: true
+            - name: db-ca
+              mountPath: /etc/dtx/db
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
@@ -77,3 +80,9 @@ spec:
             items:
               - key: auth_jwks
                 path: jwks.json
+        - name: db-ca
+          secret:
+            secretName: engine-credentials
+            items:
+              - key: db_ca_cert
+                path: ca.crt

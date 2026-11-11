@@ -18,6 +18,7 @@ type KafkaPublisherOptions struct {
 	WriteTimeout time.Duration
 	BatchTimeout time.Duration
 	BatchSize    int
+	Transport    *kafka.Transport
 }
 
 const (
@@ -57,6 +58,9 @@ func NewKafkaPublisherAdapterWithOptions(brokerAddress string, options KafkaPubl
 		BatchTimeout: options.BatchTimeout,
 		WriteTimeout: options.WriteTimeout,
 		ReadTimeout:  options.WriteTimeout,
+	}
+	if options.Transport != nil {
+		writer.Transport = options.Transport
 	}
 	return &KafkaPublisherAdapter{
 		brokerAddress: brokerAddress,

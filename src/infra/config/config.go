@@ -29,6 +29,7 @@ type DatabaseConfig struct {
 	Password               string `yaml:"password"`
 	Name                   string `yaml:"name"`
 	SSLMode                string `yaml:"sslmode"`
+	SSLRootCert            string `yaml:"sslrootcert"`
 	MaxOpenConns           int    `yaml:"max_open_conns"`
 	MaxIdleConns           int    `yaml:"max_idle_conns"`
 	ConnMaxLifetimeMinutes int    `yaml:"conn_max_lifetime_minutes"`
@@ -51,6 +52,11 @@ type KafkaConfig struct {
 	AutoCreateTopics   *bool  `yaml:"auto_create_topics"`
 	TopicsManifest     string `yaml:"topics_manifest"`
 	ReplicationFactor  int    `yaml:"replication_factor"`
+	TLSEnabled         bool   `yaml:"tls_enabled"`
+	CAFile             string `yaml:"ca_file"`
+	SASLMechanism      string `yaml:"sasl_mechanism"`
+	SASLUsername       string `yaml:"sasl_username"`
+	SASLPassword       string `yaml:"sasl_password"`
 }
 
 type OutboxConfig struct {
@@ -88,8 +94,7 @@ type AppConfig struct {
 }
 
 func (c *AppConfig) ConnString() string {
-	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		c.Database.Host, c.Database.Port, c.Database.User, c.Database.Password, c.Database.Name, c.Database.SSLMode)
+	return c.Database.DSN()
 }
 
 func (c *AppConfig) ReadTimeout() time.Duration {

@@ -22,7 +22,8 @@ data:
       user: "dtx_login"
       password: ""
       name: "dist_tx_engine"
-      sslmode: "disable"
+      sslmode: "verify-full"
+      sslrootcert: "/etc/dtx/db/ca.crt"
       max_open_conns: 50
       max_idle_conns: 10
       conn_max_lifetime_minutes: 5
@@ -36,6 +37,9 @@ data:
     kafka:
       brokers: ""
       auto_create_topics: false
+      tls_enabled: true
+      ca_file: "/etc/dtx/kafka/ca.crt"
+      sasl_mechanism: "SCRAM-SHA-512"
       replication_factor: 3
       write_timeout_millis: 5000
       batch_timeout_millis: 10

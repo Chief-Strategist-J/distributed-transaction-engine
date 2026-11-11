@@ -190,9 +190,14 @@ func describeService() chassis.ServiceSpec {
 				kafkaBrokers = os.Getenv("KAFKA_BROKERS")
 			}
 			if kafkaBrokers != "" {
+				kafkaTransport, transportErr := chassis.KafkaSecurity(deps.Config).Transport()
+				if transportErr != nil {
+					return chassis.Services{}, transportErr
+				}
 				outboxPublisher = transactionalOutbox.NewKafkaPublisherWithOptions(kafkaBrokers, transactionalOutbox.KafkaPublisherOptions{
 					WriteTimeout: deps.Config.Kafka.WriteTimeout(),
 					BatchTimeout: deps.Config.Kafka.BatchTimeout(),
+					Transport:    kafkaTransport,
 				})
 			}
 			outboxSvc := transactionalOutbox.NewService(transactionalOutbox.ServiceDeps{

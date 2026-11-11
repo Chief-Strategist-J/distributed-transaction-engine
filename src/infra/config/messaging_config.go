@@ -22,6 +22,7 @@ func positiveInt(name string, current int) int {
 }
 
 func (k *KafkaConfig) ApplyEnvironment() {
+	k.applySecurityEnvironment()
 	k.WriteTimeoutMillis = positiveInt("KAFKA_WRITE_TIMEOUT_MS", k.WriteTimeoutMillis)
 	k.BatchTimeoutMillis = positiveInt("KAFKA_BATCH_TIMEOUT_MS", k.BatchTimeoutMillis)
 	k.ReplicationFactor = positiveInt("KAFKA_REPLICATION_FACTOR", k.ReplicationFactor)
@@ -89,6 +90,37 @@ func (k *KafkaConfig) Validate(environment string, brokers string) error {
 	}
 	if k.AutoCreateTopics != nil && *k.AutoCreateTopics {
 		return errors.New("KAFKA_AUTO_CREATE_TOPICS must not be enabled in production and staging; run the provision-topics command as a separate job")
+	}
+	return k.validateSecurity()
+}
+
+func (k *KafkaConfig) applySecurityEnvironment() {
+	if tlsFlag := strings.ToLower(strings.TrimSpace(os.Getenv("KAFKA_TLS_ENABLED"))); tlsFlag == "true" || tlsFlag == "false" {
+		k.TLSEnabled = tlsFlag == "true"
+	}
+	k.CAFile = firstSet(os.Getenv("KAFKA_CA_FILE"), k.CAFile)
+	k.SASLMechanism = strings.ToUpper(firstSet(os.Getenv("KAFKA_SASL_MECHANISM"), k.SASLMechanism))
+	k.SASLUsername = firstSet(os.Getenv("KAFKA_SASL_USERNAME"), k.SASLUsername)
+	if password := os.Getenv("KAFKA_SASL_PASSWORD"); password != "" {
+		k.SASLPassword = password
+	} else if file := os.Getenv("KAFKA_SASL_PASSWORD_FILE"); file != "" {
+		if content, err := os.ReadFile(file); err == nil {
+			k.SASLPassword = strings.TrimSpace(string(content))
+		}
+	}
+}
+
+func (k *KafkaConfig) validateSecurity() error {
+	if !k.TLSEnabled {
+		return errors.New("KAFKA_TLS_ENABLED must be true in production and staging")
+	}
+	switch k.SASLMechanism {
+	case "PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512":
+	default:
+		return errors.New("KAFKA_SASL_MECHANISM must be PLAIN, SCRAM-SHA-256 or SCRAM-SHA-512 in production and staging")
+	}
+	if k.SASLUsername == "" || k.SASLPassword == "" {
+		return errors.New("KAFKA_SASL_USERNAME and KAFKA_SASL_PASSWORD (or KAFKA_SASL_PASSWORD_FILE) are required in production and staging")
 	}
 	return nil
 }
