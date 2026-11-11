@@ -408,3 +408,38 @@ func TestRun_ServeRefusesProductionWithoutKafkaBrokers(t *testing.T) {
 		t.Fatalf("expected the broker requirement in the log, got %q", output.String())
 	}
 }
+
+func adminServer(t *testing.T, status int) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health/live" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(server.Close)
+	return strings.TrimPrefix(server.URL, "http://127.0.0.1:")
+}
+
+func TestRun_HealthcheckCommandReportsTheAdminEndpointStatus(t *testing.T) {
+	cases := map[string]struct {
+		status int
+		want   int
+	}{"healthy": {http.StatusOK, ExitSuccess}, "no_content": {http.StatusNoContent, ExitSuccess}, "unavailable": {http.StatusServiceUnavailable, ExitRuntime}, "server_error": {http.StatusInternalServerError, ExitRuntime}}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("ADMIN_PORT", adminServer(t, tc.status))
+			if code := Run(ServiceSpec{}, []string{"--config", filepath.Join(t.TempDir(), "none.yaml"), "healthcheck"}, nil); code != tc.want {
+				t.Fatalf("expected %d, got %d", tc.want, code)
+			}
+		})
+	}
+}
+
+func TestRun_HealthcheckFailsWhenNothingListens(t *testing.T) {
+	t.Setenv("ADMIN_PORT", "1")
+	if code := Run(ServiceSpec{}, []string{"--config", filepath.Join(t.TempDir(), "none.yaml"), "healthcheck"}, nil); code != ExitRuntime {
+		t.Fatalf("an unreachable admin endpoint must fail the healthcheck, got %d", code)
+	}
+}

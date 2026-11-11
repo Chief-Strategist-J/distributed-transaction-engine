@@ -48,6 +48,10 @@ func Run(spec ServiceSpec, args []string, env []string) int {
 		return ExitConfig
 	}
 
+	if bootCtx.Command == "healthcheck" {
+		return runHealthcheck(cfg)
+	}
+
 	if bootCtx.Command == "provision-topics" {
 		return runProvisionTopics(cfg)
 	}

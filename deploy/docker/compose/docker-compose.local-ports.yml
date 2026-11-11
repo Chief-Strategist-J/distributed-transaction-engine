@@ -1,0 +1,5 @@
+services:
+  app:
+    ports:
+      - "127.0.0.1:${DTX_API_PORT:-18080}:8080"
+      - "127.0.0.1:${DTX_ADMIN_PORT:-18081}:8081"
