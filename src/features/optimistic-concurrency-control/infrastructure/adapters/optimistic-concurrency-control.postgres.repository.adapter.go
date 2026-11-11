@@ -8,10 +8,13 @@ import (
 	"distributed-transaction-engine/src/features/optimistic-concurrency-control/infrastructure/ports"
 	"distributed-transaction-engine/src/features/optimistic-concurrency-control/infrastructure/queries"
 	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/constants"
 	appErrors "distributed-transaction-engine/src/shared/errors"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -57,7 +60,7 @@ func (a *PostgresOCCRepositoryAdapter) ExecuteCAS(ctx context.Context, input con
 				outboxID, outboxPubID, input.TenantID, input.SagaID,
 				input.SagaID.String(), time.Now().UnixNano(),
 				evt.Topic, input.SagaID.String(),
-				evt.Payload,
+				evt.Payload, fencingHeaders(input.SagaID.String(), ownerEpoch),
 			)
 			if err != nil {
 				return nil, appErrors.NewInternalError("failed to insert outbox event: " + err.Error())
@@ -204,4 +207,15 @@ func (a *PostgresOCCRepositoryAdapter) GetRecentContentionCount(ctx context.Cont
 		return 0, appErrors.NewInternalError(err.Error())
 	}
 	return count, nil
+}
+
+func fencingHeaders(sagaID string, ownerEpoch int64) string {
+	encoded, err := json.Marshal(map[string]string{
+		strings.ToLower(constants.HeaderXFencingToken): strconv.FormatInt(ownerEpoch, 10),
+		strings.ToLower(constants.HeaderXSagaID):       sagaID,
+	})
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
 }

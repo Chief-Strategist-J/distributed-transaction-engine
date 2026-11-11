@@ -113,6 +113,7 @@ func describeService() chassis.ServiceSpec {
 			if deps.DB != nil {
 				recoveryRepo = crashRecovery.NewPostgresAdapter(deps.DB)
 			}
+			sagaSvc.UseIncarnation(recoveryCfg.IncarnationID)
 			recoverySvc := crashRecovery.NewService(recoveryCfg, recoveryRepo, sagaSvc)
 			recoveryHandler := handlers.NewCrashRecoveryHandler(recoverySvc)
 			recoveryRouter := routers.NewCrashRecoveryRouter(recoveryHandler)
@@ -198,9 +199,10 @@ func describeService() chassis.ServiceSpec {
 					return chassis.Services{}, transportErr
 				}
 				outboxPublisher = transactionalOutbox.NewKafkaPublisherWithOptions(kafkaBrokers, transactionalOutbox.KafkaPublisherOptions{
-					WriteTimeout: deps.Config.Kafka.WriteTimeout(),
-					BatchTimeout: deps.Config.Kafka.BatchTimeout(),
-					Transport:    kafkaTransport,
+					WriteTimeout:  deps.Config.Kafka.WriteTimeout(),
+					BatchTimeout:  deps.Config.Kafka.BatchTimeout(),
+					Transport:     kafkaTransport,
+					IncarnationID: recoveryCfg.IncarnationID,
 				})
 			}
 			outboxSvc := transactionalOutbox.NewService(transactionalOutbox.ServiceDeps{

@@ -258,3 +258,43 @@ func TestKafkaPublisher_MissingTopicIsReportedAsRetriable(t *testing.T) {
 		t.Fatalf("a missing topic must be retried with backoff, got %v", outcomes[0])
 	}
 }
+
+func headerValue(message kafka.Message, key string) (string, bool) {
+	for _, header := range message.Headers {
+		if strings.EqualFold(header.Key, key) {
+			return string(header.Value), true
+		}
+	}
+	return "", false
+}
+
+func TestKafkaPublisher_RecordsCarrySagaIdentityHeaders(t *testing.T) {
+	address := kafkaTestAddress(t)
+	topic := provisionTestTopic(t, address, 1)
+	publisher := adapters.NewKafkaPublisherAdapterWithOptions(address, adapters.KafkaPublisherOptions{IncarnationID: "inc-boot-7"})
+	defer publisher.Close()
+	sagaID := uuid.NewString()
+	request := contracts.PublishRequest{Topic: topic, PartitionKey: sagaID, Payload: []byte(`{"n":1}`), Headers: map[string]interface{}{"x-fencing-token": "42"}}
+	publishWhenTopicIsReady(t, publisher, []contracts.PublishRequest{request})
+	messages := readAll(t, address, topic, 1, 1)
+	if len(messages) != 1 {
+		t.Fatalf("expected the record, consumed %d", len(messages))
+	}
+	for header, want := range map[string]string{"x-saga-id": sagaID, "x-engine-incarnation-id": "inc-boot-7", "x-fencing-token": "42"} {
+		if got, found := headerValue(messages[0], header); !found || got != want {
+			t.Fatalf("record header %s expected %q, got %q (found=%v)", header, want, got, found)
+		}
+	}
+}
+
+func TestKafkaPublisher_StoredHeadersWinOverDerivedIdentityHeaders(t *testing.T) {
+	message := adapters.BuildKafkaMessageForTest(contracts.PublishRequest{
+		Topic: "t", PartitionKey: "saga-from-key", Payload: []byte("{}"), Headers: map[string]interface{}{"X-Saga-Id": "saga-from-header"},
+	}, "inc-1")
+	if got, _ := headerValue(message, "x-saga-id"); got != "saga-from-header" {
+		t.Fatalf("an explicit header must not be overwritten, got %q", got)
+	}
+	if count := len(message.Headers); count != 2 {
+		t.Fatalf("expected the stored header plus the incarnation header, got %d headers", count)
+	}
+}

@@ -16,16 +16,18 @@ import (
 	workflowPorts "distributed-transaction-engine/src/features/workflow-definitions/infrastructure/ports"
 	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"distributed-transaction-engine/src/shared/utils"
 	"github.com/google/uuid"
 )
 
 type SagaOrchestrationService struct {
-	repo         sagaPorts.SagaRepositoryPort
-	workflowRepo workflowPorts.WorkflowDefinitionsRepositoryPort
-	dispatcher   sagaPorts.StepDispatcherPort
-	breakers     *sagaRules.CircuitBreakerRegistry
-	tracer       *observability.DefaultTracer
-	logger       *observability.LokiLogger
+	repo          sagaPorts.SagaRepositoryPort
+	workflowRepo  workflowPorts.WorkflowDefinitionsRepositoryPort
+	dispatcher    sagaPorts.StepDispatcherPort
+	breakers      *sagaRules.CircuitBreakerRegistry
+	tracer        *observability.DefaultTracer
+	logger        *observability.LokiLogger
+	incarnationID string
 }
 
 func NewSagaOrchestrationService(
@@ -41,6 +43,12 @@ func NewSagaOrchestrationService(
 		tracer:       observability.NewTracer("saga-orchestration-service"),
 		logger:       observability.GetLogger(),
 	}
+}
+
+func (s *SagaOrchestrationService) UseIncarnation(incarnationID string) *SagaOrchestrationService {
+	defer observability.TraceEnter(nil)()
+	s.incarnationID = incarnationID
+	return s
 }
 
 func (s *SagaOrchestrationService) transitionSagaState(ctx context.Context, tenantID string, instance *sagaContracts.SagaInstance, nextState sagaContracts.SagaState) error {
@@ -199,6 +207,7 @@ func (s *SagaOrchestrationService) StartSaga(ctx context.Context, input sagaCont
 func (s *SagaOrchestrationService) ProcessSaga(ctx context.Context, instance *sagaContracts.SagaInstance) error {
 	ctx, span := s.tracer.StartSpan(ctx, "saga_orchestration.process")
 	defer span.End()
+	ctx = utils.WithDispatchIdentity(ctx, utils.DispatchIdentity{SagaID: instance.ID, FencingToken: instance.FencingToken, IncarnationID: s.incarnationID})
 
 	workflowDef, err := s.workflowRepo.GetByID(ctx, instance.TenantID, instance.WorkflowDefinitionID)
 	if err != nil {

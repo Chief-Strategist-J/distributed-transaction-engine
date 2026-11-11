@@ -60,7 +60,7 @@ const (
 			$1, $2, $3, $4,
 			'SAGA_OCC', $5, $6,
 			$7, $8, 'SAGA_STATE_TRANSITIONED',
-			$9::jsonb, '{}'::jsonb, 'PENDING', 1, NOW(), NOW()
+			$9::jsonb, $10::jsonb, 'PENDING', 1, NOW(), NOW()
 		);
 	`
 

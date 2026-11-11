@@ -4,6 +4,7 @@ import (
 	"context"
 	contracts "distributed-transaction-engine/src/features/transactional-outbox/contracts"
 	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/constants"
 	"distributed-transaction-engine/src/shared/errors"
 	"encoding/json"
 	stderrors "errors"
@@ -11,14 +12,16 @@ import (
 	"github.com/segmentio/kafka-go"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type KafkaPublisherOptions struct {
-	WriteTimeout time.Duration
-	BatchTimeout time.Duration
-	BatchSize    int
-	Transport    *kafka.Transport
+	WriteTimeout  time.Duration
+	BatchTimeout  time.Duration
+	BatchSize     int
+	Transport     *kafka.Transport
+	IncarnationID string
 }
 
 const (
@@ -30,6 +33,7 @@ const (
 type KafkaPublisherAdapter struct {
 	brokerAddress string
 	writer        *kafka.Writer
+	incarnationID string
 }
 
 func NewKafkaPublisherAdapter(brokerAddress string) *KafkaPublisherAdapter {
@@ -65,10 +69,11 @@ func NewKafkaPublisherAdapterWithOptions(brokerAddress string, options KafkaPubl
 	return &KafkaPublisherAdapter{
 		brokerAddress: brokerAddress,
 		writer:        writer,
+		incarnationID: options.IncarnationID,
 	}
 }
 
-func buildKafkaMessage(request contracts.PublishRequest) kafka.Message {
+func buildKafkaMessage(request contracts.PublishRequest, incarnationID string) kafka.Message {
 	kafkaHeaders := make([]kafka.Header, 0, len(request.Headers))
 	for key, value := range request.Headers {
 		var valueBytes []byte
@@ -82,6 +87,7 @@ func buildKafkaMessage(request contracts.PublishRequest) kafka.Message {
 		}
 		kafkaHeaders = append(kafkaHeaders, kafka.Header{Key: key, Value: valueBytes})
 	}
+	kafkaHeaders = withIdentityHeaders(kafkaHeaders, request.PartitionKey, incarnationID)
 	return kafka.Message{
 		Topic:   request.Topic,
 		Key:     []byte(request.PartitionKey),
@@ -100,7 +106,7 @@ func (a *KafkaPublisherAdapter) PublishBatch(ctx context.Context, requests []con
 	}
 	messages := make([]kafka.Message, len(requests))
 	for index, request := range requests {
-		messages[index] = buildKafkaMessage(request)
+		messages[index] = buildKafkaMessage(request, a.incarnationID)
 	}
 	err := a.writer.WriteMessages(ctx, messages...)
 	if err == nil {
@@ -220,4 +226,23 @@ func (a *MemoryKafkaPublisherAdapter) PublishBatch(ctx context.Context, requests
 		outcomes[index] = a.PublishMessage(ctx, request.Topic, request.PartitionKey, request.Headers, request.Payload)
 	}
 	return outcomes
+}
+
+func withIdentityHeaders(headers []kafka.Header, sagaID string, incarnationID string) []kafka.Header {
+	present := make(map[string]bool, len(headers))
+	for _, header := range headers {
+		present[strings.ToLower(header.Key)] = true
+	}
+	if sagaKey := strings.ToLower(constants.HeaderXSagaID); sagaID != "" && !present[sagaKey] {
+		headers = append(headers, kafka.Header{Key: sagaKey, Value: []byte(sagaID)})
+	}
+	if incarnationKey := strings.ToLower(constants.HeaderXEngineIncarnation); incarnationID != "" && !present[incarnationKey] {
+		headers = append(headers, kafka.Header{Key: incarnationKey, Value: []byte(incarnationID)})
+	}
+	return headers
+}
+
+func BuildKafkaMessageForTest(request contracts.PublishRequest, incarnationID string) kafka.Message {
+	defer observability.TraceEnter(nil)()
+	return buildKafkaMessage(request, incarnationID)
 }

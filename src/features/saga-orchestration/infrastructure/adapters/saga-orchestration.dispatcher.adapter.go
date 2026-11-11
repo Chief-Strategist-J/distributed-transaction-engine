@@ -6,10 +6,13 @@ import (
 	ports "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/ports"
 	workflowContracts "distributed-transaction-engine/src/features/workflow-definitions/contracts"
 	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/constants"
 	"distributed-transaction-engine/src/shared/errors"
+	"distributed-transaction-engine/src/shared/utils"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -39,11 +42,11 @@ type HttpStepDispatcherAdapter struct {
 var _ ports.StepDispatcherPort = (*HttpStepDispatcherAdapter)(nil)
 
 func NewHttpStepDispatcherAdapter() *HttpStepDispatcherAdapter {
-	return &HttpStepDispatcherAdapter{
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-		},
-	}
+	return NewHttpStepDispatcherAdapterWithClient(&http.Client{Timeout: 10 * time.Second})
+}
+
+func NewHttpStepDispatcherAdapterWithClient(client *http.Client) *HttpStepDispatcherAdapter {
+	return &HttpStepDispatcherAdapter{client: client}
 }
 
 func (d *HttpStepDispatcherAdapter) DispatchStep(ctx context.Context, stepDef workflowContracts.StepDefinition, input map[string]interface{}, idempotencyKey string) (spanResult0 map[string]interface{}, spanErr error) {
@@ -65,6 +68,7 @@ func (d *HttpStepDispatcherAdapter) DispatchStep(ctx context.Context, stepDef wo
 	if idempotencyKey != "" {
 		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
+	applyDispatchIdentity(ctx, req)
 
 	resp, err := d.client.Do(req)
 	if err != nil {
@@ -125,6 +129,7 @@ func (d *HttpStepDispatcherAdapter) CompensateStep(ctx context.Context, stepDef 
 	if idempotencyKey != "" {
 		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
+	applyDispatchIdentity(ctx, req)
 
 	resp, err := d.client.Do(req)
 	if err != nil {
@@ -136,4 +141,18 @@ func (d *HttpStepDispatcherAdapter) CompensateStep(ctx context.Context, stepDef 
 		return errors.NewInternalError(fmt.Sprintf("compensation downstream service rejected: %d", resp.StatusCode))
 	}
 	return nil
+}
+
+func applyDispatchIdentity(ctx context.Context, req *http.Request) {
+	identity, ok := utils.DispatchIdentityFrom(ctx)
+	if !ok {
+		return
+	}
+	req.Header.Set(constants.HeaderXFencingToken, strconv.FormatInt(identity.FencingToken, 10))
+	if identity.SagaID != "" {
+		req.Header.Set(constants.HeaderXSagaID, identity.SagaID)
+	}
+	if identity.IncarnationID != "" {
+		req.Header.Set(constants.HeaderXEngineIncarnation, identity.IncarnationID)
+	}
 }
