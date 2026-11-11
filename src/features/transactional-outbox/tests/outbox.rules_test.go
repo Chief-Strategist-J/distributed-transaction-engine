@@ -3,6 +3,7 @@ package tests
 import (
 	"errors"
 	"testing"
+	"time"
 
 	contracts "distributed-transaction-engine/src/features/transactional-outbox/contracts"
 	rules "distributed-transaction-engine/src/features/transactional-outbox/domain/rules"
@@ -35,9 +36,9 @@ func TestClassifyPublishError(t *testing.T) {
 			expected: rules.ErrorNonRetriable,
 		},
 		{
-			name:     "unknown topic is non-retriable",
+			name:     "unknown topic is retriable while the topic is provisioned",
 			err:      errors.New("kafka: unknown topic or partition"),
-			expected: rules.ErrorNonRetriable,
+			expected: rules.ErrorRetriable,
 		},
 		{
 			name:     "authorization failure is non-retriable",
@@ -80,5 +81,28 @@ func TestCanTransitionOutboxStatus(t *testing.T) {
 	}
 	if rules.CanTransitionOutboxStatus(contracts.OutboxStatusPublished, contracts.OutboxStatusInFlight) {
 		t.Fatal("expected PUBLISHED -> IN_FLIGHT to be invalid (immutable terminal state)")
+	}
+}
+
+func TestRelayBackoff_DoublesAndCaps(t *testing.T) {
+	cases := []struct {
+		attempt int
+		want    time.Duration
+	}{
+		{-3, time.Second}, {0, time.Second}, {1, 2 * time.Second}, {2, 4 * time.Second}, {3, 8 * time.Second},
+		{5, 32 * time.Second}, {6, 60 * time.Second}, {7, 60 * time.Second}, {1000, 60 * time.Second},
+	}
+	for _, tc := range cases {
+		if got := rules.RelayBackoff(tc.attempt); got != tc.want {
+			t.Fatalf("attempt %d expected %v got %v", tc.attempt, tc.want, got)
+		}
+	}
+}
+
+func TestExceededPublishAttempts_Boundary(t *testing.T) {
+	for attempts, want := range map[int]bool{0: false, 1: false, rules.MaxPublishAttempts - 1: false, rules.MaxPublishAttempts: true, rules.MaxPublishAttempts + 1: true} {
+		if got := rules.ExceededPublishAttempts(attempts); got != want {
+			t.Fatalf("attempts %d expected %v got %v", attempts, want, got)
+		}
 	}
 }

@@ -12,6 +12,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+require github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+
 require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/klauspost/compress v1.15.9 // indirect

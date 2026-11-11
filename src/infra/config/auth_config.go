@@ -13,6 +13,10 @@ import (
 
 var secureEnvironments = map[string]bool{"production": true, "staging": true}
 
+func IsSecureEnvironment(environment string) bool {
+	return secureEnvironments[strings.ToLower(strings.TrimSpace(environment))]
+}
+
 func (a *AuthConfig) ApplyEnvironment() {
 	a.Mode = firstSet(os.Getenv("AUTH_MODE"), a.Mode)
 	a.JWKSFile = firstSet(os.Getenv("AUTH_JWKS_FILE"), a.JWKSFile)

@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	contracts "distributed-transaction-engine/src/features/transactional-outbox/contracts"
+	rules "distributed-transaction-engine/src/features/transactional-outbox/domain/rules"
 	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
+	"sort"
 	"sync"
 	"time"
 )
@@ -59,22 +61,73 @@ func (a *MemoryOutboxRepositoryAdapter) ClaimPendingEvents(
 
 	now := time.Now().UTC()
 	leaseExpiry := now.Add(input.LeaseDuration)
+	candidates := a.relayCandidates(input.TenantID, input.Topic, now)
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].AggregateSequence < candidates[j].AggregateSequence })
 
 	var claimed []contracts.OutboxEventInstance
-	for _, e := range a.events {
-		if e.TenantID == input.TenantID && e.DestinationTopic == input.Topic && e.Status == contracts.OutboxStatusPending {
-			e.Status = contracts.OutboxStatusInFlight
-			e.LeaseOwner = input.WorkerID
-			e.LeaseExpiresAt = &leaseExpiry
-			e.AttemptCount++
-			e.UpdatedAt = now
-			claimed = append(claimed, *e)
-			if len(claimed) >= input.BatchLimit {
-				break
-			}
+	for _, e := range candidates {
+		if len(claimed) >= input.BatchLimit {
+			break
 		}
+		e.Status = contracts.OutboxStatusInFlight
+		e.LeaseOwner = input.WorkerID
+		e.LeaseExpiresAt = &leaseExpiry
+		e.AttemptCount++
+		e.UpdatedAt = now
+		claimed = append(claimed, *e)
 	}
 	return claimed, nil
+}
+
+func (a *MemoryOutboxRepositoryAdapter) relayCandidates(tenantID string, topic string, now time.Time) []*contracts.OutboxEventInstance {
+	lowest := map[string]*contracts.OutboxEventInstance{}
+	for _, e := range a.events {
+		if e.TenantID != tenantID || e.DestinationTopic != topic || e.Status == contracts.OutboxStatusPublished {
+			continue
+		}
+		if current, seen := lowest[e.AggregateID]; !seen || e.AggregateSequence < current.AggregateSequence {
+			lowest[e.AggregateID] = e
+		}
+	}
+	candidates := make([]*contracts.OutboxEventInstance, 0, len(lowest))
+	for _, e := range lowest {
+		if relayEligible(e, now) {
+			candidates = append(candidates, e)
+		}
+	}
+	return candidates
+}
+
+func relayEligible(e *contracts.OutboxEventInstance, now time.Time) bool {
+	switch e.Status {
+	case contracts.OutboxStatusPending:
+		return e.NextAttemptAt == nil || !e.NextAttemptAt.After(now)
+	case contracts.OutboxStatusInFlight:
+		return e.LeaseExpiresAt != nil && e.LeaseExpiresAt.Before(now)
+	default:
+		return false
+	}
+}
+
+func (a *MemoryOutboxRepositoryAdapter) ListRelayTargets(
+	_ context.Context,
+	limit int,
+) (spanResult0 []contracts.OutboxRelayTarget, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	now := time.Now().UTC()
+	seen := map[contracts.OutboxRelayTarget]bool{}
+	targets := make([]contracts.OutboxRelayTarget, 0)
+	for _, e := range a.events {
+		target := contracts.OutboxRelayTarget{TenantID: e.TenantID, Topic: e.DestinationTopic}
+		if relayEligible(e, now) && !seen[target] && len(targets) < limit {
+			seen[target] = true
+			targets = append(targets, target)
+		}
+	}
+	return targets, nil
 }
 
 func (a *MemoryOutboxRepositoryAdapter) ConfirmPublished(
@@ -112,9 +165,11 @@ func (a *MemoryOutboxRepositoryAdapter) ReleaseInFlightToPending(
 		return errors.NewConflictError("event not found or not in flight")
 	}
 
+	retryAt := time.Now().UTC().Add(rules.RelayBackoff(e.AttemptCount))
 	e.Status = contracts.OutboxStatusPending
 	e.LeaseOwner = ""
 	e.LeaseExpiresAt = nil
+	e.NextAttemptAt = &retryAt
 	e.LastError = reason
 	e.UpdatedAt = time.Now().UTC()
 	return nil

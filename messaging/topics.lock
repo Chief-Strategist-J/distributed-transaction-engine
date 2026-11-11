@@ -1,1 +1,10 @@
-{"version": "1.0.0", "topics": []}
+{
+  "version": "1.0.0",
+  "manifest_sha256": "8a36549a9a386799ff0af44fd0bb5edf94e8a7cd7ad35d34b0f5fcf341a956fe",
+  "topics": [
+    "dist-tx.events.v1",
+    "distributed-transaction-engine.events",
+    "distributed-transaction-engine.events.dlq",
+    "saga.dead-letter-queue"
+  ]
+}

@@ -234,3 +234,10 @@ func (a *MemoryDeadLetterRepositoryAdapter) ListRecords(
 	}
 	return result, nil
 }
+
+func (a *MemoryDeadLetterRepositoryAdapter) OutboxEvents() []string {
+	defer observability.TraceEnter(nil)()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.outboxEvents...)
+}

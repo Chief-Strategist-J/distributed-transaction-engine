@@ -215,6 +215,9 @@ func TestAuthConfig_EnvironmentOverridesAndLoads(t *testing.T) {
 	t.Setenv("AUTH_AUDIENCE", "dtx")
 	t.Setenv("AUTH_LEEWAY_SECONDS", "10")
 	t.Setenv("DB_RLS_ENFORCED", "true")
+	t.Setenv("DB_HOST", "db.internal")
+	t.Setenv("DB_USER", "dtx_login")
+	t.Setenv("DB_PASSWORD", "secret")
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("complete production config must load: %v", err)
@@ -235,11 +238,14 @@ func TestDatabaseConfig_ProductionRules(t *testing.T) {
 	}{
 		{"dev_defaults", DatabaseConfig{}, "", false, true},
 		{"dev_explicit_no_migrate", DatabaseConfig{AutoMigrate: &no}, "development", false, false},
-		{"production_requires_rls", DatabaseConfig{}, "production", true, false},
-		{"production_rls_ok", DatabaseConfig{RLSEnforced: true}, "production", false, false},
-		{"production_auto_migrate_refused", DatabaseConfig{RLSEnforced: true, AutoMigrate: &yes}, "production", true, true},
-		{"staging_requires_rls", DatabaseConfig{}, " Staging ", true, false},
-		{"production_case_insensitive", DatabaseConfig{RLSEnforced: true}, "PRODUCTION", false, false},
+		{"production_requires_rls", DatabaseConfig{Host: "h", User: "dtx_login", Password: "p"}, "production", true, false},
+		{"production_rls_ok", productionDB(true), "production", false, false},
+		{"production_auto_migrate_refused", withAutoMigrate(productionDB(true), &yes), "production", true, true},
+		{"staging_requires_rls", productionDB(false), " Staging ", true, false},
+		{"production_case_insensitive", productionDB(true), "PRODUCTION", false, false},
+		{"production_requires_host", DatabaseConfig{User: "dtx_login", Password: "p", RLSEnforced: true}, "production", true, false},
+		{"production_requires_password", DatabaseConfig{Host: "h", User: "dtx_login", RLSEnforced: true}, "production", true, false},
+		{"production_refuses_superuser", DatabaseConfig{Host: "h", User: "Postgres", Password: "p", RLSEnforced: true}, "production", true, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -262,5 +268,83 @@ func TestDatabaseConfig_EnvironmentOverrides(t *testing.T) {
 	}
 	if !cfg.Database.RLSEnforced || cfg.Database.AutoMigrate == nil || *cfg.Database.AutoMigrate {
 		t.Fatalf("env overrides not applied: %#v", cfg.Database)
+	}
+}
+
+func productionDB(rls bool) DatabaseConfig {
+	return DatabaseConfig{Host: "db.internal", User: "dtx_login", Password: "secret", RLSEnforced: rls}
+}
+
+func withAutoMigrate(cfg DatabaseConfig, value *bool) DatabaseConfig {
+	cfg.AutoMigrate = value
+	return cfg
+}
+
+func TestKafkaConfig_ProductionRules(t *testing.T) {
+	yes, no := true, false
+	cases := []struct {
+		name        string
+		cfg         KafkaConfig
+		brokers     string
+		environment string
+		wantErr     bool
+		wantCreate  bool
+	}{
+		{"dev_defaults_create_topics", KafkaConfig{}, "", "", false, true},
+		{"dev_explicit_off", KafkaConfig{AutoCreateTopics: &no}, "", "development", false, false},
+		{"production_requires_brokers", KafkaConfig{}, "", "production", true, false},
+		{"production_brokers_ok", KafkaConfig{}, "kafka:9092", "production", false, false},
+		{"production_refuses_auto_create", KafkaConfig{AutoCreateTopics: &yes}, "kafka:9092", "production", true, true},
+		{"staging_requires_brokers", KafkaConfig{}, "  ", "Staging", true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.cfg.Validate(tc.environment, tc.brokers); (err != nil) != tc.wantErr {
+				t.Fatalf("wantErr=%v got %v", tc.wantErr, err)
+			}
+			if got := tc.cfg.CreateTopicsOnStart(tc.environment); got != tc.wantCreate {
+				t.Fatalf("CreateTopicsOnStart expected %v got %v", tc.wantCreate, got)
+			}
+		})
+	}
+}
+
+func TestKafkaAndOutboxConfig_EnvironmentOverridesAndDefaults(t *testing.T) {
+	defaults, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaults.Outbox.RelayInterval() != 500*time.Millisecond || defaults.Outbox.BatchSize() != 100 || defaults.Kafka.Manifest() != "messaging/topics/topics.yaml" {
+		t.Fatalf("unexpected defaults: %#v %#v", defaults.Outbox, defaults.Kafka)
+	}
+	t.Setenv("KAFKA_WRITE_TIMEOUT_MS", "2500")
+	t.Setenv("KAFKA_BATCH_TIMEOUT_MS", "20")
+	t.Setenv("KAFKA_REPLICATION_FACTOR", "3")
+	t.Setenv("KAFKA_TOPICS_MANIFEST", "/etc/topics.yaml")
+	t.Setenv("OUTBOX_RELAY_ENABLED", "false")
+	t.Setenv("OUTBOX_RELAY_INTERVAL_MILLIS", "1500")
+	t.Setenv("OUTBOX_RELAY_BATCH_SIZE", "25")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Kafka.WriteTimeout() != 2500*time.Millisecond || cfg.Kafka.BatchTimeout() != 20*time.Millisecond || cfg.Kafka.ReplicationFactor != 3 || cfg.Kafka.Manifest() != "/etc/topics.yaml" {
+		t.Fatalf("kafka overrides not applied: %#v", cfg.Kafka)
+	}
+	if !cfg.Outbox.RelayDisabled || cfg.Outbox.RelayInterval() != 1500*time.Millisecond || cfg.Outbox.BatchSize() != 25 {
+		t.Fatalf("outbox overrides not applied: %#v", cfg.Outbox)
+	}
+}
+
+func TestKafkaAndOutboxConfig_InvalidOverridesFallBackToDefaults(t *testing.T) {
+	t.Setenv("KAFKA_WRITE_TIMEOUT_MS", "-5")
+	t.Setenv("OUTBOX_RELAY_INTERVAL_MILLIS", "abc")
+	t.Setenv("OUTBOX_RELAY_BATCH_SIZE", "0")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Kafka.WriteTimeoutMillis != 0 || cfg.Outbox.RelayInterval() != 500*time.Millisecond || cfg.Outbox.BatchSize() != 100 {
+		t.Fatalf("invalid values must be ignored: %#v %#v", cfg.Kafka, cfg.Outbox)
 	}
 }

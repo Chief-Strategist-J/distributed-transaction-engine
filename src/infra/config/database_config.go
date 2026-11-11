@@ -27,6 +27,12 @@ func (d *DatabaseConfig) Validate(environment string) error {
 	if !secureEnvironments[strings.ToLower(strings.TrimSpace(environment))] {
 		return nil
 	}
+	if strings.TrimSpace(d.Host) == "" || d.Password == "" {
+		return errors.New("DB_HOST and DB_PASSWORD (or DB_PASSWORD_FILE) are required in production and staging")
+	}
+	if strings.EqualFold(strings.TrimSpace(d.User), "postgres") {
+		return errors.New("production and staging must connect with the restricted login role, not the postgres superuser")
+	}
 	if !d.RLSEnforced {
 		return errors.New("DB_RLS_ENFORCED must be true in production and staging")
 	}

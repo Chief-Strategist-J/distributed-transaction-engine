@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://distributed-transaction-engine/schemas/saga.dead-letter-quarantined.v1.schema.json",
+  "title": "DEAD_LETTER_QUARANTINED",
+  "description": "Emitted when a poisoned saga step is admitted to the dead letter queue. Kafka key is the saga id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["recordId", "publicId", "sagaId", "stepIndex", "stepType", "failureClass", "fingerprint"],
+  "properties": {
+    "recordId": { "type": "string", "format": "uuid" },
+    "publicId": { "type": "string", "pattern": "^dlq_[0-9a-zA-Z]{26}$" },
+    "sagaId": { "type": "string", "format": "uuid" },
+    "stepIndex": { "type": "integer", "minimum": 0 },
+    "stepType": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "failureClass": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "fingerprint": { "type": "string", "minLength": 1, "maxLength": 256 }
+  }
+}

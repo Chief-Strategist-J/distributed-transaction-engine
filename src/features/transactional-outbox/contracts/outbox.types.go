@@ -29,6 +29,7 @@ type OutboxEventInstance struct {
 	Status            OutboxStatus           `json:"status"`
 	LeaseOwner        string                 `json:"leaseOwner,omitempty"`
 	LeaseExpiresAt    *time.Time             `json:"leaseExpiresAt,omitempty"`
+	NextAttemptAt     *time.Time             `json:"nextAttemptAt,omitempty"`
 	AttemptCount      int                    `json:"attemptCount"`
 	LastError         string                 `json:"lastError,omitempty"`
 	Version           int64                  `json:"version"`
@@ -71,4 +72,16 @@ type ParkOutboxEventInput struct {
 	EventID  string `json:"eventId"`
 	WorkerID string `json:"workerId"`
 	Reason   string `json:"reason"`
+}
+
+type OutboxRelayTarget struct {
+	TenantID string
+	Topic    string
+}
+
+type PublishRequest struct {
+	Topic        string
+	PartitionKey string
+	Headers      map[string]interface{}
+	Payload      []byte
 }

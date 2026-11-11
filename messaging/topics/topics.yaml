@@ -1,6 +1,19 @@
-# Declarative topic provisioning manifests
+# Declarative topic provisioning manifest. Applied by `engine provision-topics` and validated at startup.
+# replication_factor can be overridden per environment with KAFKA_REPLICATION_FACTOR.
 topics:
+  - name: dist-tx.events.v1
+    partitions: 6
+    replication_factor: 1
+    retention_ms: 604800000
+  - name: saga.dead-letter-queue
+    partitions: 3
+    replication_factor: 1
+    retention_ms: 2592000000
   - name: distributed-transaction-engine.events
     partitions: 3
     replication_factor: 1
     retention_ms: 604800000
+  - name: distributed-transaction-engine.events.dlq
+    partitions: 3
+    replication_factor: 1
+    retention_ms: 2592000000

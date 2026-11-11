@@ -1,0 +1,10 @@
+# Event type to schema registry. Every event_type written to outbox_events must be listed here.
+events:
+  - event_type: DEAD_LETTER_QUARANTINED
+    schema: saga.dead-letter-quarantined.v1.schema.json
+    topic: saga.dead-letter-queue
+    key: sagaId
+  - event_type: SAGA_STATE_TRANSITIONED
+    schema: saga.state-transitioned.v1.schema.json
+    topic: caller-defined
+    key: sagaId

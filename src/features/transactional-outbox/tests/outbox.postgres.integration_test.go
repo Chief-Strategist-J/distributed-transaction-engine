@@ -64,7 +64,7 @@ func TestPostgresOutboxAdapter_RealDatabaseInvariants(t *testing.T) {
 	tenantID := fmt.Sprintf("tenant_ox_%d", time.Now().UnixNano())
 	sagaID := uuid.New().String()
 	eventID := uuid.New().String()
-	eventPubID := fmt.Sprintf("oxe_%026d", time.Now().Unix()%10000000000)
+	eventPubID := "oxe_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:26]
 
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO workflow_definitions (
@@ -93,7 +93,7 @@ func TestPostgresOutboxAdapter_RealDatabaseInvariants(t *testing.T) {
 			false, 1, NOW() + INTERVAL '1 day', '{}', '{}',
 			NOW(), NOW()
 		)
-	`, sagaID, fmt.Sprintf("seq_%026d", time.Now().Unix()%10000000000), tenantID, uuid.New().String())
+	`, sagaID, "seq_"+strings.ReplaceAll(uuid.New().String(), "-", "")[:26], tenantID, uuid.New().String())
 	if err != nil {
 		t.Fatalf("failed to seed saga instance: %v", err)
 	}

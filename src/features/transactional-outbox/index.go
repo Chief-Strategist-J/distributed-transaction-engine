@@ -2,6 +2,7 @@ package transactionaloutbox
 
 import (
 	"database/sql"
+	"time"
 
 	contracts "distributed-transaction-engine/src/features/transactional-outbox/contracts"
 	machines "distributed-transaction-engine/src/features/transactional-outbox/domain/machines"
@@ -21,6 +22,8 @@ type PostgresAdapter = adapters.PostgresOutboxRepositoryAdapter
 type KafkaPublisher = adapters.KafkaPublisherAdapter
 type MemoryPublisher = adapters.MemoryKafkaPublisherAdapter
 type StateMachine = machines.OutboxStateMachine
+type Relay = service.OutboxRelay
+type KafkaPublisherOptions = adapters.KafkaPublisherOptions
 
 func NewService(deps ServiceDeps) *Service {
 	return service.NewOutboxService(deps)
@@ -44,4 +47,12 @@ func NewMemoryPublisher() *MemoryPublisher {
 
 func NewStateMachine() *StateMachine {
 	return machines.NewOutboxStateMachine()
+}
+
+func NewKafkaPublisherWithOptions(brokerAddress string, options KafkaPublisherOptions) *KafkaPublisher {
+	return adapters.NewKafkaPublisherAdapterWithOptions(brokerAddress, options)
+}
+
+func NewRelay(svc *Service, workerID string, batchLimit int, leaseDuration time.Duration, interval time.Duration) *Relay {
+	return service.NewOutboxRelay(svc, workerID, batchLimit, leaseDuration, interval)
 }

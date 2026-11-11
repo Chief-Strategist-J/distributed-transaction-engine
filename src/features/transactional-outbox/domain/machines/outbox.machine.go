@@ -15,6 +15,7 @@ func NewOutboxStateMachine() *OutboxStateMachine {
 
 func (m *OutboxStateMachine) EvaluatePublishOutcome(
 	currentStatus contracts.OutboxStatus,
+	attemptCount int,
 	publishErr error,
 ) (spanResult0 contracts.OutboxStatus, spanErr error) {
 	defer observability.TraceEnter(&spanErr)()
@@ -26,7 +27,7 @@ func (m *OutboxStateMachine) EvaluatePublishOutcome(
 	}
 
 	classification := rules.ClassifyPublishError(publishErr)
-	if classification == rules.ErrorNonRetriable {
+	if classification == rules.ErrorNonRetriable || rules.ExceededPublishAttempts(attemptCount) {
 		if !rules.CanTransitionOutboxStatus(currentStatus, contracts.OutboxStatusParked) {
 			return currentStatus, errors.NewConflictError("illegal state transition to PARKED")
 		}

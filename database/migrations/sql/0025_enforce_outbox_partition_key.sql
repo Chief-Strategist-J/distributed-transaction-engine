@@ -27,8 +27,14 @@ BEGIN
 END
 $$;
 
-ALTER TABLE outbox_events
-    ADD CONSTRAINT outbox_events_partition_key_ck
-    CHECK (btrim(partition_key) <> '' AND partition_key = saga_id::text) NOT VALID;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'outbox_events_partition_key_ck' AND conrelid = 'outbox_events'::regclass) THEN
+        ALTER TABLE outbox_events
+            ADD CONSTRAINT outbox_events_partition_key_ck
+            CHECK (btrim(partition_key) <> '' AND partition_key = saga_id::text) NOT VALID;
+    END IF;
+END
+$$;
 
 ALTER TABLE outbox_events VALIDATE CONSTRAINT outbox_events_partition_key_ck;

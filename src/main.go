@@ -190,7 +190,10 @@ func describeService() chassis.ServiceSpec {
 				kafkaBrokers = os.Getenv("KAFKA_BROKERS")
 			}
 			if kafkaBrokers != "" {
-				outboxPublisher = transactionalOutbox.NewKafkaPublisher(kafkaBrokers)
+				outboxPublisher = transactionalOutbox.NewKafkaPublisherWithOptions(kafkaBrokers, transactionalOutbox.KafkaPublisherOptions{
+					WriteTimeout: deps.Config.Kafka.WriteTimeout(),
+					BatchTimeout: deps.Config.Kafka.BatchTimeout(),
+				})
 			}
 			outboxSvc := transactionalOutbox.NewService(transactionalOutbox.ServiceDeps{
 				Repo:      outboxRepo,
@@ -198,6 +201,7 @@ func describeService() chassis.ServiceSpec {
 				Machine:   outboxMachines.NewOutboxStateMachine(),
 				Tracer:    observability.NewTracer("transactional-outbox"),
 			})
+			outboxRelay := transactionalOutbox.NewRelay(outboxSvc, deps.Config.Poller.WorkerID+"-outbox-"+uuid.NewString()[:8], deps.Config.Outbox.BatchSize(), deps.Config.LeaseDuration(), deps.Config.Outbox.RelayInterval())
 			outboxHandler := handlers.NewOutboxHandler(outboxSvc)
 			outboxRouter := routers.NewOutboxRouter(outboxHandler)
 
@@ -415,6 +419,8 @@ func describeService() chassis.ServiceSpec {
 					"pollInterval":            deps.Config.PollInterval(),
 					"pollerEnabled":           !deps.Config.Poller.Disabled,
 					"hasDB":                   deps.DB != nil,
+					"outboxRelay":             outboxRelay,
+					"outboxRelayEnabled":      !deps.Config.Outbox.RelayDisabled && deps.DB != nil && kafkaBrokers != "",
 				},
 			}, nil
 		},
@@ -502,6 +508,21 @@ func describeService() chassis.ServiceSpec {
 					Name: "saga-poller",
 					Start: func(ctx context.Context) error {
 						poller.Start(ctx, interval)
+						return nil
+					},
+					Drain: func(_ context.Context) error {
+						return nil
+					},
+				})
+			}
+
+			outboxRelay, hasRelay := services.Instances["outboxRelay"].(*transactionalOutbox.Relay)
+			relayEnabled, _ := services.Instances["outboxRelayEnabled"].(bool)
+			if hasRelay && relayEnabled {
+				jobs = append(jobs, chassis.JobSpec{
+					Name: "outbox-relay",
+					Start: func(ctx context.Context) error {
+						outboxRelay.Run(ctx)
 						return nil
 					},
 					Drain: func(_ context.Context) error {

@@ -45,7 +45,18 @@ type PollerConfig struct {
 }
 
 type KafkaConfig struct {
-	Brokers string `yaml:"brokers"`
+	Brokers            string `yaml:"brokers"`
+	WriteTimeoutMillis int    `yaml:"write_timeout_millis"`
+	BatchTimeoutMillis int    `yaml:"batch_timeout_millis"`
+	AutoCreateTopics   *bool  `yaml:"auto_create_topics"`
+	TopicsManifest     string `yaml:"topics_manifest"`
+	ReplicationFactor  int    `yaml:"replication_factor"`
+}
+
+type OutboxConfig struct {
+	RelayDisabled       bool `yaml:"relay_disabled"`
+	RelayIntervalMillis int  `yaml:"relay_interval_millis"`
+	RelayBatchSize      int  `yaml:"relay_batch_size"`
 }
 
 type EndpointsConfig struct {
@@ -72,6 +83,7 @@ type AppConfig struct {
 	Database  DatabaseConfig  `yaml:"database"`
 	Poller    PollerConfig    `yaml:"poller"`
 	Kafka     KafkaConfig     `yaml:"kafka"`
+	Outbox    OutboxConfig    `yaml:"outbox"`
 	Endpoints EndpointsConfig `yaml:"endpoints"`
 }
 
@@ -287,11 +299,10 @@ func Load(path string) (*AppConfig, error) {
 	}
 
 	cfg.Database.ApplyEnvironment()
+	cfg.Kafka.ApplyEnvironment()
+	cfg.Outbox.ApplyEnvironment()
 	cfg.Auth.ApplyEnvironment()
 	if err := cfg.Auth.Validate(os.Getenv("ENV")); err != nil {
-		return nil, err
-	}
-	if err := cfg.Database.Validate(os.Getenv("ENV")); err != nil {
 		return nil, err
 	}
 

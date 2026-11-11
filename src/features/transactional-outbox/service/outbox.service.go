@@ -3,14 +3,18 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	contracts "distributed-transaction-engine/src/features/transactional-outbox/contracts"
 	machines "distributed-transaction-engine/src/features/transactional-outbox/domain/machines"
+	rules "distributed-transaction-engine/src/features/transactional-outbox/domain/rules"
 	ports "distributed-transaction-engine/src/features/transactional-outbox/infrastructure/ports"
 	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
 )
+
+const relayTargetLimit = 100
 
 type OutboxServiceDeps struct {
 	Repo      ports.OutboxRepositoryPort
@@ -62,7 +66,24 @@ func (s *OutboxService) RelayPendingEvents(
 		return 0, err
 	}
 
+	publishable, requests := s.prepareBatch(ctx, tenantID, workerID, events)
+	if len(requests) == 0 {
+		return 0, nil
+	}
+	outcomes := s.publisher.PublishBatch(ctx, requests)
+
 	publishedCount := 0
+	for index, event := range publishable {
+		if s.settleEvent(ctx, tenantID, workerID, event, outcomes[index]) {
+			publishedCount++
+		}
+	}
+	return publishedCount, nil
+}
+
+func (s *OutboxService) prepareBatch(ctx context.Context, tenantID string, workerID string, events []contracts.OutboxEventInstance) ([]contracts.OutboxEventInstance, []contracts.PublishRequest) {
+	publishable := make([]contracts.OutboxEventInstance, 0, len(events))
+	requests := make([]contracts.PublishRequest, 0, len(events))
 	for _, event := range events {
 		payloadBytes, err := json.Marshal(event.Payload)
 		if err != nil {
@@ -74,33 +95,52 @@ func (s *OutboxService) RelayPendingEvents(
 			}))
 			continue
 		}
-
-		pubErr := s.publisher.PublishMessage(ctx, event.DestinationTopic, event.PartitionKey, event.Headers, payloadBytes)
-		nextStatus, _ := s.machine.EvaluatePublishOutcome(event.Status, pubErr)
-
-		switch nextStatus {
-		case contracts.OutboxStatusPublished:
-			confirmInput := &contracts.ConfirmOutboxPublishInput{
-				TenantID: tenantID,
-				EventID:  event.ID,
-				WorkerID: workerID,
-			}
-			if err := s.repo.ConfirmPublished(ctx, confirmInput); err == nil {
-				publishedCount++
-			}
-		case contracts.OutboxStatusParked:
-			observability.NoteSwallowed(s.repo.ParkEvent(ctx, &contracts.ParkOutboxEventInput{
-				TenantID: tenantID,
-				EventID:  event.ID,
-				WorkerID: workerID,
-				Reason:   pubErr.Error(),
-			}))
-		case contracts.OutboxStatusPending:
-			observability.NoteSwallowed(s.repo.ReleaseInFlightToPending(ctx, tenantID, event.ID, pubErr.Error()))
-		}
+		publishable = append(publishable, event)
+		requests = append(requests, contracts.PublishRequest{
+			Topic: event.DestinationTopic, PartitionKey: event.PartitionKey, Headers: event.Headers, Payload: payloadBytes,
+		})
 	}
+	return publishable, requests
+}
 
-	return publishedCount, nil
+func (s *OutboxService) settleEvent(ctx context.Context, tenantID string, workerID string, event contracts.OutboxEventInstance, pubErr error) bool {
+	nextStatus, _ := s.machine.EvaluatePublishOutcome(event.Status, event.AttemptCount, pubErr)
+	switch nextStatus {
+	case contracts.OutboxStatusPublished:
+		confirmInput := &contracts.ConfirmOutboxPublishInput{TenantID: tenantID, EventID: event.ID, WorkerID: workerID}
+		return s.repo.ConfirmPublished(ctx, confirmInput) == nil
+	case contracts.OutboxStatusParked:
+		observability.NoteSwallowed(s.repo.ParkEvent(ctx, &contracts.ParkOutboxEventInput{
+			TenantID: tenantID, EventID: event.ID, WorkerID: workerID, Reason: parkReason(event.AttemptCount, pubErr),
+		}))
+	case contracts.OutboxStatusPending:
+		observability.NoteSwallowed(s.repo.ReleaseInFlightToPending(ctx, tenantID, event.ID, pubErr.Error()))
+	}
+	return false
+}
+
+func parkReason(attemptCount int, pubErr error) string {
+	if rules.ExceededPublishAttempts(attemptCount) && rules.ClassifyPublishError(pubErr) == rules.ErrorRetriable {
+		return fmt.Sprintf("exceeded %d publish attempts: %v", rules.MaxPublishAttempts, pubErr)
+	}
+	return pubErr.Error()
+}
+
+func (s *OutboxService) RelayAllPending(ctx context.Context, workerID string, batchLimit int, leaseDuration time.Duration) (spanResult0 int, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
+	targets, err := s.repo.ListRelayTargets(ctx, relayTargetLimit)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, target := range targets {
+		count, relayErr := s.RelayPendingEvents(ctx, target.TenantID, target.Topic, workerID, batchLimit, leaseDuration)
+		if relayErr != nil {
+			return total, relayErr
+		}
+		total += count
+	}
+	return total, nil
 }
 
 func (s *OutboxService) GetOutboxEvent(ctx context.Context, tenantID string, eventID string) (spanResult0 *contracts.OutboxEventInstance, spanErr error) {

@@ -224,3 +224,21 @@ func (a *PostgresOutboxRepositoryAdapter) GetEvent(ctx context.Context, tenantID
 
 	return &e, nil
 }
+
+func (a *PostgresOutboxRepositoryAdapter) ListRelayTargets(ctx context.Context, limit int) (spanResult0 []contracts.OutboxRelayTarget, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
+	rows, err := a.db.QueryContext(ctx, queries.FLOW_LIST_OUTBOX_RELAY_TARGETS, limit)
+	if err != nil {
+		return nil, errors.NewInternalError("failed to list outbox relay targets: " + err.Error())
+	}
+	defer rows.Close()
+	targets := make([]contracts.OutboxRelayTarget, 0)
+	for rows.Next() {
+		var target contracts.OutboxRelayTarget
+		if scanErr := rows.Scan(&target.TenantID, &target.Topic); scanErr != nil {
+			return nil, errors.NewInternalError("failed to scan outbox relay target: " + scanErr.Error())
+		}
+		targets = append(targets, target)
+	}
+	return targets, rows.Err()
+}

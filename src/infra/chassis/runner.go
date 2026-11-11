@@ -48,6 +48,24 @@ func Run(spec ServiceSpec, args []string, env []string) int {
 		return ExitConfig
 	}
 
+	if bootCtx.Command == "provision-topics" {
+		return runProvisionTopics(cfg)
+	}
+
+	if bootCtx.Command == "serve" {
+		if code := ensureTopicsOnStart(cfg, os.Getenv("ENV")); code != ExitSuccess {
+			return code
+		}
+		if validateErr := cfg.Kafka.Validate(os.Getenv("ENV"), firstNonEmpty(cfg.Kafka.Brokers, os.Getenv("KAFKA_BROKERS"))); validateErr != nil {
+			log.Printf("Kafka configuration error: %v\n", validateErr)
+			return ExitConfig
+		}
+		if validateErr := cfg.Database.Validate(os.Getenv("ENV")); validateErr != nil {
+			log.Printf("Database configuration error: %v\n", validateErr)
+			return ExitConfig
+		}
+	}
+
 	tokenVerifier, err := BuildVerifier(cfg.Auth, os.Getenv("ENV"), time.Now)
 	if err != nil {
 		log.Printf("Authentication configuration error: %v\n", err)

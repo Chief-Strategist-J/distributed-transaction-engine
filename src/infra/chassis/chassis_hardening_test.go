@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
@@ -310,5 +311,96 @@ func TestBuildAuthWrapper_DisabledModeIsPassThroughOutsideProduction(t *testing.
 	wrap(echoHandler(http.StatusOK, `{}`)).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/x", nil))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("disabled mode must pass through, got %d", recorder.Code)
+	}
+}
+
+func TestRun_ServeRefusesSuperuserDatabaseInProduction(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ENV", "production")
+	t.Setenv("AUTH_JWKS_FILE", writeJWKS(t, key))
+	t.Setenv("AUTH_ISSUER", "https://issuer")
+	t.Setenv("AUTH_AUDIENCE", "dtx")
+	t.Setenv("DB_HOST", "db.internal")
+	t.Setenv("DB_USER", "postgres")
+	t.Setenv("DB_PASSWORD", "secret")
+	t.Setenv("DB_RLS_ENFORCED", "true")
+	t.Setenv("KAFKA_BROKERS", "127.0.0.1:1")
+	var output strings.Builder
+	log.SetOutput(&output)
+	defer log.SetOutput(os.Stderr)
+	if code := Run(ServiceSpec{}, []string{"--config", filepath.Join(t.TempDir(), "none.yaml"), "serve"}, nil); code != ExitConfig {
+		t.Fatalf("expected ExitConfig, got %d", code)
+	}
+	if !strings.Contains(output.String(), "restricted login role") {
+		t.Fatalf("expected the superuser refusal to be logged, got %q", output.String())
+	}
+}
+
+func writeTopicsManifest(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "topics.yaml")
+	content := "topics:\n  - {name: " + name + ", partitions: 2, replication_factor: 1}\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestRun_ProvisionTopicsCommandCreatesTheManifestTopics(t *testing.T) {
+	brokers := os.Getenv("KAFKA_BROKERS")
+	if brokers == "" {
+		brokers = "127.0.0.1:9092"
+	}
+	conn, err := net.DialTimeout("tcp", brokers, time.Second)
+	if err != nil {
+		t.Skipf("kafka is not reachable: %v", err)
+	}
+	_ = conn.Close()
+	topic := "chassis-provision-" + strings.ReplaceAll(time.Now().Format("150405.000000"), ".", "")
+	t.Setenv("KAFKA_BROKERS", brokers)
+	t.Setenv("KAFKA_TOPICS_MANIFEST", writeTopicsManifest(t, topic))
+	args := []string{"--config", filepath.Join(t.TempDir(), "none.yaml"), "provision-topics"}
+	if code := Run(ServiceSpec{}, args, nil); code != ExitSuccess {
+		t.Fatalf("expected success, got %d", code)
+	}
+	if code := Run(ServiceSpec{}, args, nil); code != ExitSuccess {
+		t.Fatalf("provisioning must be idempotent, got %d", code)
+	}
+}
+
+func TestRun_ProvisionTopicsFailsWithoutBrokersOrWithAnUnreachableCluster(t *testing.T) {
+	t.Setenv("KAFKA_BROKERS", "")
+	args := []string{"--config", filepath.Join(t.TempDir(), "none.yaml"), "provision-topics"}
+	if code := Run(ServiceSpec{}, args, nil); code != ExitDependency {
+		t.Fatalf("no brokers must fail with ExitDependency, got %d", code)
+	}
+	t.Setenv("KAFKA_BROKERS", "127.0.0.1:1")
+	t.Setenv("KAFKA_TOPICS_MANIFEST", writeTopicsManifest(t, "unreachable"))
+	if code := Run(ServiceSpec{}, args, nil); code != ExitDependency {
+		t.Fatalf("an unreachable cluster must fail with ExitDependency, got %d", code)
+	}
+}
+
+func TestRun_ServeRefusesProductionWithoutKafkaBrokers(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ENV", "production")
+	t.Setenv("AUTH_JWKS_FILE", writeJWKS(t, key))
+	t.Setenv("AUTH_ISSUER", "https://issuer")
+	t.Setenv("AUTH_AUDIENCE", "dtx")
+	t.Setenv("KAFKA_BROKERS", "")
+	var output strings.Builder
+	log.SetOutput(&output)
+	defer log.SetOutput(os.Stderr)
+	if code := Run(ServiceSpec{}, []string{"--config", filepath.Join(t.TempDir(), "none.yaml"), "serve"}, nil); code != ExitConfig {
+		t.Fatalf("expected ExitConfig, got %d", code)
+	}
+	if !strings.Contains(output.String(), "KAFKA_BROKERS is required") {
+		t.Fatalf("expected the broker requirement in the log, got %q", output.String())
 	}
 }

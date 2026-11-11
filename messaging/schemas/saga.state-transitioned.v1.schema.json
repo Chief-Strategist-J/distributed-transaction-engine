@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://distributed-transaction-engine/schemas/saga.state-transitioned.v1.schema.json",
+  "title": "SAGA_STATE_TRANSITIONED",
+  "description": "Emitted by the optimistic concurrency control feature after a successful compare-and-swap. The body is a caller supplied JSON object; consumers must treat unknown properties as additive. Kafka key is the saga id.",
+  "type": "object",
+  "additionalProperties": true
+}
