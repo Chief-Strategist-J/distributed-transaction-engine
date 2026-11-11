@@ -18,6 +18,7 @@ import (
 	"distributed-transaction-engine/src/infra/config"
 	"distributed-transaction-engine/src/infra/database"
 	"distributed-transaction-engine/src/infra/observability"
+	"distributed-transaction-engine/src/shared/utils"
 )
 
 type App struct {
@@ -47,7 +48,7 @@ func Run(spec ServiceSpec, args []string, env []string) int {
 		return ExitConfig
 	}
 
-	authWrap, err := BuildAuthWrapper(cfg.Auth, os.Getenv("ENV"), time.Now)
+	tokenVerifier, err := BuildVerifier(cfg.Auth, os.Getenv("ENV"), time.Now)
 	if err != nil {
 		log.Printf("Authentication configuration error: %v\n", err)
 		return ExitConfig
@@ -58,7 +59,7 @@ func Run(spec ServiceSpec, args []string, env []string) int {
 
 	var db *sql.DB
 	if spec.Needs.Database && cfg.Database.Host != "" {
-		openedDB, dbErr := observability.OpenTracedPostgres(cfg.ConnString())
+		openedDB, dbErr := openDatabase(cfg, bootCtx.Command)
 		if dbErr != nil {
 			log.Printf("PostgreSQL open failed: %v\n", dbErr)
 		} else {
@@ -69,7 +70,9 @@ func Run(spec ServiceSpec, args []string, env []string) int {
 				log.Printf("PostgreSQL ping failed: %v\n", pingErr)
 			} else {
 				db = openedDB
-				if spec.Migrations != nil {
+				if bootCtx.Command != "migrate" && !cfg.Database.MigrateOnStart(os.Getenv("ENV")) {
+					log.Printf("Automatic migrations are disabled; run the migrate command as a separate job\n")
+				} else if spec.Migrations != nil {
 					mig := spec.Migrations()
 					if mig.Apply != nil {
 						if err := mig.Apply(rootCtx, db, cfg.Database.MigrationsDir); err != nil {
@@ -92,9 +95,10 @@ func Run(spec ServiceSpec, args []string, env []string) int {
 
 	health := NewHealthCoordinator(db, ParseBrokers(firstNonEmpty(cfg.Kafka.Brokers, os.Getenv("KAFKA_BROKERS")))...)
 	deps := Dependencies{
-		Context: rootCtx,
-		Config:  cfg,
-		DB:      db,
+		Context:       rootCtx,
+		Config:        cfg,
+		DB:            db,
+		TokenVerifier: tokenVerifier,
 	}
 
 	services, err := spec.BuildServices(deps)
@@ -112,7 +116,7 @@ func Run(spec ServiceSpec, args []string, env []string) int {
 		Services: services,
 		Health:   health,
 		Spec:     spec,
-		AuthWrap: authWrap,
+		AuthWrap: WrapperFor(tokenVerifier),
 	}
 
 	lifecycle := NewLifecycle()
@@ -146,7 +150,7 @@ func Run(spec ServiceSpec, args []string, env []string) int {
 	if spec.Jobs != nil {
 		for _, job := range spec.Jobs(services) {
 			j := job
-			lifecycle.AddComponent(j.Name, j.Start, j.Drain)
+			lifecycle.AddComponent(j.Name, platformStart(j.Start), j.Drain)
 		}
 	}
 
@@ -267,4 +271,17 @@ func runLongLived(app *App, lifecycle *Lifecycle, rootCtx context.Context) int {
 	}
 
 	return exitCode
+}
+
+func openDatabase(cfg *config.AppConfig, command string) (*sql.DB, error) {
+	if cfg.Database.RLSEnforced && command != "migrate" {
+		return observability.OpenTracedPostgresScoped(cfg.ConnString())
+	}
+	return observability.OpenTracedPostgres(cfg.ConnString())
+}
+
+func platformStart(start func(context.Context) error) func(context.Context) error {
+	return func(ctx context.Context) error {
+		return start(utils.WithPlatform(ctx))
+	}
 }

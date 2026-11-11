@@ -25,3 +25,7 @@ type AuthRepositoryPort interface {
 	HasReplayNonce(ctx context.Context, tenantID string, provider string, nonce string) (bool, error)
 }
 
+
+type TokenVerifierPort interface {
+	Verify(ctx context.Context, token string) (*contracts.VerifiedToken, error)
+}

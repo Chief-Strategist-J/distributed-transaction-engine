@@ -342,8 +342,13 @@ func describeService() chassis.ServiceSpec {
 			if deps.DB != nil {
 				authRepo = auth.NewPostgresRepository(deps.DB)
 			}
+			var tokenVerifier auth.TokenVerifierPort
+			if deps.TokenVerifier != nil {
+				tokenVerifier = auth.NewJWTTokenVerifier(deps.TokenVerifier)
+			}
 			authSvc := auth.NewService(auth.ServiceDeps{
 				Repo:     authRepo,
+				Verifier: tokenVerifier,
 				AuditSvc: auditSvc,
 				Tracer:   observability.NewTracer("authentication-authorization"),
 			})

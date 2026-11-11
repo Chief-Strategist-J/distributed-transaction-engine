@@ -33,6 +33,8 @@ type DatabaseConfig struct {
 	MaxIdleConns           int    `yaml:"max_idle_conns"`
 	ConnMaxLifetimeMinutes int    `yaml:"conn_max_lifetime_minutes"`
 	MigrationsDir          string `yaml:"migrations_dir"`
+	RLSEnforced            bool   `yaml:"rls_enforced"`
+	AutoMigrate            *bool  `yaml:"auto_migrate"`
 }
 
 type PollerConfig struct {
@@ -284,8 +286,12 @@ func Load(path string) (*AppConfig, error) {
 		cfg.Kafka.Brokers = kafkaBrokers
 	}
 
+	cfg.Database.ApplyEnvironment()
 	cfg.Auth.ApplyEnvironment()
 	if err := cfg.Auth.Validate(os.Getenv("ENV")); err != nil {
+		return nil, err
+	}
+	if err := cfg.Database.Validate(os.Getenv("ENV")); err != nil {
 		return nil, err
 	}
 

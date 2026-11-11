@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 
+	"distributed-transaction-engine/src/infra/auth"
 	"distributed-transaction-engine/src/infra/config"
 )
 
@@ -32,9 +33,10 @@ type Contracts struct {
 }
 
 type Dependencies struct {
-	Context context.Context
-	Config  *config.AppConfig
-	DB      *sql.DB
+	Context       context.Context
+	Config        *config.AppConfig
+	DB            *sql.DB
+	TokenVerifier *auth.Verifier
 }
 
 type Services struct {

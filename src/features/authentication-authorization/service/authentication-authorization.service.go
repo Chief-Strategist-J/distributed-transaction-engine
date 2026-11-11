@@ -20,12 +20,14 @@ import (
 
 type ServiceDeps struct {
 	Repo     ports.AuthRepositoryPort
+	Verifier ports.TokenVerifierPort
 	AuditSvc *audittrail.AuditTrailService
 	Tracer   *observability.DefaultTracer
 }
 
 type AuthenticationAuthorizationService struct {
 	repo     ports.AuthRepositoryPort
+	verifier ports.TokenVerifierPort
 	auditSvc *audittrail.AuditTrailService
 	tracer   *observability.DefaultTracer
 	machine  *machines.AuthRiskMachine
@@ -38,6 +40,7 @@ func NewAuthenticationAuthorizationService(deps ServiceDeps) *AuthenticationAuth
 	}
 	return &AuthenticationAuthorizationService{
 		repo:     deps.Repo,
+		verifier: deps.Verifier,
 		auditSvc: deps.AuditSvc,
 		tracer:   tracer,
 		machine:  machines.NewAuthRiskMachine(),
@@ -56,16 +59,12 @@ func (s *AuthenticationAuthorizationService) AuthenticateToken(ctx context.Conte
 		return nil, err
 	}
 
-	parts := strings.Split(inputCmd.Token, ".")
-	if len(parts) != 3 {
-		return nil, appErrors.NewUnauthorizedError("malformed token structure")
+	verified, err := s.verifyToken(ctx, inputCmd)
+	if err != nil {
+		return nil, err
 	}
 
-	principalID := "usr_mock_subject_42"
-	tenantID := "tenant-alpha"
-	jti := "jti_" + parts[0][:4]
-
-	revoked, err := s.repo.IsRevoked(ctx, tenantID, contracts.RevocationTargetTypeToken, jti)
+	revoked, err := s.repo.IsRevoked(ctx, verified.TenantID, contracts.RevocationTargetTypeToken, verified.TokenID)
 	if err != nil {
 		return nil, err
 	}
@@ -75,13 +74,40 @@ func (s *AuthenticationAuthorizationService) AuthenticateToken(ctx context.Conte
 
 	return &contracts.AuthContext{
 		CallerType:     contracts.CallerTypeUserOIDC,
-		PrincipalID:    principalID,
-		TenantID:       tenantID,
-		Scopes:         []string{"tx:start", "tx:cancel", "tx:view"},
-		Roles:          []string{"standard_user"},
+		PrincipalID:    verified.Subject,
+		TenantID:       verified.TenantID,
+		Scopes:         verified.Scopes,
+		Roles:          verified.Roles,
 		StepUpVerified: false,
-		TokenJTI:       jti,
+		TokenJTI:       verified.TokenID,
 	}, nil
+}
+
+func (s *AuthenticationAuthorizationService) verifyToken(ctx context.Context, cmd contracts.AuthenticateTokenCommand) (spanResult0 *contracts.VerifiedToken, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
+	if s.verifier == nil {
+		return nil, appErrors.NewUnauthorizedError("token verification is not configured")
+	}
+	verified, err := s.verifier.Verify(ctx, cmd.Token)
+	if err != nil {
+		return nil, err
+	}
+	if verified.TokenID == "" {
+		return nil, appErrors.NewUnauthorizedError("token id is required")
+	}
+	if cmd.Issuer != verified.Issuer || !containsString(verified.Audience, cmd.Audience) {
+		return nil, appErrors.NewUnauthorizedError("token issuer or audience mismatch")
+	}
+	return verified, nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *AuthenticationAuthorizationService) AuthenticateAPIKey(ctx context.Context, cmd contracts.AuthenticateAPIKeyCommand) (spanResult0 *contracts.AuthContext, spanErr error) {

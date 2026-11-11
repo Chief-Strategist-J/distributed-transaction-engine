@@ -214,11 +214,53 @@ func TestAuthConfig_EnvironmentOverridesAndLoads(t *testing.T) {
 	t.Setenv("AUTH_ISSUER", "https://issuer")
 	t.Setenv("AUTH_AUDIENCE", "dtx")
 	t.Setenv("AUTH_LEEWAY_SECONDS", "10")
+	t.Setenv("DB_RLS_ENFORCED", "true")
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("complete production config must load: %v", err)
 	}
 	if cfg.Auth.JWKSFile != "/keys/jwks.json" || cfg.Auth.Leeway() != 10*time.Second {
 		t.Fatalf("env overrides not applied: %#v", cfg.Auth)
+	}
+}
+
+func TestDatabaseConfig_ProductionRules(t *testing.T) {
+	yes, no := true, false
+	cases := []struct {
+		name        string
+		cfg         DatabaseConfig
+		environment string
+		wantErr     bool
+		wantMigrate bool
+	}{
+		{"dev_defaults", DatabaseConfig{}, "", false, true},
+		{"dev_explicit_no_migrate", DatabaseConfig{AutoMigrate: &no}, "development", false, false},
+		{"production_requires_rls", DatabaseConfig{}, "production", true, false},
+		{"production_rls_ok", DatabaseConfig{RLSEnforced: true}, "production", false, false},
+		{"production_auto_migrate_refused", DatabaseConfig{RLSEnforced: true, AutoMigrate: &yes}, "production", true, true},
+		{"staging_requires_rls", DatabaseConfig{}, " Staging ", true, false},
+		{"production_case_insensitive", DatabaseConfig{RLSEnforced: true}, "PRODUCTION", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.cfg.Validate(tc.environment); (err != nil) != tc.wantErr {
+				t.Fatalf("wantErr=%v got %v", tc.wantErr, err)
+			}
+			if got := tc.cfg.MigrateOnStart(tc.environment); got != tc.wantMigrate {
+				t.Fatalf("MigrateOnStart expected %v got %v", tc.wantMigrate, got)
+			}
+		})
+	}
+}
+
+func TestDatabaseConfig_EnvironmentOverrides(t *testing.T) {
+	t.Setenv("DB_RLS_ENFORCED", "true")
+	t.Setenv("AUTO_MIGRATE", "false")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Database.RLSEnforced || cfg.Database.AutoMigrate == nil || *cfg.Database.AutoMigrate {
+		t.Fatalf("env overrides not applied: %#v", cfg.Database)
 	}
 }

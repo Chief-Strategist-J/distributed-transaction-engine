@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 
 	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/constants"
+	"distributed-transaction-engine/src/shared/utils"
 )
 
 var tenantFieldNames = []string{"tenantId", "tenant_id", "tenant"}
@@ -114,13 +116,21 @@ func bodyTenantMismatch(r *http.Request, tenantID string) bool {
 	return false
 }
 
+func scopeContext(ctx context.Context, tenantID string, operator bool) context.Context {
+	ctx = utils.WithTenant(ctx, tenantID)
+	if operator {
+		ctx = utils.WithPlatform(ctx)
+	}
+	return ctx
+}
+
 func jsonStringEquals(raw json.RawMessage, want string) bool {
 	var value string
 	return json.Unmarshal(raw, &value) == nil && value == want
 }
 
 func bindPrincipal(r *http.Request, principal Principal) *http.Request {
-	clone := r.Clone(WithPrincipal(r.Context(), principal))
+	clone := r.Clone(scopeContext(WithPrincipal(r.Context(), principal), principal.TenantID, principal.HasRole(constants.OperatorRoleSREAdmin)))
 	clone.Header.Set(constants.HeaderXTenantID, principal.TenantID)
 	clone.Header.Set(constants.HeaderXPrincipalID, principal.Subject)
 	clone.Header.Del(constants.HeaderXOperatorRole)

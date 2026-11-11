@@ -62,6 +62,17 @@ type AuthContext struct {
 	TokenJTI       string     `json:"token_jti,omitempty"`
 }
 
+type VerifiedToken struct {
+	Subject   string
+	TenantID  string
+	Issuer    string
+	Audience  []string
+	TokenID   string
+	Roles     []string
+	Scopes    []string
+	ExpiresAt time.Time
+}
+
 type AuthenticateTokenCommand struct {
 	Token    string `json:"token"`
 	Issuer   string `json:"issuer"`

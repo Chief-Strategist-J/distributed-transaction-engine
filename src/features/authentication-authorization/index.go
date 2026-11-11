@@ -14,6 +14,8 @@ import (
 type AuthenticationAuthorizationService = service.AuthenticationAuthorizationService
 type ServiceDeps = service.ServiceDeps
 type AuthRepositoryPort = ports.AuthRepositoryPort
+type TokenVerifierPort = ports.TokenVerifierPort
+type PrincipalVerifier = adapters.PrincipalVerifier
 
 type AuthContext = contracts.AuthContext
 type AuthorizeRequestCommand = contracts.AuthorizeRequestCommand
@@ -35,6 +37,10 @@ type ProviderReplayRecord = contracts.ProviderReplayRecord
 
 func NewService(deps ServiceDeps) *AuthenticationAuthorizationService {
 	return service.NewAuthenticationAuthorizationService(deps)
+}
+
+func NewJWTTokenVerifier(verifier PrincipalVerifier) ports.TokenVerifierPort {
+	return adapters.NewJWTTokenVerifierAdapter(verifier)
 }
 
 func NewMemoryRepository() ports.AuthRepositoryPort {

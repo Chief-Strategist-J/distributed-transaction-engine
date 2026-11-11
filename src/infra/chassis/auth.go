@@ -14,10 +14,9 @@ import (
 
 type AuthWrapper func(http.Handler) http.Handler
 
-func BuildAuthWrapper(cfg config.AuthConfig, environment string, clock func() time.Time) (AuthWrapper, error) {
+func BuildVerifier(cfg config.AuthConfig, environment string, clock func() time.Time) (*auth.Verifier, error) {
 	if cfg.ResolvedMode(environment) == constants.AuthModeDisabled {
-		log.Printf("WARNING: authentication is disabled; tenant and operator identity are taken from request headers\n")
-		return func(next http.Handler) http.Handler { return next }, nil
+		return nil, nil
 	}
 	jwks, err := os.ReadFile(cfg.JWKSFile)
 	if err != nil {
@@ -27,7 +26,23 @@ func BuildAuthWrapper(cfg config.AuthConfig, environment string, clock func() ti
 	if err != nil {
 		return nil, fmt.Errorf("build jwt verifier: %w", err)
 	}
-	return func(next http.Handler) http.Handler { return auth.Middleware(verifier, next) }, nil
+	return verifier, nil
+}
+
+func WrapperFor(verifier *auth.Verifier) AuthWrapper {
+	if verifier == nil {
+		log.Printf("WARNING: authentication is disabled; tenant and operator identity are taken from request headers\n")
+		return auth.TrustedHeaders
+	}
+	return func(next http.Handler) http.Handler { return auth.Middleware(verifier, next) }
+}
+
+func BuildAuthWrapper(cfg config.AuthConfig, environment string, clock func() time.Time) (AuthWrapper, error) {
+	verifier, err := BuildVerifier(cfg, environment, clock)
+	if err != nil {
+		return nil, err
+	}
+	return WrapperFor(verifier), nil
 }
 
 func (a *App) wrapAuth(next http.Handler) http.Handler {

@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 
+	"distributed-transaction-engine/src/shared/utils"
 	"github.com/lib/pq"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -29,11 +31,25 @@ var (
 	spacePattern = regexp.MustCompile(`\s+`)
 )
 
+const (
+	RoleApp        = "dtx_app"
+	RolePlatform   = "dtx_platform"
+	scopeStatement = "SELECT set_config('app.tenant_id', $1, false), set_config('role', $2, false)"
+)
+
 func OpenTracedPostgres(dsn string) (*sql.DB, error) {
 	registerOnce.Do(func() {
 		sql.Register(TracedPostgresDriverName, &tracedDriver{base: &pq.Driver{}})
 	})
 	return sql.Open(TracedPostgresDriverName, dsn)
+}
+
+func OpenTracedPostgresScoped(dsn string) (*sql.DB, error) {
+	base, err := pq.NewConnector(dsn)
+	if err != nil {
+		return nil, err
+	}
+	return sql.OpenDB(&scopedConnector{base: base}), nil
 }
 
 type tracedDriver struct {
@@ -48,8 +64,28 @@ func (d *tracedDriver) Open(name string) (driver.Conn, error) {
 	return &tracedConn{Conn: conn}, nil
 }
 
+type scopedConnector struct {
+	base driver.Connector
+}
+
+func (s *scopedConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	conn, err := s.base.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &tracedConn{Conn: conn, scoped: true}, nil
+}
+
+func (s *scopedConnector) Driver() driver.Driver {
+	return &tracedDriver{base: &pq.Driver{}}
+}
+
 type tracedConn struct {
 	driver.Conn
+	scoped  bool
+	inTx    bool
+	applied bool
+	current utils.TenantScope
 }
 
 func dbTracer() trace.Tracer {
@@ -150,6 +186,9 @@ func (c *tracedConn) ExecContext(ctx context.Context, query string, args []drive
 	if !ok {
 		return nil, driver.ErrSkip
 	}
+	if scopeErr := c.applyScope(ctx); scopeErr != nil {
+		return nil, scopeErr
+	}
 	spanCtx, span, _ := startSQLSpan(ctx, query)
 	result, err := execer.ExecContext(spanCtx, query, args)
 	if err == nil && result != nil {
@@ -165,6 +204,9 @@ func (c *tracedConn) QueryContext(ctx context.Context, query string, args []driv
 	queryer, ok := c.Conn.(driver.QueryerContext)
 	if !ok {
 		return nil, driver.ErrSkip
+	}
+	if scopeErr := c.applyScope(ctx); scopeErr != nil {
+		return nil, scopeErr
 	}
 	spanCtx, span, _ := startSQLSpan(ctx, query)
 	rows, err := queryer.QueryContext(spanCtx, query, args)
@@ -183,7 +225,7 @@ func (c *tracedConn) PrepareContext(ctx context.Context, query string) (driver.S
 	if err != nil {
 		return nil, err
 	}
-	return &tracedStmt{Stmt: statement, query: query}, nil
+	return &tracedStmt{Stmt: statement, query: query, conn: c}, nil
 }
 
 func (c *tracedConn) Prepare(query string) (driver.Stmt, error) {
@@ -196,6 +238,9 @@ func (c *tracedConn) Begin() (driver.Tx, error) {
 
 func (c *tracedConn) BeginTx(ctx context.Context, options driver.TxOptions) (driver.Tx, error) {
 	ctx = adoptCurrent(ctx)
+	if scopeErr := c.applyScope(ctx); scopeErr != nil {
+		return nil, scopeErr
+	}
 	spanCtx, span := dbTracer().Start(ctx, "db BEGIN", trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(attribute.String("db.system", "postgresql"), attribute.String("db.operation", "BEGIN"), attribute.String(AttrLayer, LayerAdapter)))
 	var tx driver.Tx
@@ -209,7 +254,8 @@ func (c *tracedConn) BeginTx(ctx context.Context, options driver.TxOptions) (dri
 	if err != nil {
 		return nil, err
 	}
-	return &tracedTx{Tx: tx, ctx: ctx}, nil
+	c.inTx = true
+	return &tracedTx{Tx: tx, ctx: ctx, conn: c}, nil
 }
 
 func (c *tracedConn) Ping(ctx context.Context) error {
@@ -242,7 +288,8 @@ func (c *tracedConn) IsValid() bool {
 
 type tracedTx struct {
 	driver.Tx
-	ctx context.Context
+	ctx  context.Context
+	conn *tracedConn
 }
 
 func (t *tracedTx) Commit() error {
@@ -257,6 +304,7 @@ func (t *tracedTx) finish(operation string, action func() error) error {
 	_, span := dbTracer().Start(t.ctx, "db "+operation, trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(attribute.String("db.system", "postgresql"), attribute.String("db.operation", operation), attribute.String(AttrLayer, LayerAdapter)))
 	err := action()
+	t.conn.inTx = false
 	finishSQLSpan(span, err)
 	return err
 }
@@ -264,9 +312,13 @@ func (t *tracedTx) finish(operation string, action func() error) error {
 type tracedStmt struct {
 	driver.Stmt
 	query string
+	conn  *tracedConn
 }
 
 func (s *tracedStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
+	if scopeErr := s.conn.applyScope(ctx); scopeErr != nil {
+		return nil, scopeErr
+	}
 	spanCtx, span, _ := startSQLSpan(ctx, s.query)
 	var result driver.Result
 	var err error
@@ -280,6 +332,9 @@ func (s *tracedStmt) ExecContext(ctx context.Context, args []driver.NamedValue) 
 }
 
 func (s *tracedStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+	if scopeErr := s.conn.applyScope(ctx); scopeErr != nil {
+		return nil, scopeErr
+	}
 	spanCtx, span, _ := startSQLSpan(ctx, s.query)
 	var rows driver.Rows
 	var err error
@@ -298,4 +353,29 @@ func namedToValues(args []driver.NamedValue) []driver.Value {
 		values = append(values, arg.Value)
 	}
 	return values
+}
+
+func (c *tracedConn) applyScope(ctx context.Context) error {
+	if !c.scoped || c.inTx {
+		return nil
+	}
+	want := utils.TenantScopeFrom(ctx)
+	if c.applied && c.current == want {
+		return nil
+	}
+	role := RoleApp
+	if want.Platform {
+		role = RolePlatform
+	}
+	queryer, ok := c.Conn.(driver.QueryerContext)
+	if !ok {
+		return errors.New("scoped connection requires a queryer driver")
+	}
+	rows, err := queryer.QueryContext(ctx, scopeStatement, []driver.NamedValue{{Ordinal: 1, Value: want.TenantID}, {Ordinal: 2, Value: role}})
+	if err != nil {
+		c.applied = false
+		return err
+	}
+	c.applied, c.current = true, want
+	return rows.Close()
 }

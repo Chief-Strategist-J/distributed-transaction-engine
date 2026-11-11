@@ -14,9 +14,14 @@ import (
 var ErrInvalidToken = errors.New("invalid or expired token")
 
 type Principal struct {
-	Subject  string
-	TenantID string
-	Roles    []string
+	Subject   string
+	TenantID  string
+	Roles     []string
+	Scopes    []string
+	Issuer    string
+	Audience  []string
+	TokenID   string
+	ExpiresAt time.Time
 }
 
 type Config struct {
@@ -29,6 +34,8 @@ type claims struct {
 	jwt.RegisteredClaims
 	TenantID string   `json:"tenant_id"`
 	Roles    []string `json:"roles"`
+	Scope    string   `json:"scope"`
+	Scp      []string `json:"scp"`
 }
 
 type Verifier struct {
@@ -67,7 +74,30 @@ func (v *Verifier) Verify(token string) (Principal, error) {
 	if parsed.Subject == "" || strings.TrimSpace(parsed.TenantID) == "" {
 		return Principal{}, fmt.Errorf("%w: sub and tenant_id claims are required", ErrInvalidToken)
 	}
-	return Principal{Subject: parsed.Subject, TenantID: parsed.TenantID, Roles: parsed.Roles}, nil
+	return buildPrincipal(parsed), nil
+}
+
+func buildPrincipal(parsed *claims) Principal {
+	principal := Principal{
+		Subject: parsed.Subject, TenantID: parsed.TenantID, Roles: parsed.Roles, Scopes: mergeScopes(parsed),
+		Issuer: parsed.Issuer, Audience: []string(parsed.Audience), TokenID: parsed.ID,
+	}
+	if parsed.ExpiresAt != nil {
+		principal.ExpiresAt = parsed.ExpiresAt.Time
+	}
+	return principal
+}
+
+func mergeScopes(parsed *claims) []string {
+	seen := map[string]bool{}
+	merged := []string{}
+	for _, scope := range append(strings.Fields(parsed.Scope), parsed.Scp...) {
+		if scope != "" && !seen[scope] {
+			seen[scope] = true
+			merged = append(merged, scope)
+		}
+	}
+	return merged
 }
 
 func (v *Verifier) keyFor(token *jwt.Token) (interface{}, error) {
