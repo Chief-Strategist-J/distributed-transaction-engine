@@ -72,13 +72,13 @@ func (s *OutboxService) RelayPendingEvents(
 	}
 	outcomes := s.publisher.PublishBatch(ctx, requests)
 
-	publishedCount := 0
+	delivered := make([]string, 0, len(publishable))
 	for index, event := range publishable {
 		if s.settleEvent(ctx, tenantID, workerID, event, outcomes[index]) {
-			publishedCount++
+			delivered = append(delivered, event.ID)
 		}
 	}
-	return publishedCount, nil
+	return s.repo.ConfirmPublishedBatch(ctx, tenantID, workerID, delivered)
 }
 
 func (s *OutboxService) prepareBatch(ctx context.Context, tenantID string, workerID string, events []contracts.OutboxEventInstance) ([]contracts.OutboxEventInstance, []contracts.PublishRequest) {
@@ -107,8 +107,7 @@ func (s *OutboxService) settleEvent(ctx context.Context, tenantID string, worker
 	nextStatus, _ := s.machine.EvaluatePublishOutcome(event.Status, event.AttemptCount, pubErr)
 	switch nextStatus {
 	case contracts.OutboxStatusPublished:
-		confirmInput := &contracts.ConfirmOutboxPublishInput{TenantID: tenantID, EventID: event.ID, WorkerID: workerID}
-		return s.repo.ConfirmPublished(ctx, confirmInput) == nil
+		return true
 	case contracts.OutboxStatusParked:
 		observability.NoteSwallowed(s.repo.ParkEvent(ctx, &contracts.ParkOutboxEventInput{
 			TenantID: tenantID, EventID: event.ID, WorkerID: workerID, Reason: parkReason(event.AttemptCount, pubErr),

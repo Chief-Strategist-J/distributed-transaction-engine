@@ -8,6 +8,7 @@ import (
 	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/errors"
 	"encoding/json"
+	"github.com/lib/pq"
 	"time"
 )
 
@@ -241,4 +242,20 @@ func (a *PostgresOutboxRepositoryAdapter) ListRelayTargets(ctx context.Context, 
 		targets = append(targets, target)
 	}
 	return targets, rows.Err()
+}
+
+func (a *PostgresOutboxRepositoryAdapter) ConfirmPublishedBatch(ctx context.Context, tenantID string, workerID string, eventIDs []string) (spanResult0 int, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
+	if len(eventIDs) == 0 {
+		return 0, nil
+	}
+	result, err := a.db.ExecContext(ctx, queries.FLOW_CONFIRM_OUTBOX_PUBLISHED_BATCH, tenantID, pq.Array(eventIDs), workerID)
+	if err != nil {
+		return 0, errors.NewInternalError("failed to confirm outbox events: " + err.Error())
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, errors.NewInternalError("failed to read confirmed outbox event count: " + err.Error())
+	}
+	return int(affected), nil
 }

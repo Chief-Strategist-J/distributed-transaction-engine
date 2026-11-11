@@ -293,3 +293,50 @@ func TestScenario_RelayAllPendingDrainsEveryTenantAndTopic(t *testing.T) {
 		t.Fatalf("expected 2 published across tenants/topics, got %d err=%v", total, err)
 	}
 }
+
+const (
+	throughputEvents      = 5000
+	throughputFloorPerSec = 1000.0
+)
+
+func seedThroughputEvents(t *testing.T, db *sql.DB, topic string) {
+	t.Helper()
+	_, err := db.Exec(`INSERT INTO outbox_events (id, public_id, tenant_id, saga_id, aggregate_type, aggregate_id, aggregate_sequence,
+		destination_topic, partition_key, event_type, payload, status)
+		SELECT gen_random_uuid(), 'oxe_' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 26), 'tenant_r', s.saga, 'SAGA', s.saga::text, 1,
+		       $1, s.saga::text, 'E', jsonb_build_object('n', s.i), 'PENDING'
+		FROM (SELECT i, gen_random_uuid() AS saga FROM generate_series(1, $2::int) AS i) s`, topic, throughputEvents)
+	if err != nil {
+		t.Fatalf("seed throughput events: %v", err)
+	}
+}
+
+func TestScenario_RelayThroughputMeetsTheSLAAgainstRealKafka(t *testing.T) {
+	address := kafkaTestAddress(t)
+	f := newRelayFixture(t)
+	topic := provisionTestTopic(t, address, 6)
+	publisher := adapters.NewKafkaPublisherAdapter(address)
+	defer publisher.Close()
+	publishWhenTopicIsReady(t, publisher, []contracts.PublishRequest{{Topic: topic, PartitionKey: "warm-up", Payload: []byte("{}")}})
+	svc := service.NewOutboxService(service.OutboxServiceDeps{Repo: f.repo, Publisher: publisher, Machine: machines.NewOutboxStateMachine(), Tracer: observability.NewTracer("throughput-test")})
+	seedThroughputEvents(t, f.db, topic)
+
+	started := time.Now()
+	published := 0
+	for published < throughputEvents && time.Since(started) < 90*time.Second {
+		count, err := svc.RelayPendingEvents(context.Background(), "tenant_r", topic, "relay-perf", 500, 30*time.Second)
+		if err != nil {
+			t.Fatalf("relay: %v", err)
+		}
+		published += count
+	}
+	perSecond := float64(published) / time.Since(started).Seconds()
+	t.Logf("relayed %d events at %.0f events/s", published, perSecond)
+	if published != throughputEvents || perSecond < throughputFloorPerSec {
+		t.Fatalf("relay SLA violated: %d/%d events at %.0f/s (floor %.0f/s)", published, throughputEvents, perSecond, throughputFloorPerSec)
+	}
+	var unpublished int
+	if err := f.db.QueryRow(`SELECT COUNT(*) FROM outbox_events WHERE status <> 'PUBLISHED'`).Scan(&unpublished); err != nil || unpublished != 0 {
+		t.Fatalf("every event must be PUBLISHED, %d are not (err=%v)", unpublished, err)
+	}
+}

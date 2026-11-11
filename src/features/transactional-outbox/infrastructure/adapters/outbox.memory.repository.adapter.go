@@ -212,3 +212,20 @@ func (a *MemoryOutboxRepositoryAdapter) GetEvent(
 	cpy := *e
 	return &cpy, nil
 }
+
+func (a *MemoryOutboxRepositoryAdapter) ConfirmPublishedBatch(
+	ctx context.Context,
+	tenantID string,
+	workerID string,
+	eventIDs []string,
+) (spanResult0 int, spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
+	confirmed := 0
+	for _, eventID := range eventIDs {
+		input := &contracts.ConfirmOutboxPublishInput{TenantID: tenantID, EventID: eventID, WorkerID: workerID}
+		if a.ConfirmPublished(ctx, input) == nil {
+			confirmed++
+		}
+	}
+	return confirmed, nil
+}

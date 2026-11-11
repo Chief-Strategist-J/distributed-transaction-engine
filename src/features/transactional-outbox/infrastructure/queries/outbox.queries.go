@@ -67,6 +67,16 @@ WHERE tenant_id = $1
   AND lease_owner = $3
   AND status = 'IN_FLIGHT';`
 
+	FLOW_CONFIRM_OUTBOX_PUBLISHED_BATCH = `
+UPDATE outbox_events
+SET status = 'PUBLISHED',
+    published_at = NOW(),
+    updated_at = NOW()
+WHERE tenant_id = $1
+  AND id = ANY($2::uuid[])
+  AND lease_owner = $3
+  AND status = 'IN_FLIGHT';`
+
 	FLOW_RELEASE_IN_FLIGHT_TO_PENDING = `
 UPDATE outbox_events
 SET status = 'PENDING',
