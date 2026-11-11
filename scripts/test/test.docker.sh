@@ -11,6 +11,9 @@ export DTX_ADMIN_PORT="${DTX_ADMIN_PORT:-18081}"
 READY_ATTEMPTS="${READY_ATTEMPTS:-60}"
 SAGA_ATTEMPTS="${SAGA_ATTEMPTS:-30}"
 
+SECRET_FILE="${COMPOSE_DIR}/secrets/db_password.txt"
+CREATED_SECRET=0
+
 COMPOSE=(docker compose -f "${COMPOSE_DIR}/docker-compose.single.yml" -f "${COMPOSE_DIR}/docker-compose.local-ports.yml")
 
 cleanup() {
@@ -20,11 +23,21 @@ cleanup() {
         "${COMPOSE[@]}" logs --tail 50 app 2>&1 || true
     fi
     "${COMPOSE[@]}" down -v >/dev/null 2>&1 || true
+    if [[ ${CREATED_SECRET} -eq 1 ]]; then
+        rm -f "${SECRET_FILE}"
+    fi
     exit ${exit_code}
 }
 trap cleanup EXIT INT TERM
 
 new_uuid() { python3 -c 'import uuid; print(uuid.uuid4())'; }
+
+if [[ ! -f "${SECRET_FILE}" ]]; then
+    mkdir -p "$(dirname "${SECRET_FILE}")"
+    openssl rand -hex 16 | tr -d '\n' > "${SECRET_FILE}"
+    chmod 644 "${SECRET_FILE}"
+    CREATED_SECRET=1
+fi
 
 echo "== 1. Building the image and starting the stack"
 "${COMPOSE[@]}" up -d --build app
