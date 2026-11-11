@@ -79,6 +79,12 @@ func (a *PostgresIdempotencyRepositoryAdapter) Acquire(
 	}
 
 	outcome := rules.EvaluateExistingRecord(existing, record.RequestFingerprint, now)
+	if outcome == contracts.OutcomeAcquired {
+		existing, outcome, err = a.takeOverExpiredLease(ctx, record, existing, now)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var snapshot *contracts.ResponseSnapshot
 	if existing.ResponseStatus != nil {
 		snapshot = &contracts.ResponseSnapshot{
@@ -207,4 +213,28 @@ func (a *PostgresIdempotencyRepositoryAdapter) CommitOutcome(
 	}
 
 	return nil
+}
+
+func (a *PostgresIdempotencyRepositoryAdapter) takeOverExpiredLease(
+	ctx context.Context,
+	record contracts.IdempotencyRecord,
+	existing *contracts.IdempotencyRecord,
+	now time.Time,
+) (*contracts.IdempotencyRecord, contracts.AcquireOutcome, error) {
+	var newToken int64
+	err := a.db.QueryRowContext(ctx, queries.FLOW_TAKEOVER_EXPIRED_LEASE,
+		record.LeaseOwner, record.LeaseUntil, now, record.TenantID, record.PrincipalID, record.OperationID,
+		record.IdempotencyKey, record.RequestFingerprint, now.Add(-rules.DefaultLeaseDuration),
+	).Scan(&newToken)
+	if err == sql.ErrNoRows {
+		return existing, contracts.OutcomeConflictInProgress, nil
+	}
+	if err != nil {
+		return nil, "", appErrors.NewInternalError("idempotency lease takeover failed")
+	}
+	refreshed, err := a.GetByScope(ctx, record.TenantID, record.PrincipalID, record.OperationID, record.IdempotencyKey)
+	if err != nil || refreshed == nil {
+		return nil, "", appErrors.NewInternalError("idempotency record vanished during takeover")
+	}
+	return refreshed, contracts.OutcomeAcquired, nil
 }

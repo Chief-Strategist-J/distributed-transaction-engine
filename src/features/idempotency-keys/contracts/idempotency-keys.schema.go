@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf16"
 )
 
 var (
@@ -102,7 +103,7 @@ func canonicalizeMap(m map[string]interface{}) ([]byte, error) {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	sort.Slice(keys, func(i int, j int) bool { return compareUTF16(keys[i], keys[j]) < 0 })
 
 	var buf strings.Builder
 	buf.WriteString("{")
@@ -138,4 +139,23 @@ func canonicalizeSlice(s []interface{}) ([]byte, error) {
 	}
 	buf.WriteString("]")
 	return []byte(buf.String()), nil
+}
+
+func compareUTF16(left string, right string) int {
+	leftUnits, rightUnits := utf16.Encode([]rune(left)), utf16.Encode([]rune(right))
+	for index := 0; index < len(leftUnits) && index < len(rightUnits); index++ {
+		if leftUnits[index] != rightUnits[index] {
+			if leftUnits[index] < rightUnits[index] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return len(leftUnits) - len(rightUnits)
+}
+
+func CanonicalKeyOrderForTest(keys []string) []string {
+	ordered := append([]string(nil), keys...)
+	sort.Slice(ordered, func(i int, j int) bool { return compareUTF16(ordered[i], ordered[j]) < 0 })
+	return ordered
 }

@@ -28,7 +28,7 @@ func EvaluateExistingRecord(
 		return contracts.OutcomeReplay
 
 	case contracts.StateInProgress:
-		if existing.LeaseUntil != nil && now.After(*existing.LeaseUntil) {
+		if IsLeaseExpired(existing, now) {
 			return contracts.OutcomeAcquired
 		}
 		return contracts.OutcomeConflictInProgress
@@ -39,6 +39,16 @@ func EvaluateExistingRecord(
 	default:
 		return contracts.OutcomeConflictInProgress
 	}
+}
+
+const DefaultLeaseDuration = 30 * time.Second
+
+func IsLeaseExpired(record *contracts.IdempotencyRecord, now time.Time) (spanResult0 bool) {
+	defer observability.TraceEnter(nil)()
+	if record.LeaseUntil != nil {
+		return now.After(*record.LeaseUntil)
+	}
+	return now.After(record.UpdatedAt.Add(DefaultLeaseDuration))
 }
 
 func DeriveDownstreamKey(rootKey string, stepID string) string {

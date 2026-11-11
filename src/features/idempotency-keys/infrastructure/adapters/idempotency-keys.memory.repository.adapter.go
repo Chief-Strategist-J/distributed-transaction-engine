@@ -52,6 +52,7 @@ func (a *MemoryIdempotencyRepositoryAdapter) Acquire(
 	if outcome == contracts.OutcomeAcquired {
 		record.CreatedAt = existing.CreatedAt
 		record.UpdatedAt = now
+		record.RecoveryFencingToken = existing.RecoveryFencingToken + 1
 		a.records[k] = record
 		recCopy := record
 		return &contracts.AcquireResult{

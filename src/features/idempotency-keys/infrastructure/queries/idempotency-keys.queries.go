@@ -42,5 +42,20 @@ SET current_state = $1,
 WHERE tenant_id = $8 
   AND id = $9;
 `
-)
 
+	FLOW_TAKEOVER_EXPIRED_LEASE = `
+UPDATE idempotency_keys
+SET lease_owner = $1,
+    lease_until = $2,
+    recovery_fencing_token = recovery_fencing_token + 1,
+    updated_at = $3
+WHERE tenant_id = $4
+  AND principal_id = $5
+  AND operation_id = $6
+  AND idempotency_key = $7
+  AND request_fingerprint = $8
+  AND current_state = 'IN_PROGRESS'
+  AND ((lease_until IS NOT NULL AND lease_until < $3) OR (lease_until IS NULL AND updated_at < $9))
+RETURNING recovery_fencing_token;
+`
+)
