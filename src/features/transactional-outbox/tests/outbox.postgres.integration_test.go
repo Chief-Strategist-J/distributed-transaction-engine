@@ -3,15 +3,19 @@ package tests
 import (
 	"context"
 	"database/sql"
+	stderrors "errors"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	contracts "distributed-transaction-engine/src/features/transactional-outbox/contracts"
 	adapters "distributed-transaction-engine/src/features/transactional-outbox/infrastructure/adapters"
+	apperrors "distributed-transaction-engine/src/shared/errors"
 	"github.com/google/uuid"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 func getRealPostgresDB(t *testing.T) *sql.DB {
@@ -168,5 +172,161 @@ func TestPostgresOutboxAdapter_RealDatabaseInvariants(t *testing.T) {
 	}
 	if fetched.Status != contracts.OutboxStatusPublished || fetched.PublishedAt == nil {
 		t.Fatalf("expected PUBLISHED with non-nil publishedAt, got: %+v", fetched)
+	}
+}
+
+const (
+	partitionKeyConstraint = "outbox_events_partition_key_ck"
+	checkViolationCode     = "23514"
+	rawOutboxInsert        = `INSERT INTO outbox_events (id, public_id, tenant_id, saga_id, aggregate_type, aggregate_id,
+		aggregate_sequence, destination_topic, partition_key, event_type, payload, status)
+		VALUES ($1, $2, 't', $3, 'SAGA', $4, $5, 'topic', $6, 'E', '{}'::jsonb, $7)`
+)
+
+type legacyOutbox struct {
+	pending   string
+	published string
+	matching  string
+}
+
+func openScratchOutboxDB(t *testing.T) *sql.DB {
+	t.Helper()
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL is not set")
+	}
+	admin, err := sql.Open("postgres", base)
+	if err != nil || admin.Ping() != nil {
+		t.Skip("PostgreSQL is offline")
+	}
+	name := "ox_pk_" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
+	if _, err = admin.Exec("CREATE DATABASE " + name); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec("DROP DATABASE IF EXISTS " + name + " WITH (FORCE)")
+		_ = admin.Close()
+	})
+	parsed, _ := url.Parse(base)
+	parsed.Path = "/" + name
+	db, err := sql.Open("postgres", parsed.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func applyMigrationFile(t *testing.T, db *sql.DB, file string) {
+	t.Helper()
+	body, err := os.ReadFile("../../../../database/migrations/sql/" + file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(string(body)); err != nil {
+		t.Fatalf("apply %s: %v", file, err)
+	}
+}
+
+func insertRawOutbox(db *sql.DB, sagaID string, sequence int, key string, status string) error {
+	id := uuid.New()
+	publicID := "oxe_" + strings.ReplaceAll(id.String(), "-", "")[:26]
+	_, err := db.Exec(rawOutboxInsert, id, publicID, sagaID, uuid.NewString(), sequence, key, status)
+	return err
+}
+
+func requirePartitionKeyViolation(t *testing.T, err error) {
+	t.Helper()
+	var pqErr *pq.Error
+	if !stderrors.As(err, &pqErr) || string(pqErr.Code) != checkViolationCode || pqErr.Constraint != partitionKeyConstraint {
+		t.Fatalf("expected %s on %s, got %#v", checkViolationCode, partitionKeyConstraint, err)
+	}
+}
+
+func seedLegacyOutbox(t *testing.T, db *sql.DB) legacyOutbox {
+	t.Helper()
+	legacy := legacyOutbox{pending: uuid.NewString(), published: uuid.NewString(), matching: uuid.NewString()}
+	rows := []struct {
+		saga, key, status string
+		sequence          int
+	}{
+		{legacy.pending, "order-1", "PENDING", 1},
+		{legacy.pending, "order-1", "IN_FLIGHT", 2},
+		{legacy.published, "legacy-key", "PUBLISHED", 1},
+		{legacy.matching, legacy.matching, "PENDING", 1},
+	}
+	for _, row := range rows {
+		if err := insertRawOutbox(db, row.saga, row.sequence, row.key, row.status); err != nil {
+			t.Fatalf("seed legacy row: %v", err)
+		}
+	}
+	return legacy
+}
+
+func scanString(t *testing.T, db *sql.DB, query string, args ...interface{}) string {
+	t.Helper()
+	var value string
+	if err := db.QueryRow(query, args...).Scan(&value); err != nil {
+		t.Fatalf("query %q: %v", query, err)
+	}
+	return value
+}
+
+func TestPostgresOutbox_PartitionKeyMigrationBackfillsEveryRow(t *testing.T) {
+	db := openScratchOutboxDB(t)
+	applyMigrationFile(t, db, "0008_create_transactional_outbox_tables.sql")
+	legacy := seedLegacyOutbox(t, db)
+	applyMigrationFile(t, db, "0025_enforce_outbox_partition_key.sql")
+	if got := scanString(t, db, `SELECT COUNT(*)::text FROM outbox_events WHERE partition_key <> saga_id::text`); got != "0" {
+		t.Fatalf("every row must be backfilled to saga_id, mismatched=%s", got)
+	}
+	if got := scanString(t, db, `SELECT partition_key FROM outbox_events WHERE saga_id = $1`, legacy.published); got != legacy.published {
+		t.Fatalf("published legacy row must carry its saga id, got %q", got)
+	}
+	if got := scanString(t, db, `SELECT convalidated::text FROM pg_constraint WHERE conname = $1`, partitionKeyConstraint); got != "true" {
+		t.Fatalf("constraint must end validated, got %s", got)
+	}
+}
+
+func TestPostgresOutbox_PartitionKeyConstraintRejectsInvalidKeys(t *testing.T) {
+	db := openScratchOutboxDB(t)
+	applyMigrationFile(t, db, "0008_create_transactional_outbox_tables.sql")
+	applyMigrationFile(t, db, "0025_enforce_outbox_partition_key.sql")
+	saga := uuid.NewString()
+	invalid := map[string]string{"empty": "", "blank": "  ", "other_saga": uuid.NewString(), "business_key": "order-9", "uppercase": strings.ToUpper(saga)}
+	for name, key := range invalid {
+		t.Run(name, func(t *testing.T) { requirePartitionKeyViolation(t, insertRawOutbox(db, saga, 1, key, "PENDING")) })
+	}
+	if err := insertRawOutbox(db, saga, 1, saga, "PENDING"); err != nil {
+		t.Fatalf("saga id key must be accepted: %v", err)
+	}
+	_, err := db.Exec(`UPDATE outbox_events SET partition_key = 'drift' WHERE saga_id = $1`, saga)
+	requirePartitionKeyViolation(t, err)
+}
+
+func TestPostgresOutbox_PartitionKeyRollbackRestoresPreviousBehaviour(t *testing.T) {
+	db := openScratchOutboxDB(t)
+	applyMigrationFile(t, db, "0008_create_transactional_outbox_tables.sql")
+	applyMigrationFile(t, db, "0025_enforce_outbox_partition_key.sql")
+	applyMigrationFile(t, db, "0025_enforce_outbox_partition_key.rollback.sql")
+	if err := insertRawOutbox(db, uuid.NewString(), 1, "anything", "PENDING"); err != nil {
+		t.Fatalf("rollback must remove the constraint: %v", err)
+	}
+}
+
+func TestPostgresOutbox_AdapterRejectsInvalidKeyBeforeDatabase(t *testing.T) {
+	db := openScratchOutboxDB(t)
+	applyMigrationFile(t, db, "0008_create_transactional_outbox_tables.sql")
+	applyMigrationFile(t, db, "0025_enforce_outbox_partition_key.sql")
+	adapter := adapters.NewPostgresOutboxRepositoryAdapter(db)
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	event := &contracts.OutboxEventInstance{ID: uuid.NewString(), SagaID: uuid.NewString(), PartitionKey: "business-key"}
+	var appErr *apperrors.ApplicationError
+	if err = adapter.InsertOutboxEventTx(context.Background(), tx, event); !stderrors.As(err, &appErr) || appErr.StatusCode != 400 {
+		t.Fatalf("expected 400 validation from adapter, got %#v", err)
 	}
 }

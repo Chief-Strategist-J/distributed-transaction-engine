@@ -27,6 +27,9 @@ func (a *MemoryOutboxRepositoryAdapter) InsertOutboxEventTx(
 	event *contracts.OutboxEventInstance,
 ) (spanErr error) {
 	defer observability.TraceEnter(&spanErr)()
+	if keyErr := contracts.ValidatePartitionKey(event.SagaID, event.PartitionKey); keyErr != nil {
+		return keyErr
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 

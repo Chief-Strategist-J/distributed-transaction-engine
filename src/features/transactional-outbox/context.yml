@@ -12,7 +12,7 @@ fields:
   - name: aggregate_id        type: text        null: no  normalize: trim            constraint: length 1..128
   - name: aggregate_sequence  type: bigint      null: no  constraint: CHECK > 0, UNIQUE(tenant_id, aggregate_id, aggregate_sequence)
   - name: destination_topic   type: text        null: no  normalize: trim            constraint: length 1..128
-  - name: partition_key       type: text        null: no  normalize: trim            constraint: length 1..128
+  - name: partition_key       type: text        null: no  normalize: trim            constraint: length 1..128, outbox_events_partition_key_ck CHECK (btrim(partition_key) <> '' AND partition_key = saga_id::text)
   - name: event_type          type: text        null: no  normalize: trim            constraint: length 1..64
   - name: payload             type: jsonb       null: no  constraint: CHECK jsonb_typeof(payload) = 'object'
   - name: headers             type: jsonb       null: no  default: '{}'              constraint: CHECK jsonb_typeof(headers) = 'object'
@@ -29,5 +29,6 @@ invariants:
   - published events always have published_at timestamp
   - aggregate sequence is gapless strictly positive per aggregate
   - payload and headers are valid json objects
+  - partition_key always equals saga_id so one saga maps to one Kafka partition
 pii: [none]
 source_of_truth: db

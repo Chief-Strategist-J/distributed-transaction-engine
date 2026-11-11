@@ -6,7 +6,6 @@ import (
 	rules "distributed-transaction-engine/src/features/transaction-query-api/domain/rules"
 	ports "distributed-transaction-engine/src/features/transaction-query-api/infrastructure/ports"
 	"distributed-transaction-engine/src/infra/observability"
-	"distributed-transaction-engine/src/shared/constants"
 	appErrors "distributed-transaction-engine/src/shared/errors"
 	"fmt"
 	"strings"
@@ -68,7 +67,7 @@ func (s *TransactionQueryService) SearchTransactions(ctx context.Context, princi
 
 	limit := contracts.DefaultPageSize
 	if request.Limit < 0 || request.Limit > contracts.MaxPageSize {
-		return contracts.SearchResponse{}, appErrors.NewTypedError(400, constants.TQErrLimitExceeded, "limit must be between 1 and 200")
+		return contracts.SearchResponse{}, contracts.NewLimitRangeError()
 	}
 	if request.Limit > 0 {
 		limit = request.Limit

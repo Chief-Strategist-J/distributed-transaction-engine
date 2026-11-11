@@ -799,3 +799,8 @@ func validatePurpose(purpose *string) error {
 	}
 	return nil
 }
+
+func NewLimitRangeError() *appErrors.ApplicationError {
+	defer observability.TraceEnter(nil)()
+	return appErrors.NewTypedError(400, constants.TQErrLimitExceeded, "limit must be an integer between 1 and "+strconv.Itoa(MaxPageSize))
+}

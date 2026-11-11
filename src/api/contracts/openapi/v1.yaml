@@ -1778,11 +1778,24 @@ paths:
     post:
       summary: Execute TQL search over transaction read model with AST authorization injection and keyset pagination
       operationId: searchTransactions
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 200
+                  default: 50
+                  description: Page size; values outside 1..200 are rejected with 400 LIMIT_EXCEEDED
       responses:
         '200':
           description: Search results with consistency metadata
         '400':
-          description: Invalid syntax or unknown field
+          description: Invalid syntax, unknown field, or limit outside 1..200 (LIMIT_EXCEEDED)
         '403':
           description: Field not permitted
   /api/v1/transactions:aggregate:
@@ -1819,9 +1832,19 @@ paths:
           required: true
           schema:
             type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
       responses:
         '200':
           description: Timeline events
+        '400':
+          description: limit is not an integer within 1..200 (LIMIT_EXCEEDED)
         '404':
           description: Transaction not found
   /api/v1/transactions:export:
@@ -2146,9 +2169,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/WorkflowDefinitionResponse'
         '400':
-          description: Schema validation error or missing required fields
+          description: Schema validation error, missing required fields, cyclic dependency, disconnected graph, or unknown dependency (VALIDATION_FAILED)
         '409':
-          description: Cyclic DAG detected or duplicate version / hash conflict
+          description: Duplicate version or spec hash conflict
     get:
       summary: List registered workflow definitions for a tenant
       operationId: listWorkflowDefinitions

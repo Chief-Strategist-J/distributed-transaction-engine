@@ -1,11 +1,13 @@
 package tests
 
 import (
+	stderrors "errors"
 	"testing"
 	"time"
 
 	contracts "distributed-transaction-engine/src/features/transaction-query-api/contracts"
 	rules "distributed-transaction-engine/src/features/transaction-query-api/domain/rules"
+	apperrors "distributed-transaction-engine/src/shared/errors"
 )
 
 func TestDerivePrincipal_TenantUser(t *testing.T) {
@@ -75,5 +77,49 @@ func TestEvaluateQueryTenant_ImpersonationExpiry(t *testing.T) {
 	_, err := rules.EvaluateQueryTenant(principal, &target, now)
 	if err == nil {
 		t.Fatal("expected error for expired impersonation session")
+	}
+}
+
+func TestValidateQuery_LimitBounds(t *testing.T) {
+	registry, err := rules.ResolveRegistry(contracts.TQLVersionV1)
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	principal := contracts.Principal{TenantID: "tenant-limit", PrincipalID: "u1", Audience: contracts.AudienceTenantUser}
+	cases := []struct {
+		name  string
+		limit int
+		want  int
+		valid bool
+	}{
+		{"unset_uses_default", 0, contracts.DefaultPageSize, true},
+		{"min", 1, 1, true},
+		{"max", contracts.MaxPageSize, contracts.MaxPageSize, true},
+		{"one_over_max", contracts.MaxPageSize + 1, 0, false},
+		{"abuse", 1000000, 0, false},
+		{"negative", -1, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { assertValidatedLimit(t, registry, principal, tc.limit, tc.want, tc.valid) })
+	}
+}
+
+func assertValidatedLimit(t *testing.T, registry contracts.Registry, principal contracts.Principal, limit int, want int, valid bool) {
+	t.Helper()
+	query, err := contracts.ParseTQLText(`status = "COMPLETED"`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	query.Limit = limit
+	normalized, err := rules.ValidateQuery(registry, principal, query, nil)
+	if valid {
+		if err != nil || normalized.Limit != want {
+			t.Fatalf("expected limit %d got %d err=%v", want, normalized.Limit, err)
+		}
+		return
+	}
+	var appErr *apperrors.ApplicationError
+	if !stderrors.As(err, &appErr) || appErr.StatusCode != 400 {
+		t.Fatalf("expected 400, got %#v", err)
 	}
 }

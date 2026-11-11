@@ -21,6 +21,9 @@ func NewPostgresOutboxRepositoryAdapter(db *sql.DB) *PostgresOutboxRepositoryAda
 
 func (a *PostgresOutboxRepositoryAdapter) InsertOutboxEventTx(ctx context.Context, tx *sql.Tx, event *contracts.OutboxEventInstance) (spanErr error) {
 	defer observability.TraceEnter(&spanErr)()
+	if keyErr := contracts.ValidatePartitionKey(event.SagaID, event.PartitionKey); keyErr != nil {
+		return keyErr
+	}
 	payloadBytes, err := json.Marshal(event.Payload)
 	if err != nil {
 		return errors.NewInternalError("failed to serialize outbox payload")

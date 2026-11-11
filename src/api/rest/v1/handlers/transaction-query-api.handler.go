@@ -303,13 +303,13 @@ func (h *TransactionQueryHandler) writeError(w http.ResponseWriter, r *http.Requ
 }
 
 func parseLimitParam(r *http.Request) (int, error) {
-	raw := r.URL.Query().Get("limit")
+	raw := r.URL.Query().Get(constants.QueryParamLimit)
 	if raw == "" {
 		return 0, nil
 	}
 	limit, err := strconv.Atoi(raw)
 	if err != nil || limit < 1 || limit > contracts.MaxPageSize {
-		return 0, appErrors.NewTypedError(400, constants.TQErrLimitExceeded, "limit must be an integer between 1 and 200")
+		return 0, contracts.NewLimitRangeError()
 	}
 	return limit, nil
 }

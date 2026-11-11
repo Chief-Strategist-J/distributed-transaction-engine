@@ -5,6 +5,7 @@ import (
 	"distributed-transaction-engine/src/shared/errors"
 	"encoding/json"
 	"regexp"
+	"strings"
 )
 
 var (
@@ -43,8 +44,8 @@ func ValidateCreateOutboxEventInput(input *CreateOutboxEventInput) (spanErr erro
 	if input.DestinationTopic == "" {
 		return errors.NewValidationError("destinationTopic must not be empty")
 	}
-	if input.PartitionKey == "" {
-		return errors.NewValidationError("partitionKey must not be empty")
+	if err := ValidatePartitionKey(input.SagaID, input.PartitionKey); err != nil {
+		return err
 	}
 	if input.EventType == "" {
 		return errors.NewValidationError("eventType must not be empty")
@@ -61,5 +62,16 @@ func ValidateCreateOutboxEventInput(input *CreateOutboxEventInput) (spanErr erro
 		return errors.NewValidationError("payload exceeds maximum allowable size of 1MB")
 	}
 
+	return nil
+}
+
+func ValidatePartitionKey(sagaID string, partitionKey string) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
+	if strings.TrimSpace(partitionKey) == "" {
+		return errors.NewValidationError("partitionKey must not be empty")
+	}
+	if partitionKey != strings.ToLower(sagaID) {
+		return errors.NewValidationError("partitionKey must equal sagaId so that all events of one saga share a Kafka partition")
+	}
 	return nil
 }

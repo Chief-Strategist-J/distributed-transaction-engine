@@ -10,6 +10,7 @@ const (
 	HeaderXClientID       = "x-client-id"
 	HeaderXUserID         = "x-user-id"
 	HeaderXAPIVersion     = "x-api-version"
+	QueryParamLimit       = "limit"
 	HeaderIfMatch         = "if-match"
 	HeaderETag            = "etag"
 	HeaderRetryAfter      = "retry-after"
