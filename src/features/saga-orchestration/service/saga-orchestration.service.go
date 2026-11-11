@@ -211,6 +211,11 @@ func (s *SagaOrchestrationService) ProcessSaga(ctx context.Context, instance *sa
 		return err
 	}
 
+	if !sagaRules.IsProcessableState(instance.CurrentState) {
+		observability.NoteSwallowed(s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken))
+		return nil
+	}
+
 	if instance.CurrentState == sagaContracts.SagaStateCreated {
 		if err := s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateRunning); err != nil {
 			observability.RecordError(span, err)
@@ -222,6 +227,10 @@ func (s *SagaOrchestrationService) ProcessSaga(ctx context.Context, instance *sa
 	if !topoResult.IsValid {
 		observability.RecordError(span, topoResult.Error)
 		return topoResult.Error
+	}
+
+	if instance.CurrentState == sagaContracts.SagaStateCompensating {
+		return s.resumeCompensation(ctx, instance, workflowDef.Steps, topoResult.TopologicalOrder)
 	}
 
 	completedSteps := make(map[string]bool)
@@ -252,6 +261,7 @@ func (s *SagaOrchestrationService) ProcessSaga(ctx context.Context, instance *sa
 		if len(executable) == 0 {
 			break
 		}
+		progressed := false
 
 		for _, stepID := range executable {
 			stepDef := stepMap[stepID]
@@ -305,6 +315,7 @@ func (s *SagaOrchestrationService) ProcessSaga(ctx context.Context, instance *sa
 				}
 
 				hasFailed = true
+				progressed = true
 				stepFailureError = dispatchErr
 				break
 			}
@@ -315,10 +326,14 @@ func (s *SagaOrchestrationService) ProcessSaga(ctx context.Context, instance *sa
 			succeededSteps[stepID] = true
 			eligibleForCompensation[stepID] = true
 			delete(inFlightSteps, stepID)
+			progressed = true
 
 			if stepDef.IsPivot {
 				isPivotSucceeded = true
 			}
+		}
+		if !progressed {
+			break
 		}
 	}
 
@@ -352,31 +367,17 @@ func (s *SagaOrchestrationService) ProcessSaga(ctx context.Context, instance *sa
 		}
 		observability.NoteSwallowed(s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCompensating))
 
-		compensationChain := sagaRules.ComputeReverseCompensationChain(workflowDef.Steps, topoResult.TopologicalOrder, eligibleForCompensation)
-		allCompensated := true
-
-		for _, compStepID := range compensationChain {
-			compDef := stepMap[compStepID]
-			compExec := s.findStepExecution(instance, compStepID)
-
-			s.recordStepTransition(ctx, instance.TenantID, instance.ID, compExec, sagaContracts.StepStateCompensating, nil, nil)
-
-			compKey := sagaRules.DeriveCompensationIdempotencyKey(instance.ID, compStepID)
-			compErr := s.dispatcher.CompensateStep(ctx, compDef, instance.InitialPayload, compExec.StepOutput, compKey)
-			if compErr != nil {
-				allCompensated = false
-				s.recordStepTransition(ctx, instance.TenantID, instance.ID, compExec, sagaContracts.StepStateCompensating, nil, compErr)
-				break
-			}
-
-			s.recordStepTransition(ctx, instance.TenantID, instance.ID, compExec, sagaContracts.StepStateCompensated, nil, nil)
-		}
+		allCompensated := s.runCompensation(ctx, instance, workflowDef.Steps, topoResult.TopologicalOrder, eligibleForCompensation)
 
 		terminalCompState := sagaRules.EvaluatePostCompensationState(allCompensated)
 		observability.NoteSwallowed(s.transitionSagaState(ctx, instance.TenantID, instance, terminalCompState))
 		observability.NoteSwallowed(s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken))
 
 		return stepFailureError
+	}
+	if len(completedSteps) < len(workflowDef.Steps) {
+		observability.NoteSwallowed(s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken))
+		return nil
 	}
 	observability.NoteSwallowed(s.transitionSagaState(ctx, instance.TenantID, instance, sagaContracts.SagaStateCompleted))
 	observability.NoteSwallowed(s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken))
@@ -536,4 +537,45 @@ func generateRandomAlpha(length int) string {
 		return hexStr[:length]
 	}
 	return hexStr
+}
+
+func (s *SagaOrchestrationService) runCompensation(
+	ctx context.Context,
+	instance *sagaContracts.SagaInstance,
+	steps []workflowContracts.StepDefinition,
+	topologicalOrder []string,
+	eligible map[string]bool,
+) bool {
+	stepMap := make(map[string]workflowContracts.StepDefinition, len(steps))
+	for _, step := range steps {
+		stepMap[step.StepID] = step
+	}
+	for _, compStepID := range sagaRules.ComputeReverseCompensationChain(steps, topologicalOrder, eligible) {
+		compExec := s.findStepExecution(instance, compStepID)
+		if compExec == nil {
+			continue
+		}
+		s.recordStepTransition(ctx, instance.TenantID, instance.ID, compExec, sagaContracts.StepStateCompensating, nil, nil)
+		compKey := sagaRules.DeriveCompensationIdempotencyKey(instance.ID, compStepID)
+		if compErr := s.dispatcher.CompensateStep(ctx, stepMap[compStepID], instance.InitialPayload, compExec.StepOutput, compKey); compErr != nil {
+			s.recordStepTransition(ctx, instance.TenantID, instance.ID, compExec, sagaContracts.StepStateCompensating, nil, compErr)
+			return false
+		}
+		s.recordStepTransition(ctx, instance.TenantID, instance.ID, compExec, sagaContracts.StepStateCompensated, nil, nil)
+	}
+	return true
+}
+
+func (s *SagaOrchestrationService) resumeCompensation(
+	ctx context.Context,
+	instance *sagaContracts.SagaInstance,
+	steps []workflowContracts.StepDefinition,
+	topologicalOrder []string,
+) error {
+	eligible := sagaRules.DeriveResumeCompensationSet(instance.Steps)
+	allCompensated := s.runCompensation(ctx, instance, steps, topologicalOrder, eligible)
+	terminalState := sagaRules.EvaluatePostCompensationState(allCompensated)
+	observability.NoteSwallowed(s.transitionSagaState(ctx, instance.TenantID, instance, terminalState))
+	observability.NoteSwallowed(s.repo.ReleaseLease(ctx, instance.TenantID, instance.ID, instance.FencingToken))
+	return nil
 }

@@ -177,3 +177,25 @@ func IsRetryEligible(nextAttemptAt string) bool {
 	}
 	return time.Now().UTC().After(t) || time.Now().UTC().Equal(t)
 }
+
+func IsProcessableState(state sagaContracts.SagaState) bool {
+	defer observability.TraceEnter(nil)()
+	switch state {
+	case sagaContracts.SagaStateCreated, sagaContracts.SagaStateRunning, sagaContracts.SagaStateRollingForward, sagaContracts.SagaStateCompensating:
+		return true
+	default:
+		return false
+	}
+}
+
+func DeriveResumeCompensationSet(steps []sagaContracts.SagaStepExecution) map[string]bool {
+	defer observability.TraceEnter(nil)()
+	eligible := make(map[string]bool)
+	for _, step := range steps {
+		switch step.ExecutionState {
+		case sagaContracts.StepStateSucceeded, sagaContracts.StepStateUnknown, sagaContracts.StepStateCompensating:
+			eligible[step.StepID] = true
+		}
+	}
+	return eligible
+}
