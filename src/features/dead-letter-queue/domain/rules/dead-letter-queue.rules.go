@@ -122,3 +122,27 @@ func (r *DeadLetterRules) ShouldEscalate(record contracts.DeadLetterRecord, now 
 	}
 	return false
 }
+
+type IdempotencyVerdict struct {
+	Blocked bool
+	Reason  string
+}
+
+func (r *DeadLetterRules) EvaluateReplayIdempotency(state string, found bool) IdempotencyVerdict {
+	defer observability.TraceEnter(nil)()
+	if !found {
+		return IdempotencyVerdict{Blocked: false, Reason: "no earlier execution recorded for this idempotency key"}
+	}
+	switch state {
+	case "COMPLETED":
+		return IdempotencyVerdict{Blocked: true, Reason: "the original execution already completed under this idempotency key"}
+	case "IN_PROGRESS":
+		return IdempotencyVerdict{Blocked: true, Reason: "an execution under this idempotency key is still in progress"}
+	case "UNKNOWN":
+		return IdempotencyVerdict{Blocked: true, Reason: "the outcome of the earlier execution under this idempotency key is unknown"}
+	case "REJECTED_FINAL":
+		return IdempotencyVerdict{Blocked: false, Reason: "the earlier execution was rejected without side effects"}
+	default:
+		return IdempotencyVerdict{Blocked: true, Reason: "the idempotency ledger reports an unrecognised state " + state}
+	}
+}

@@ -23,16 +23,16 @@ func TestEndToEnd_InboxDeduplicationLifecycle(t *testing.T) {
 	now := time.Now().UTC()
 
 	input := &contracts.IngestMessageInput{
-		ID:                 "01931390-1234-7123-8123-123456789abc",
-		PublicID:           "inb_01JBM9A1Z00000000000000001",
-		TenantID:           "tenant_us_east",
-		Source:             "KAFKA_ORDER_TOPIC",
-		ExternalID:         "evt_order_completed_9981",
-		CorrelationID:      "01931390-1234-7123-8123-123456789abc",
-		HandlerName:        "saga_reply_handler",
-		HandlerGeneration:  1,
-		ProducerEventTime:  now,
-		Payload:            map[string]interface{}{"orderId": "ord_100", "status": "CONFIRMED"},
+		ID:                "01931390-1234-7123-8123-123456789abc",
+		PublicID:          "inb_01JBM9A1Z00000000000000001",
+		TenantID:          "tenant_us_east",
+		Source:            "KAFKA_ORDER_TOPIC",
+		ExternalID:        "evt_order_completed_9981",
+		CorrelationID:     "01931390-1234-7123-8123-123456789abc",
+		HandlerName:       "saga_reply_handler",
+		HandlerGeneration: 1,
+		ProducerEventTime: now,
+		Payload:           map[string]interface{}{"orderId": "ord_100", "status": "CONFIRMED"},
 	}
 
 	dec1, err := svc.ProcessIncomingMessage(ctx, input)

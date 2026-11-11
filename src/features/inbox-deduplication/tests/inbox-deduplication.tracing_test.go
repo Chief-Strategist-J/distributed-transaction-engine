@@ -24,16 +24,16 @@ func TestInboxDeduplicationTracingLifecycle(t *testing.T) {
 
 	now := time.Now().UTC()
 	input := &contracts.IngestMessageInput{
-		ID:                 "01931390-5555-7123-8123-123456789abc",
-		PublicID:           "inb_01JBM9A1Z00000000000000099",
-		TenantID:           "tenant_trace_1",
-		Source:             "KAFKA_PAYMENT_REPLY",
-		ExternalID:         "evt_pay_reply_8821",
-		CorrelationID:      "01931390-5555-7123-8123-123456789abc",
-		HandlerName:        "payment_reply_worker",
-		HandlerGeneration:  1,
-		ProducerEventTime:  now,
-		Payload:            map[string]interface{}{"paymentId": "pay_99", "amount": 2500},
+		ID:                "01931390-5555-7123-8123-123456789abc",
+		PublicID:          "inb_01JBM9A1Z00000000000000099",
+		TenantID:          "tenant_trace_1",
+		Source:            "KAFKA_PAYMENT_REPLY",
+		ExternalID:        "evt_pay_reply_8821",
+		CorrelationID:     "01931390-5555-7123-8123-123456789abc",
+		HandlerName:       "payment_reply_worker",
+		HandlerGeneration: 1,
+		ProducerEventTime: now,
+		Payload:           map[string]interface{}{"paymentId": "pay_99", "amount": 2500},
 	}
 
 	decision, err := svc.ProcessIncomingMessage(ctx, input)
@@ -59,4 +59,3 @@ func TestInboxDeduplicationTracingLifecycle(t *testing.T) {
 		t.Fatalf("expected error and error span recording on tampered payload, got nil")
 	}
 }
-

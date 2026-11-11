@@ -93,6 +93,7 @@ type InboxConfig struct {
 }
 
 type AppConfig struct {
+	Parallel  ParallelConfig  `yaml:"parallel"`
 	Inbox     InboxConfig     `yaml:"inbox"`
 	Auth      AuthConfig      `yaml:"auth"`
 	Server    ServerConfig    `yaml:"server"`
@@ -318,6 +319,7 @@ func Load(path string) (*AppConfig, error) {
 	cfg.Kafka.ApplyEnvironment()
 	cfg.Outbox.ApplyEnvironment()
 	cfg.Inbox.ApplyEnvironment()
+	cfg.Parallel.ApplyEnvironment()
 	cfg.Auth.ApplyEnvironment()
 	if err := cfg.Auth.Validate(os.Getenv("ENV")); err != nil {
 		return nil, err

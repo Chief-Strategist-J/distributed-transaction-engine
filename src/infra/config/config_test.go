@@ -13,7 +13,7 @@ var ambientVariables = []string{
 	"SHUTDOWN_DEADLINE_SECONDS", "MAX_REQUEST_BODY_BYTES", "EXPOSE_ERROR_DETAILS", "WORKER_ID", "POLLER_ENABLED",
 	"POLLER_LEASE_DURATION_SECONDS", "POLLER_INTERVAL_MILLIS", "KAFKA_BROKERS", "KAFKA_WRITE_TIMEOUT_MS", "KAFKA_BATCH_TIMEOUT_MS",
 	"KAFKA_REPLICATION_FACTOR", "KAFKA_TOPICS_MANIFEST", "KAFKA_TLS_ENABLED", "KAFKA_CA_FILE", "KAFKA_SASL_MECHANISM", "KAFKA_SASL_USERNAME", "KAFKA_SASL_PASSWORD", "KAFKA_SASL_PASSWORD_FILE", "DB_SSLROOTCERT", "KAFKA_AUTO_CREATE_TOPICS", "OUTBOX_RELAY_ENABLED",
-	"OUTBOX_RELAY_INTERVAL_MILLIS", "OUTBOX_RELAY_BATCH_SIZE", "INBOX_PRUNE_ENABLED", "INBOX_RETENTION_DAYS", "INBOX_PRUNE_INTERVAL_MINUTES", "INBOX_PRUNE_BATCH_SIZE", "AUTH_MODE", "AUTH_JWKS_FILE", "AUTH_ISSUER", "AUTH_AUDIENCE",
+	"OUTBOX_RELAY_INTERVAL_MILLIS", "OUTBOX_RELAY_BATCH_SIZE", "PARALLEL_MAX_CONCURRENT_BRANCHES", "INBOX_PRUNE_ENABLED", "INBOX_RETENTION_DAYS", "INBOX_PRUNE_INTERVAL_MINUTES", "INBOX_PRUNE_BATCH_SIZE", "AUTH_MODE", "AUTH_JWKS_FILE", "AUTH_ISSUER", "AUTH_AUDIENCE",
 	"AUTH_LEEWAY_SECONDS",
 }
 
@@ -489,5 +489,22 @@ func TestAuthConfig_DefaultClockSkewToleranceIsOneMinute(t *testing.T) {
 	strict, _ := Load("")
 	if strict.Auth.Leeway() != 0 {
 		t.Fatalf("an explicit zero must disable the tolerance, got %v", strict.Auth.Leeway())
+	}
+}
+
+func TestParallelConfig_DefaultsToThirtyTwoAndHonoursValidOverrides(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil || cfg.Parallel.ConcurrencyLimit() != 32 {
+		t.Fatalf("default must be 32: %v %v", cfg.Parallel.ConcurrencyLimit(), err)
+	}
+	t.Setenv("PARALLEL_MAX_CONCURRENT_BRANCHES", "8")
+	cfg, _ = Load("")
+	if cfg.Parallel.ConcurrencyLimit() != 8 {
+		t.Fatalf("override not applied: %d", cfg.Parallel.ConcurrencyLimit())
+	}
+	t.Setenv("PARALLEL_MAX_CONCURRENT_BRANCHES", "0")
+	cfg, _ = Load("")
+	if cfg.Parallel.ConcurrencyLimit() != 32 {
+		t.Fatalf("a non-positive limit must fall back to the default, got %d", cfg.Parallel.ConcurrencyLimit())
 	}
 }

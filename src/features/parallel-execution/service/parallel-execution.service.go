@@ -2,7 +2,11 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	contracts "distributed-transaction-engine/src/features/parallel-execution/contracts"
@@ -13,26 +17,35 @@ import (
 	"github.com/google/uuid"
 )
 
+const DefaultMaxConcurrentBranches = 32
+
 type ParallelExecutionServiceDeps struct {
-	Repo       ports.ParallelExecutionRepositoryPort
-	Dispatcher ports.ParallelDispatcherPort
-	Machine    *machines.ParallelExecutionMachine
-	Tracer     *observability.DefaultTracer
+	Repo                  ports.ParallelExecutionRepositoryPort
+	Dispatcher            ports.ParallelDispatcherPort
+	Machine               *machines.ParallelExecutionMachine
+	Tracer                *observability.DefaultTracer
+	MaxConcurrentBranches int
 }
 
 type ParallelExecutionService struct {
-	repo       ports.ParallelExecutionRepositoryPort
-	dispatcher ports.ParallelDispatcherPort
-	machine    *machines.ParallelExecutionMachine
-	tracer     *observability.DefaultTracer
+	repo          ports.ParallelExecutionRepositoryPort
+	dispatcher    ports.ParallelDispatcherPort
+	machine       *machines.ParallelExecutionMachine
+	tracer        *observability.DefaultTracer
+	maxConcurrent int
 }
 
 func NewParallelExecutionService(deps ParallelExecutionServiceDeps) *ParallelExecutionService {
+	maxConcurrent := deps.MaxConcurrentBranches
+	if maxConcurrent <= 0 {
+		maxConcurrent = DefaultMaxConcurrentBranches
+	}
 	return &ParallelExecutionService{
-		repo:       deps.Repo,
-		dispatcher: deps.Dispatcher,
-		machine:    deps.Machine,
-		tracer:     deps.Tracer,
+		repo:          deps.Repo,
+		dispatcher:    deps.Dispatcher,
+		machine:       deps.Machine,
+		tracer:        deps.Tracer,
+		maxConcurrent: maxConcurrent,
 	}
 }
 
@@ -102,12 +115,71 @@ func (s *ParallelExecutionService) StartParallelGroup(ctx context.Context, input
 		return nil, err
 	}
 
-	for _, b := range branches {
-		observability.NoteSwallowed(s.dispatcher.DispatchBranch(ctx, group.TenantID, group.SagaID, group.ID, b))
-	}
+	s.dispatchBranches(ctx, group, branches)
 
 	group.Branches = branches
 	return group, nil
+}
+
+var errGroupDecided = stderrors.New("parallel group reached its join decision")
+
+func (s *ParallelExecutionService) dispatchBranches(ctx context.Context, group *contracts.ParallelGroupInstance, branches []contracts.ParallelBranchInstance) {
+	dispatchCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	slots := make(chan struct{}, s.maxConcurrent)
+	var running sync.WaitGroup
+	for _, branch := range branches {
+		select {
+		case slots <- struct{}{}:
+		case <-dispatchCtx.Done():
+			running.Wait()
+			return
+		}
+		running.Add(1)
+		go func(candidate contracts.ParallelBranchInstance) {
+			defer running.Done()
+			defer func() { <-slots }()
+			if err := s.dispatcher.DispatchBranch(dispatchCtx, group.TenantID, group.SagaID, group.ID, candidate); err != nil {
+				s.recordDispatchFailure(ctx, dispatchCtx, cancel, group, candidate, err)
+			}
+		}(branch)
+	}
+	running.Wait()
+}
+
+func (s *ParallelExecutionService) recordDispatchFailure(
+	ctx context.Context,
+	dispatchCtx context.Context,
+	cancel context.CancelCauseFunc,
+	group *contracts.ParallelGroupInstance,
+	branch contracts.ParallelBranchInstance,
+	dispatchErr error,
+) {
+	if dispatchCtx.Err() != nil && stderrors.Is(dispatchErr, context.Canceled) {
+		return
+	}
+	observability.GetLogger().Warn(ctx, "parallel branch dispatch failed",
+		observability.String("group_id", group.ID), observability.String("branch_id", branch.BranchID), observability.String("error", dispatchErr.Error()))
+	for attempt := 0; attempt < maxCompletionAttempts; attempt++ {
+		err := s.HandleBranchCompletion(ctx, group.TenantID, group.ID, branch.BranchID, false, nil, "dispatch failed: "+dispatchErr.Error())
+		if err == nil {
+			break
+		}
+		if !isVersionConflict(err) {
+			observability.GetLogger().Error(ctx, "recording parallel branch failure failed", observability.String("error", err.Error()))
+			return
+		}
+	}
+	if current, err := s.repo.GetGroup(ctx, group.TenantID, group.ID); err == nil && current.CurrentState != contracts.GroupStateFanoutActive {
+		cancel(errGroupDecided)
+	}
+}
+
+const maxCompletionAttempts = 3
+
+func isVersionConflict(err error) bool {
+	var appErr *errors.ApplicationError
+	return stderrors.As(err, &appErr) && appErr.StatusCode == 409
 }
 
 func (s *ParallelExecutionService) HandleBranchCompletion(
@@ -162,16 +234,43 @@ func (s *ParallelExecutionService) HandleBranchCompletion(
 		return err
 	}
 
-	for _, cmd := range dec.Commands {
-		switch cmd.Type {
-		case machines.CommandCancelBranch:
-			observability.NoteSwallowed(s.dispatcher.CancelBranch(ctx, tenantID, group.SagaID, groupID, cmd.BranchID))
-		case machines.CommandCompensateBranch:
-			observability.NoteSwallowed(s.dispatcher.CompensateBranch(ctx, tenantID, group.SagaID, groupID, cmd.BranchID))
-		}
-	}
+	return s.runGroupCommands(ctx, tenantID, group.SagaID, groupID, dec.Commands)
+}
 
+func (s *ParallelExecutionService) runGroupCommands(ctx context.Context, tenantID string, sagaID string, groupID string, commands []machines.ParallelCommand) error {
+	slots := make(chan struct{}, s.maxConcurrent)
+	var running sync.WaitGroup
+	var mu sync.Mutex
+	var failures []string
+	for _, cmd := range commands {
+		if cmd.Type != machines.CommandCancelBranch && cmd.Type != machines.CommandCompensateBranch {
+			continue
+		}
+		slots <- struct{}{}
+		running.Add(1)
+		go func(command machines.ParallelCommand) {
+			defer running.Done()
+			defer func() { <-slots }()
+			if err := s.executeCommand(ctx, tenantID, sagaID, groupID, command); err != nil {
+				mu.Lock()
+				failures = append(failures, fmt.Sprintf("%s %s: %v", command.Type, command.BranchID, err))
+				mu.Unlock()
+			}
+		}(cmd)
+	}
+	running.Wait()
+	if len(failures) > 0 {
+		sort.Strings(failures)
+		return errors.NewInternalError(fmt.Sprintf("%d group command(s) failed: %s", len(failures), strings.Join(failures, "; ")))
+	}
 	return nil
+}
+
+func (s *ParallelExecutionService) executeCommand(ctx context.Context, tenantID string, sagaID string, groupID string, command machines.ParallelCommand) error {
+	if command.Type == machines.CommandCancelBranch {
+		return s.dispatcher.CancelBranch(ctx, tenantID, sagaID, groupID, command.BranchID)
+	}
+	return s.dispatcher.CompensateBranch(ctx, tenantID, sagaID, groupID, command.BranchID)
 }
 
 func (s *ParallelExecutionService) GetGroup(ctx context.Context, tenantID string, groupID string) (spanResult0 *contracts.ParallelGroupInstance, spanErr error) {

@@ -136,9 +136,12 @@ type TriageInput struct {
 }
 
 type RetryActionInput struct {
-	TenantID string    `json:"tenantId"`
-	RecordID uuid.UUID `json:"recordId"`
-	ActorID  string    `json:"actorId"`
+	TenantID             string    `json:"tenantId"`
+	RecordID             uuid.UUID `json:"recordId"`
+	ActorID              string    `json:"actorId"`
+	OverrideIdempotency  bool      `json:"overrideIdempotency,omitempty"`
+	OverrideConfirmation string    `json:"overrideConfirmation,omitempty"`
+	OverrideReason       string    `json:"overrideReason,omitempty"`
 }
 
 type ResolveEvidenceInput struct {

@@ -107,6 +107,29 @@ func ValidateRetryInput(input RetryActionInput) (spanErr error) {
 	if strings.TrimSpace(input.ActorID) == "" {
 		return appErrors.NewValidationError("actor_id must not be empty")
 	}
+	return validateIdempotencyOverride(input)
+}
+
+const MinOverrideReasonLength = 10
+
+func OverrideConfirmationFor(idempotencyKey string) string {
+	defer observability.TraceEnter(nil)()
+	return "OVERRIDE_IDEMPOTENCY:" + idempotencyKey
+}
+
+func validateIdempotencyOverride(input RetryActionInput) error {
+	if !input.OverrideIdempotency {
+		if input.OverrideConfirmation != "" || input.OverrideReason != "" {
+			return appErrors.NewValidationError("override confirmation and reason are only valid with overrideIdempotency")
+		}
+		return nil
+	}
+	if strings.TrimSpace(input.OverrideConfirmation) == "" {
+		return appErrors.NewValidationError("overrideConfirmation is required to override idempotency")
+	}
+	if len(strings.TrimSpace(input.OverrideReason)) < MinOverrideReasonLength {
+		return appErrors.NewValidationError("overrideReason must explain the override in at least 10 characters")
+	}
 	return nil
 }
 

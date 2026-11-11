@@ -13,6 +13,7 @@ import (
 
 type (
 	RepositoryPort         = ports.RepositoryPort
+	IdempotencyLedgerPort  = ports.IdempotencyLedgerPort
 	DeadLetterService      = service.DeadLetterService
 	ServiceDeps            = service.ServiceDeps
 	DeadLetterRecord       = contracts.DeadLetterRecord
@@ -83,3 +84,11 @@ func NewDeadLetterMachine() *DeadLetterMachine {
 	return machines.NewDeadLetterMachine()
 }
 
+
+func NewPostgresIdempotencyLedger(db *sql.DB) IdempotencyLedgerPort {
+	return adapters.NewPostgresIdempotencyLedgerAdapter(db)
+}
+
+func NewMemoryIdempotencyLedger() *adapters.MemoryIdempotencyLedgerAdapter {
+	return adapters.NewMemoryIdempotencyLedgerAdapter()
+}

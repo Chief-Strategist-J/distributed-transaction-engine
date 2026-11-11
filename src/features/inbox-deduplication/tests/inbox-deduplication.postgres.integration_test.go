@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	adapters "distributed-transaction-engine/src/features/inbox-deduplication/infrastructure/adapters"
 	service "distributed-transaction-engine/src/features/inbox-deduplication/service"
 	"distributed-transaction-engine/src/infra/observability"
+	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 )
 
@@ -58,7 +60,7 @@ func TestInboxDeduplicationPostgresIntegration(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	tenantID := fmt.Sprintf("tenant_inb_pg_%d", now.UnixNano())
-	msgID := fmt.Sprintf("01931390-8888-7123-8123-%012d", now.Unix()%1000000000000)
+	msgID := "01931390-8888-7123-8123-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12]
 	pubID := fmt.Sprintf("inb_%026d", now.UnixNano()%1000000000000000000)
 
 	input := &contracts.IngestMessageInput{
@@ -98,4 +100,3 @@ func TestInboxDeduplicationPostgresIntegration(t *testing.T) {
 		t.Fatalf("expected stored hash %s, got %s", dec1.StoredHash, record.ContentHash)
 	}
 }
-

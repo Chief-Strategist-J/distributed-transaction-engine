@@ -10,41 +10,41 @@ import (
 
 	"distributed-transaction-engine/src/api/rest/v1/handlers"
 	"distributed-transaction-engine/src/api/rest/v1/routers"
+	audittrail "distributed-transaction-engine/src/features/audit-trail"
+	auth "distributed-transaction-engine/src/features/authentication-authorization"
+	compensationEngine "distributed-transaction-engine/src/features/compensation-engine"
+	compensationMachines "distributed-transaction-engine/src/features/compensation-engine/domain/machines"
+	compensationRetry "distributed-transaction-engine/src/features/compensation-retry"
 	crashRecovery "distributed-transaction-engine/src/features/crash-recovery"
 	crashRecoveryContracts "distributed-transaction-engine/src/features/crash-recovery/contracts"
 	crashRecoveryRules "distributed-transaction-engine/src/features/crash-recovery/domain/rules"
+	deadLetterQueue "distributed-transaction-engine/src/features/dead-letter-queue"
+	tracing "distributed-transaction-engine/src/features/distributed-tracing"
+	fencingTokens "distributed-transaction-engine/src/features/fencing-tokens"
+	idempotencyKeys "distributed-transaction-engine/src/features/idempotency-keys"
+	inboxDeduplication "distributed-transaction-engine/src/features/inbox-deduplication"
+	inboxAdapters "distributed-transaction-engine/src/features/inbox-deduplication/infrastructure/adapters"
+	manualIntervention "distributed-transaction-engine/src/features/manual-intervention"
+	dashboard "distributed-transaction-engine/src/features/operational-dashboard"
+	occ "distributed-transaction-engine/src/features/optimistic-concurrency-control"
+	parallelExecution "distributed-transaction-engine/src/features/parallel-execution"
+	parallelMachines "distributed-transaction-engine/src/features/parallel-execution/domain/machines"
+	reconciliationEngine "distributed-transaction-engine/src/features/reconciliation-engine"
+	retryPolicies "distributed-transaction-engine/src/features/retry-policies"
 	sagaAdapters "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/adapters"
 	sagaPorts "distributed-transaction-engine/src/features/saga-orchestration/infrastructure/ports"
 	sagaService "distributed-transaction-engine/src/features/saga-orchestration/service"
+	scheduledExecution "distributed-transaction-engine/src/features/scheduled-execution"
 	sequentialExecution "distributed-transaction-engine/src/features/sequential-execution"
 	sequentialMachines "distributed-transaction-engine/src/features/sequential-execution/domain/machines"
-	parallelExecution "distributed-transaction-engine/src/features/parallel-execution"
-	parallelMachines "distributed-transaction-engine/src/features/parallel-execution/domain/machines"
-	inboxDeduplication "distributed-transaction-engine/src/features/inbox-deduplication"
-	inboxAdapters "distributed-transaction-engine/src/features/inbox-deduplication/infrastructure/adapters"
-	idempotencyKeys "distributed-transaction-engine/src/features/idempotency-keys"
-	retryPolicies "distributed-transaction-engine/src/features/retry-policies"
-	reconciliationEngine "distributed-transaction-engine/src/features/reconciliation-engine"
-	manualIntervention "distributed-transaction-engine/src/features/manual-intervention"
 	tenantIsolation "distributed-transaction-engine/src/features/tenant-isolation"
-	scheduledExecution "distributed-transaction-engine/src/features/scheduled-execution"
-	fencingTokens "distributed-transaction-engine/src/features/fencing-tokens"
-	compensationRetry "distributed-transaction-engine/src/features/compensation-retry"
-	deadLetterQueue "distributed-transaction-engine/src/features/dead-letter-queue"
-	occ "distributed-transaction-engine/src/features/optimistic-concurrency-control"
-	workflowVersioning "distributed-transaction-engine/src/features/workflow-versioning"
-	audittrail "distributed-transaction-engine/src/features/audit-trail"
-	auth "distributed-transaction-engine/src/features/authentication-authorization"
-	dashboard "distributed-transaction-engine/src/features/operational-dashboard"
 	queryapi "distributed-transaction-engine/src/features/transaction-query-api"
-	tracing "distributed-transaction-engine/src/features/distributed-tracing"
+	transactionStateMachine "distributed-transaction-engine/src/features/transaction-state-machine"
 	transactionalOutbox "distributed-transaction-engine/src/features/transactional-outbox"
 	outboxMachines "distributed-transaction-engine/src/features/transactional-outbox/domain/machines"
-	compensationEngine "distributed-transaction-engine/src/features/compensation-engine"
-	compensationMachines "distributed-transaction-engine/src/features/compensation-engine/domain/machines"
-	transactionStateMachine "distributed-transaction-engine/src/features/transaction-state-machine"
 	workflowDefinitions "distributed-transaction-engine/src/features/workflow-definitions"
 	workflowPorts "distributed-transaction-engine/src/features/workflow-definitions/infrastructure/ports"
+	workflowVersioning "distributed-transaction-engine/src/features/workflow-versioning"
 	"distributed-transaction-engine/src/infra/chassis"
 	"distributed-transaction-engine/src/infra/observability"
 )
@@ -142,6 +142,8 @@ func describeService() chassis.ServiceSpec {
 				Dispatcher: parDispatcher,
 				Machine:    parallelMachines.NewParallelExecutionMachine(),
 				Tracer:     observability.NewTracer("parallel-execution"),
+
+				MaxConcurrentBranches: deps.Config.Parallel.ConcurrencyLimit(),
 			})
 			parHandler := handlers.NewParallelExecutionHandler(parSvc)
 			parRouter := routers.NewParallelExecutionRouter(parHandler)
@@ -304,7 +306,12 @@ func describeService() chassis.ServiceSpec {
 			if deps.DB != nil {
 				dlqRepo = deadLetterQueue.NewPostgresAdapter(deps.DB)
 			}
+			var dlqLedger deadLetterQueue.IdempotencyLedgerPort
+			if deps.DB != nil {
+				dlqLedger = deadLetterQueue.NewPostgresIdempotencyLedger(deps.DB)
+			}
 			dlqSvc := deadLetterQueue.NewService(deadLetterQueue.ServiceDeps{
+				Ledger:  dlqLedger,
 				Repo:    dlqRepo,
 				Rules:   deadLetterQueue.NewDeadLetterRules(),
 				Machine: deadLetterQueue.NewDeadLetterMachine(),
@@ -395,40 +402,40 @@ func describeService() chassis.ServiceSpec {
 
 			return chassis.Services{
 				Instances: map[string]any{
-					"workflowRouter":          workflowRouter,
-					"stateRouter":             stateRouter,
-					"sagaRouter":              sagaRouter,
-					"recoveryRouter":          recoveryRouter,
-					"sequentialRouter":        seqRouter,
-					"parallelRouter":          parRouter,
-					"inboxRouter":             inbRouter,
-					"idempotencyRouter":       idkRouter,
-					"retryRouter":             retryRouter,
-					"outboxRouter":            outboxRouter,
-					"compensationRouter":      compRouter,
-					"fencingRouter":           fencingRouter,
-					"compensationRetryRouter": compRetryRouter,
-					"reconciliationRouter":    reconRouter,
+					"workflowRouter":           workflowRouter,
+					"stateRouter":              stateRouter,
+					"sagaRouter":               sagaRouter,
+					"recoveryRouter":           recoveryRouter,
+					"sequentialRouter":         seqRouter,
+					"parallelRouter":           parRouter,
+					"inboxRouter":              inbRouter,
+					"idempotencyRouter":        idkRouter,
+					"retryRouter":              retryRouter,
+					"outboxRouter":             outboxRouter,
+					"compensationRouter":       compRouter,
+					"fencingRouter":            fencingRouter,
+					"compensationRetryRouter":  compRetryRouter,
+					"reconciliationRouter":     reconRouter,
 					"manualInterventionRouter": manualRouter,
 					"scheduledExecutionRouter": schedRouter,
-					"dlqRouter":               dlqRouter,
-					"occRouter":               occRouter,
+					"dlqRouter":                dlqRouter,
+					"occRouter":                occRouter,
 					"workflowVersioningRouter": wvRouter,
-					"auditRouter":             auditRouter,
-					"authRouter":              authRouter,
-					"tenantIsolationServices": tenantServices,
-					"tracingRouter":           tracingRouter,
-					"dashboardRouter":         dashboardRouter,
-					"queryRouter":             queryRouter,
-					"poller":                  poller,
-					"recoverySvc":             recoverySvc,
-					"pollInterval":            deps.Config.PollInterval(),
-					"pollerEnabled":           !deps.Config.Poller.Disabled,
-					"hasDB":                   deps.DB != nil,
-					"inboxPruner":             inboxPruner,
-					"inboxPrunerEnabled":      !deps.Config.Inbox.PruneDisabled && deps.DB != nil,
-					"outboxRelay":             outboxRelay,
-					"outboxRelayEnabled":      !deps.Config.Outbox.RelayDisabled && deps.DB != nil && kafkaBrokers != "",
+					"auditRouter":              auditRouter,
+					"authRouter":               authRouter,
+					"tenantIsolationServices":  tenantServices,
+					"tracingRouter":            tracingRouter,
+					"dashboardRouter":          dashboardRouter,
+					"queryRouter":              queryRouter,
+					"poller":                   poller,
+					"recoverySvc":              recoverySvc,
+					"pollInterval":             deps.Config.PollInterval(),
+					"pollerEnabled":            !deps.Config.Poller.Disabled,
+					"hasDB":                    deps.DB != nil,
+					"inboxPruner":              inboxPruner,
+					"inboxPrunerEnabled":       !deps.Config.Inbox.PruneDisabled && deps.DB != nil,
+					"outboxRelay":              outboxRelay,
+					"outboxRelayEnabled":       !deps.Config.Outbox.RelayDisabled && deps.DB != nil && kafkaBrokers != "",
 				},
 			}, nil
 		},

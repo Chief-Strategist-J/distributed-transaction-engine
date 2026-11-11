@@ -22,6 +22,7 @@ type ServiceDeps struct {
 	Rules   *rules.DeadLetterRules
 	Machine *machines.DeadLetterMachine
 	Tracer  *observability.DefaultTracer
+	Ledger  ports.IdempotencyLedgerPort
 }
 
 type DeadLetterService struct {
@@ -29,6 +30,7 @@ type DeadLetterService struct {
 	rules   *rules.DeadLetterRules
 	machine *machines.DeadLetterMachine
 	tracer  *observability.DefaultTracer
+	ledger  ports.IdempotencyLedgerPort
 }
 
 func NewService(deps ServiceDeps) *DeadLetterService {
@@ -50,6 +52,7 @@ func NewService(deps ServiceDeps) *DeadLetterService {
 		rules:   r,
 		machine: m,
 		tracer:  tr,
+		ledger:  deps.Ledger,
 	}
 }
 
@@ -224,12 +227,42 @@ func (s *DeadLetterService) RetryRecord(
 		return nil, appErrors.NewConflictError("replay precondition failed: " + eval.Reason)
 	}
 
+	if err := s.verifyReplayIdempotency(ctx, input, rec); err != nil {
+		return nil, err
+	}
+
 	nextState, err := s.machine.Transition(rec.Status, machines.EventStartAction)
 	if err != nil {
 		return nil, err
 	}
 
 	return s.repo.UpdateRecordStatus(ctx, input.TenantID, input.RecordID, rec.Version, nextState)
+}
+
+func (s *DeadLetterService) verifyReplayIdempotency(ctx context.Context, input contracts.RetryActionInput, rec *contracts.DeadLetterRecord) (spanErr error) {
+	defer observability.TraceEnter(&spanErr)()
+	if s.ledger == nil {
+		return nil
+	}
+	state, found, err := s.ledger.FindExecutionState(ctx, input.TenantID, rec.IdempotencyKey)
+	if err != nil {
+		return err
+	}
+	verdict := s.rules.EvaluateReplayIdempotency(state, found)
+	if !verdict.Blocked {
+		return nil
+	}
+	if !input.OverrideIdempotency {
+		return appErrors.NewConflictError("replay blocked: " + verdict.Reason + "; confirm an override to replay anyway")
+	}
+	if input.OverrideConfirmation != contracts.OverrideConfirmationFor(rec.IdempotencyKey) {
+		return appErrors.NewForbiddenError("overrideConfirmation must equal " + contracts.OverrideConfirmationFor(rec.IdempotencyKey))
+	}
+	observability.GetLogger().Warn(ctx, "operator overrode idempotency protection for dead letter replay",
+		observability.String("record_id", rec.ID.String()), observability.String("actor_id", input.ActorID),
+		observability.String("idempotency_key", rec.IdempotencyKey), observability.String("reason", input.OverrideReason),
+		observability.String("blocked_because", verdict.Reason))
+	return nil
 }
 
 func (s *DeadLetterService) ResolveEvidence(ctx context.Context, input contracts.ResolveEvidenceInput) (spanResult0 *contracts.DeadLetterRecord, spanErr error) {

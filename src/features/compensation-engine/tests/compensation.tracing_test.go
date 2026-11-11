@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,7 +53,7 @@ func TestCompensationEngine_RealPostgresEndToEnd(t *testing.T) {
 			false, 1, NOW() + INTERVAL '1 day', '{}', '{}',
 			NOW(), NOW()
 		)
-	`, sagaID, fmt.Sprintf("seq_%026d", time.Now().Unix()%10000000000), tenantID, uuid.New().String())
+	`, sagaID, "seq_"+strings.ReplaceAll(uuid.New().String(), "-", "")[:26], tenantID, uuid.New().String())
 	if err != nil {
 		t.Fatalf("failed to seed saga instance: %v", err)
 	}

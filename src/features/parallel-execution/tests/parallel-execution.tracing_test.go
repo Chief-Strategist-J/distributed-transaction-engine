@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,7 +56,7 @@ func TestParallelExecution_EndToEndTracingAndRealDB(t *testing.T) {
 	workflowDefID := uuid.New().String()
 	sagaID := uuid.New().String()
 	groupID := uuid.New().String()
-	groupPubID := fmt.Sprintf("par_%026d", time.Now().Unix()%10000000000)
+	groupPubID := "par_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:26]
 
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO workflow_definitions (
@@ -84,7 +85,7 @@ func TestParallelExecution_EndToEndTracingAndRealDB(t *testing.T) {
 			false, 1, NOW() + INTERVAL '1 day', '{}', '{}',
 			NOW(), NOW()
 		)
-	`, sagaID, fmt.Sprintf("seq_%026d", time.Now().Unix()%10000000000), tenantID, workflowDefID, uuid.New().String())
+	`, sagaID, "seq_"+strings.ReplaceAll(uuid.New().String(), "-", "")[:26], tenantID, workflowDefID, uuid.New().String())
 	if err != nil {
 		t.Fatalf("failed to seed saga instance: %v", err)
 	}
