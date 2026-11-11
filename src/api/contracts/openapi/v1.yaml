@@ -2,6 +2,8 @@ openapi: 3.1.0
 info:
   title: distributed-transaction-engine API
   version: 1.0.0
+security:
+  - bearerAuth: []
 paths:
   /api/v1/compensation/trigger:
     post:
@@ -2320,6 +2322,12 @@ paths:
         '400':
           description: Validation failed on unrecognized payload fields
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: RS256/ES256 JWT with iss, aud, exp, sub and tenant_id claims. Tenant, principal and operator role are taken only from verified claims; a conflicting x-tenant-id header, tenantId query/path/body value yields 403 TENANT_MISMATCH.
   schemas:
     WorkflowDefinitionResponse:
       type: object

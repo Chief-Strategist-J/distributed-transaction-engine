@@ -56,6 +56,9 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 2
+          env:
+            - name: ENV
+              value: production
           resources:
             requests:
               cpu: 100m
@@ -69,9 +72,18 @@ spec:
             - name: config
               mountPath: /app/config
               readOnly: true
+            - name: auth-jwks
+              mountPath: /etc/dtx/auth
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
         - name: config
           configMap:
             name: engine-config
+        - name: auth-jwks
+          secret:
+            secretName: engine-credentials
+            items:
+              - key: auth_jwks
+                path: jwks.json

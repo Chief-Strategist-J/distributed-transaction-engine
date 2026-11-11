@@ -33,5 +33,11 @@ data:
       poll_interval_millis: 250
     kafka:
       brokers: ""
+    auth:
+      mode: "jwt"
+      jwks_file: "/etc/dtx/auth/jwks.json"
+      issuer: ""
+      audience: ""
+      leeway_seconds: 5
     endpoints:
       base_path: "/api/v1"

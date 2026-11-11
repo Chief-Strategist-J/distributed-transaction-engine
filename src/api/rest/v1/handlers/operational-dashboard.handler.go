@@ -36,13 +36,13 @@ func (h *OperationalDashboardHandler) GetOverview(w http.ResponseWriter, r *http
 	start := time.Now()
 
 	tenantID := r.Header.Get(constants.HeaderXTenantID)
-	principalID := r.Header.Get("X-Principal-ID")
+	principalID := r.Header.Get(constants.HeaderXPrincipalID)
 	if principalID == "" {
 		principalID = "anonymous_operator"
 	}
 
 	scopeType := contracts.ScopeTenantAdmin
-	if r.Header.Get("X-Operator-Role") == "sre_admin" {
+	if r.Header.Get(constants.HeaderXOperatorRole) == constants.OperatorRoleSREAdmin {
 		scopeType = contracts.ScopeOperator
 	} else if r.Header.Get("X-Impersonation-Ticket") != "" {
 		scopeType = contracts.ScopeSupport
@@ -87,13 +87,13 @@ func (h *OperationalDashboardHandler) StreamEvents(w http.ResponseWriter, r *htt
 	}
 
 	tenantID := r.Header.Get(constants.HeaderXTenantID)
-	principalID := r.Header.Get("X-Principal-ID")
+	principalID := r.Header.Get(constants.HeaderXPrincipalID)
 	if principalID == "" {
 		principalID = "stream_operator"
 	}
 
 	scopeType := contracts.ScopeTenantAdmin
-	if r.Header.Get("X-Operator-Role") == "sre_admin" {
+	if r.Header.Get(constants.HeaderXOperatorRole) == constants.OperatorRoleSREAdmin {
 		scopeType = contracts.ScopeOperator
 	} else if r.Header.Get("X-Impersonation-Ticket") != "" {
 		scopeType = contracts.ScopeSupport

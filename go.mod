@@ -13,6 +13,7 @@ require (
 )
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/klauspost/compress v1.15.9 // indirect
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 )
@@ -29,7 +30,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.1.0 // indirect
 	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/sys v0.31.0 // indirect
-	golang.org/x/text v0.23.0 // indirect
+	golang.org/x/text v0.23.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20240102182953-50ed04b92917 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240102182953-50ed04b92917 // indirect
 	google.golang.org/grpc v1.61.1 // indirect

@@ -32,12 +32,12 @@ func NewTransactionQueryHandler(service *queryapi.TransactionQueryService) *Tran
 
 func (h *TransactionQueryHandler) resolvePrincipal(r *http.Request) contracts.Principal {
 	tenantID := r.Header.Get(constants.HeaderXTenantID)
-	principalID := r.Header.Get("X-Principal-ID")
+	principalID := r.Header.Get(constants.HeaderXPrincipalID)
 	if principalID == "" {
 		principalID = "user_default"
 	}
 	audience := contracts.AudienceTenantUser
-	if r.Header.Get("X-Operator-Role") == "sre_admin" {
+	if r.Header.Get(constants.HeaderXOperatorRole) == constants.OperatorRoleSREAdmin {
 		audience = contracts.AudienceOperator
 	}
 	return contracts.Principal{

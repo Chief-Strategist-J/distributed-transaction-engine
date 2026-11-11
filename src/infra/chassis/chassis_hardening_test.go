@@ -2,13 +2,22 @@ package chassis
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"distributed-transaction-engine/src/infra/config"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func echoHandler(status int, body string) http.Handler {
@@ -221,4 +230,85 @@ func TestDrainWaitsForHandlersThatFinishInTime(t *testing.T) {
 		t.Fatalf("a drain that finishes in time must succeed, got %v", err)
 	}
 	<-finished
+}
+
+func writeJWKS(t *testing.T, key *rsa.PrivateKey) string {
+	t.Helper()
+	encode := func(value *big.Int) string { return base64.RawURLEncoding.EncodeToString(value.Bytes()) }
+	document, _ := json.Marshal(map[string]any{"keys": []map[string]string{
+		{"kty": "RSA", "kid": "k1", "use": "sig", "n": encode(key.N), "e": encode(big.NewInt(int64(key.E)))},
+	}})
+	path := filepath.Join(t.TempDir(), "jwks.json")
+	if err := os.WriteFile(path, document, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func signedToken(t *testing.T, key *rsa.PrivateKey, tenant string) string {
+	t.Helper()
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"iss": "https://issuer", "aud": "dtx", "sub": "usr_1", "tenant_id": tenant, "exp": time.Now().Add(time.Minute).Unix(),
+	})
+	token.Header["kid"] = "k1"
+	signed, err := token.SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signed
+}
+
+func TestBuildAuthWrapper_Modes(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.AuthConfig{Mode: "jwt", JWKSFile: writeJWKS(t, key), Issuer: "https://issuer", Audience: "dtx"}
+	wrap, err := BuildAuthWrapper(cfg, "production", time.Now)
+	if err != nil {
+		t.Fatalf("expected wrapper, got %v", err)
+	}
+	protected := wrap(echoHandler(http.StatusOK, `{"ok":true}`))
+	anonymous := httptest.NewRecorder()
+	protected.ServeHTTP(anonymous, httptest.NewRequest(http.MethodGet, "/api/v1/sagas", nil))
+	if anonymous.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for anonymous call, got %d", anonymous.Code)
+	}
+	authed := httptest.NewRequest(http.MethodGet, "/api/v1/sagas", nil)
+	authed.Header.Set("Authorization", "Bearer "+signedToken(t, key, "tenant_a"))
+	allowed := httptest.NewRecorder()
+	protected.ServeHTTP(allowed, authed)
+	if allowed.Code != http.StatusOK {
+		t.Fatalf("expected 200 for valid token, got %d: %s", allowed.Code, allowed.Body.String())
+	}
+}
+
+func TestBuildAuthWrapper_FailsClosedOnBadConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	broken := filepath.Join(dir, "broken.json")
+	_ = os.WriteFile(broken, []byte(`{"keys":[]}`), 0o600)
+	cases := map[string]config.AuthConfig{
+		"missing_file":     {Mode: "jwt", JWKSFile: filepath.Join(dir, "absent.json"), Issuer: "i", Audience: "a"},
+		"empty_key_set":    {Mode: "jwt", JWKSFile: broken, Issuer: "i", Audience: "a"},
+		"missing_audience": {Mode: "jwt", JWKSFile: broken, Issuer: "i"},
+	}
+	for name, cfg := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := BuildAuthWrapper(cfg, "production", time.Now); err == nil {
+				t.Fatal("bad auth configuration must stop the boot")
+			}
+		})
+	}
+}
+
+func TestBuildAuthWrapper_DisabledModeIsPassThroughOutsideProduction(t *testing.T) {
+	wrap, err := BuildAuthWrapper(config.AuthConfig{}, "", time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	wrap(echoHandler(http.StatusOK, `{}`)).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/x", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("disabled mode must pass through, got %d", recorder.Code)
+	}
 }

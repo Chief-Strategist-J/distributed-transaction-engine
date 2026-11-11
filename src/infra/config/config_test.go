@@ -161,3 +161,64 @@ func TestOperationalDefaultsAndEnvironmentOverrides(t *testing.T) {
 		t.Fatalf("environment overrides not applied: %+v", tuned.Database)
 	}
 }
+
+func TestAuthConfig_ValidateMatrix(t *testing.T) {
+	complete := AuthConfig{Mode: "jwt", JWKSFile: "/keys/jwks.json", Issuer: "https://issuer", Audience: "dtx"}
+	cases := []struct {
+		name        string
+		cfg         AuthConfig
+		environment string
+		wantErr     bool
+		wantMode    string
+	}{
+		{"dev_default_disabled", AuthConfig{}, "", false, "disabled"},
+		{"dev_explicit_jwt_complete", complete, "development", false, "jwt"},
+		{"dev_jwt_missing_jwks", AuthConfig{Mode: "jwt", Issuer: "i", Audience: "a"}, "", true, "jwt"},
+		{"dev_jwt_missing_issuer", AuthConfig{Mode: "jwt", JWKSFile: "f", Audience: "a"}, "", true, "jwt"},
+		{"dev_jwt_missing_audience", AuthConfig{Mode: "jwt", JWKSFile: "f", Issuer: "i"}, "", true, "jwt"},
+		{"production_default_requires_jwt", AuthConfig{}, "production", true, "jwt"},
+		{"production_complete", complete, "production", false, "jwt"},
+		{"production_cannot_disable", AuthConfig{Mode: "disabled"}, "production", true, "disabled"},
+		{"staging_cannot_disable", AuthConfig{Mode: "DISABLED"}, " Staging ", true, "disabled"},
+		{"production_case_insensitive", complete, "PRODUCTION", false, "jwt"},
+		{"unknown_mode", AuthConfig{Mode: "basic"}, "", true, "basic"},
+		{"leeway_too_large", AuthConfig{Mode: "jwt", JWKSFile: "f", Issuer: "i", Audience: "a", LeewaySeconds: 301}, "", true, "jwt"},
+		{"leeway_negative", AuthConfig{Mode: "jwt", JWKSFile: "f", Issuer: "i", Audience: "a", LeewaySeconds: -1}, "", true, "jwt"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.ResolvedMode(tc.environment); got != tc.wantMode {
+				t.Fatalf("expected mode %q got %q", tc.wantMode, got)
+			}
+			if err := tc.cfg.Validate(tc.environment); (err != nil) != tc.wantErr {
+				t.Fatalf("wantErr=%v got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestAuthConfig_ProductionLoadFailsWithoutKeys(t *testing.T) {
+	t.Setenv("ENV", "production")
+	if _, err := Load(""); err == nil {
+		t.Fatal("production must refuse to boot without jwt configuration")
+	}
+	t.Setenv("AUTH_MODE", "disabled")
+	if _, err := Load(""); err == nil {
+		t.Fatal("production must refuse to boot with auth disabled")
+	}
+}
+
+func TestAuthConfig_EnvironmentOverridesAndLoads(t *testing.T) {
+	t.Setenv("ENV", "production")
+	t.Setenv("AUTH_JWKS_FILE", "/keys/jwks.json")
+	t.Setenv("AUTH_ISSUER", "https://issuer")
+	t.Setenv("AUTH_AUDIENCE", "dtx")
+	t.Setenv("AUTH_LEEWAY_SECONDS", "10")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("complete production config must load: %v", err)
+	}
+	if cfg.Auth.JWKSFile != "/keys/jwks.json" || cfg.Auth.Leeway() != 10*time.Second {
+		t.Fatalf("env overrides not applied: %#v", cfg.Auth)
+	}
+}

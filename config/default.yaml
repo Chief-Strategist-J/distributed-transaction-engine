@@ -29,6 +29,13 @@ poller:
 kafka:
   brokers: ""
 
+auth:
+  mode: ""
+  jwks_file: ""
+  issuer: ""
+  audience: ""
+  leeway_seconds: 5
+
 endpoints:
   base_path: "/api/v1"
   health_live: "/health/live"

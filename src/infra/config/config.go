@@ -56,7 +56,16 @@ type EndpointsConfig struct {
 	CrashRecovery string `yaml:"crash_recovery"`
 }
 
+type AuthConfig struct {
+	Mode          string `yaml:"mode"`
+	JWKSFile      string `yaml:"jwks_file"`
+	Issuer        string `yaml:"issuer"`
+	Audience      string `yaml:"audience"`
+	LeewaySeconds int    `yaml:"leeway_seconds"`
+}
+
 type AppConfig struct {
+	Auth      AuthConfig      `yaml:"auth"`
 	Server    ServerConfig    `yaml:"server"`
 	Database  DatabaseConfig  `yaml:"database"`
 	Poller    PollerConfig    `yaml:"poller"`
@@ -273,6 +282,11 @@ func Load(path string) (*AppConfig, error) {
 
 	if kafkaBrokers := os.Getenv("KAFKA_BROKERS"); kafkaBrokers != "" {
 		cfg.Kafka.Brokers = kafkaBrokers
+	}
+
+	cfg.Auth.ApplyEnvironment()
+	if err := cfg.Auth.Validate(os.Getenv("ENV")); err != nil {
+		return nil, err
 	}
 
 	return cfg, nil

@@ -26,6 +26,7 @@ type App struct {
 	Services Services
 	Health   *HealthCoordinator
 	Spec     ServiceSpec
+	AuthWrap AuthWrapper
 }
 
 func Run(spec ServiceSpec, args []string, env []string) int {
@@ -43,6 +44,12 @@ func Run(spec ServiceSpec, args []string, env []string) int {
 	cfg, err := config.Load(bootCtx.ConfigPath)
 	if err != nil {
 		log.Printf("Configuration error: %v\n", err)
+		return ExitConfig
+	}
+
+	authWrap, err := BuildAuthWrapper(cfg.Auth, os.Getenv("ENV"), time.Now)
+	if err != nil {
+		log.Printf("Authentication configuration error: %v\n", err)
 		return ExitConfig
 	}
 
@@ -105,6 +112,7 @@ func Run(spec ServiceSpec, args []string, env []string) int {
 		Services: services,
 		Health:   health,
 		Spec:     spec,
+		AuthWrap: authWrap,
 	}
 
 	lifecycle := NewLifecycle()
@@ -193,7 +201,7 @@ func wireServe(app *App, lifecycle *Lifecycle) {
 	}
 
 	hideServerDetails := !app.Config.Server.ExposeErrorDetails && strings.EqualFold(os.Getenv("ENV"), "production")
-	guarded := ErrorSanitizer(hideServerDetails, RequestSizeLimit(app.Config.MaxBodyLimit(), publicMux))
+	guarded := ErrorSanitizer(hideServerDetails, RequestSizeLimit(app.Config.MaxBodyLimit(), app.wrapAuth(publicMux)))
 	publicHandler := observability.ObservabilityMiddleware(app.Config.Server.Name, guarded)
 
 	handlerContext, cancelHandlers := context.WithCancel(context.Background())

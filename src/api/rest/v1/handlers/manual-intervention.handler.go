@@ -1,12 +1,15 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
 
 	manualintervention "distributed-transaction-engine/src/features/manual-intervention"
 	contracts "distributed-transaction-engine/src/features/manual-intervention/contracts"
+	rules "distributed-transaction-engine/src/features/manual-intervention/domain/rules"
+	"distributed-transaction-engine/src/infra/auth"
 	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/constants"
 	appErrors "distributed-transaction-engine/src/shared/errors"
@@ -40,6 +43,11 @@ func (h *ManualInterventionHandler) Intervene(w http.ResponseWriter, r *http.Req
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&input); err != nil {
 		h.writeError(w, r, appErrors.NewValidationError(err.Error()), start)
+		return
+	}
+
+	if bindErr := bindAuthenticatedOperator(ctx, &input); bindErr != nil {
+		h.writeError(w, r, bindErr, start)
 		return
 	}
 
@@ -107,4 +115,24 @@ func (h *ManualInterventionHandler) writeError(w http.ResponseWriter, r *http.Re
 	}
 	w.WriteHeader(statusCode)
 	observability.NoteSwallowed(json.NewEncoder(w).Encode(envelope))
+}
+
+func bindAuthenticatedOperator(ctx context.Context, input *contracts.ExecuteInterventionInput) error {
+	principal, authenticated := auth.PrincipalFrom(ctx)
+	if !authenticated {
+		return nil
+	}
+	if input.TenantID != "" && input.TenantID != principal.TenantID {
+		return appErrors.NewForbiddenError("tenant does not match the authenticated principal")
+	}
+	if (input.OperatorID != "" && input.OperatorID != principal.Subject) || (input.OperatorRole != "" && !principal.HasRole(input.OperatorRole)) {
+		return appErrors.NewForbiddenError("operator identity must match the authenticated principal")
+	}
+	if !principal.HasRole(rules.RequiredInterventionRole) {
+		return appErrors.NewForbiddenError("authenticated principal lacks the intervention role")
+	}
+	input.TenantID = principal.TenantID
+	input.OperatorID = principal.Subject
+	input.OperatorRole = rules.RequiredInterventionRole
+	return nil
 }
