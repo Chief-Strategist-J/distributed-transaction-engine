@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "0 2 * * *"
 
 permissions:
   contents: read
@@ -61,6 +63,8 @@ jobs:
             echo "::error::real-infrastructure tests must not be skipped in CI"
             exit 1
           fi
+      - name: Chaos - kill -9 crash recovery
+        run: go test ./tests/chaos/ -count=1 -v
       - name: 25-feature end-to-end matrix
         run: bash scripts/test/test.all_25_features_matrix.sh
       - name: Dump infrastructure logs on failure
