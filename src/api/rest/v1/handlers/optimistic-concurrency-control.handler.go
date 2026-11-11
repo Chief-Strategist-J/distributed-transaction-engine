@@ -54,6 +54,10 @@ func (h *OCCHandler) Mutate(w http.ResponseWriter, r *http.Request) {
 
 	res, err := h.service.MutateWithOCC(ctx, input, maxRetries)
 	if err != nil {
+		if res != nil {
+			h.writeErrorWithData(w, r, err, res, start)
+			return
+		}
 		h.writeError(w, r, err, start)
 		return
 	}
@@ -173,6 +177,10 @@ func (h *OCCHandler) writeResponse(w http.ResponseWriter, r *http.Request, statu
 }
 
 func (h *OCCHandler) writeError(w http.ResponseWriter, r *http.Request, err error, start time.Time) {
+	h.writeErrorWithData(w, r, err, nil, start)
+}
+
+func (h *OCCHandler) writeErrorWithData(w http.ResponseWriter, r *http.Request, err error, data any, start time.Time) {
 	statusCode := http.StatusInternalServerError
 	errorCode := constants.ErrCodeInternalError
 	retryable := false
@@ -187,6 +195,7 @@ func (h *OCCHandler) writeError(w http.ResponseWriter, r *http.Request, err erro
 	observability.NoteSwallowed(json.NewEncoder(w).Encode(types.ApiResponse{
 		Success:    false,
 		StatusCode: statusCode,
+		Data:       data,
 		Error: &types.ResponseError{
 			Code:      errorCode,
 			Message:   err.Error(),

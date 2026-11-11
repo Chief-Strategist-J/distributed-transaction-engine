@@ -61,4 +61,3 @@ func TestRetryPoliciesTracingLifecycle(t *testing.T) {
 		t.Fatalf("expected validation error and span error recording on invalid tenantId, got nil")
 	}
 }
-

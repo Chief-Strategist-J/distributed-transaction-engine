@@ -21,4 +21,3 @@ func TestTracing_SpanCreation(t *testing.T) {
 		t.Fatalf("expected non-nil context")
 	}
 }
-

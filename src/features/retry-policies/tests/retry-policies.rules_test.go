@@ -160,4 +160,3 @@ func TestRules_EvaluateDecision(t *testing.T) {
 		t.Fatalf("expected NEEDS_ATTENTION on ambiguous timeout without status query, got %s", decisionAmbiguousNonIdempotent.Action)
 	}
 }
-

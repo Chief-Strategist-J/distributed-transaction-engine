@@ -71,4 +71,3 @@ func TestEndToEnd_RetryEvaluationLifecycle(t *testing.T) {
 		t.Fatalf("expected POSTPONE_BREAKER for open circuit breaker, got %s", breakerDecision.Action)
 	}
 }
-

@@ -56,4 +56,3 @@ func TestMachine_Transitions(t *testing.T) {
 		}
 	})
 }
-

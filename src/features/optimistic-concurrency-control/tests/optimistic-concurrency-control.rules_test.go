@@ -109,3 +109,29 @@ func TestRules_ShouldSerializeSaga(t *testing.T) {
 	}
 }
 
+func TestRules_BackoffGrowsExponentiallyAndIsRandomized(t *testing.T) {
+	r := rules.NewOCCRules()
+	mean := func(attempt int) (float64, map[time.Duration]struct{}) {
+		distinct := make(map[time.Duration]struct{})
+		var total time.Duration
+		const samples = 400
+		for i := 0; i < samples; i++ {
+			backoff := r.ComputeJitteredBackoff(attempt)
+			distinct[backoff] = struct{}{}
+			total += backoff
+		}
+		return float64(total) / samples, distinct
+	}
+	first, _ := mean(0)
+	third, _ := mean(2)
+	if third <= first {
+		t.Fatalf("backoff must grow with the attempt number, got %v then %v", first, third)
+	}
+	capped, distinct := mean(12)
+	if capped > float64(200*time.Millisecond) {
+		t.Fatalf("backoff must respect its cap, mean %v", capped)
+	}
+	if len(distinct) < 10 {
+		t.Fatalf("backoff must be randomized to avoid collision waves, only %d distinct values", len(distinct))
+	}
+}

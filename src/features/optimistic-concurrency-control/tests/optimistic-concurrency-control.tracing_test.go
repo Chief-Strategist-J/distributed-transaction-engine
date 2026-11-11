@@ -68,4 +68,3 @@ func TestService_TracingPropagation(t *testing.T) {
 		t.Errorf("expected version 2, got %d", state.Version)
 	}
 }
-

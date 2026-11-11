@@ -27,4 +27,3 @@ func TestPostgres_Integration(t *testing.T) {
 		t.Fatalf("expected adapter to be initialized")
 	}
 }
-

@@ -126,3 +126,38 @@ func TestRules_DetermineEscalation(t *testing.T) {
 		}
 	})
 }
+
+func TestRules_BackoffIsFullyJitteredWithinItsBounds(t *testing.T) {
+	r := rules.NewCompensationRetryRules()
+	const attempt, base, max = 5, 1000, 30000
+	ceiling := time.Duration(base*(1<<(attempt-1))) * time.Millisecond
+	floor := time.Duration(base/2) * time.Millisecond
+	distinct := make(map[time.Duration]struct{})
+	var low, high time.Duration = ceiling, 0
+	for i := 0; i < 500; i++ {
+		backoff := r.CalculateBackoff(attempt, base, max, 0)
+		if backoff < floor || backoff >= ceiling {
+			t.Fatalf("backoff %v escaped [%v, %v)", backoff, floor, ceiling)
+		}
+		distinct[backoff] = struct{}{}
+		if backoff < low {
+			low = backoff
+		}
+		if backoff > high {
+			high = backoff
+		}
+	}
+	if len(distinct) < 100 {
+		t.Fatalf("a thundering herd needs dispersion, got only %d distinct delays in 500 draws", len(distinct))
+	}
+	if high-low < (ceiling-floor)/2 {
+		t.Fatalf("delays must spread across the window, observed spread %v of %v", high-low, ceiling-floor)
+	}
+}
+
+func TestRules_RetryAfterOverridesJitter(t *testing.T) {
+	r := rules.NewCompensationRetryRules()
+	if got := r.CalculateBackoff(3, 1000, 30000, 45*time.Second); got != 45*time.Second {
+		t.Fatalf("an explicit Retry-After must win over computed backoff, got %v", got)
+	}
+}
