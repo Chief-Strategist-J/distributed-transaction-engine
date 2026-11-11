@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -149,8 +150,14 @@ func (h *TransactionQueryHandler) GetTransactionTimeline(w http.ResponseWriter, 
 	}
 	publicID := parts[0]
 
+	limit, limitErr := parseLimitParam(r)
+	if limitErr != nil {
+		h.writeError(w, r, limitErr, start)
+		return
+	}
 	req := contracts.TimelineRequest{
 		TransactionID: publicID,
+		Limit:         limit,
 	}
 
 	resp, err := h.service.GetTransactionTimeline(ctx, principal, req)
@@ -293,4 +300,16 @@ func (h *TransactionQueryHandler) writeError(w http.ResponseWriter, r *http.Requ
 			APIVersion:      "v1",
 		},
 	}))
+}
+
+func parseLimitParam(r *http.Request) (int, error) {
+	raw := r.URL.Query().Get("limit")
+	if raw == "" {
+		return 0, nil
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit < 1 || limit > contracts.MaxPageSize {
+		return 0, appErrors.NewTypedError(400, constants.TQErrLimitExceeded, "limit must be an integer between 1 and 200")
+	}
+	return limit, nil
 }

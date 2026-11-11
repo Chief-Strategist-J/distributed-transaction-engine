@@ -178,11 +178,11 @@ func (s *DetailService) GetTransactionTimeline(ctx context.Context, principal co
 
 func (s *DetailService) readTimeline(ctx context.Context, principal contracts.Principal, scope detailScope, request contracts.TimelineRequest, sagaID uuid.UUID) (contracts.TimelineResponse, error) {
 	limit := request.Limit
-	if limit <= 0 {
-		limit = contracts.DefaultPageSize
+	if limit < 0 || limit > contracts.MaxPageSize {
+		return contracts.TimelineResponse{}, appErrors.NewTypedError(400, constants.TQErrLimitExceeded, "limit must be between 1 and 200")
 	}
-	if limit > contracts.MaxPageSize {
-		limit = contracts.MaxPageSize
+	if limit == 0 {
+		limit = contracts.DefaultPageSize
 	}
 	rows, err := s.history.ListTimelineEvents(ctx, scope.tenantID, sagaID, nil, limit+1)
 	if err != nil {

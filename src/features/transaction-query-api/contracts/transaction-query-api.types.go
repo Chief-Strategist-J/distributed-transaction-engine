@@ -303,6 +303,7 @@ type SearchRequest struct {
 	AST              *Query            `json:"ast,omitempty"`
 	Params           map[string]string `json:"params,omitempty"`
 	Fields           []string          `json:"fields,omitempty"`
+	Limit            int               `json:"limit,omitempty"`
 	Cursor           *string           `json:"cursor,omitempty"`
 	Count            CountMode         `json:"count,omitempty"`
 	Consistency      ConsistencyMode   `json:"consistency,omitempty"`

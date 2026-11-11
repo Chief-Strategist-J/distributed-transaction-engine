@@ -155,6 +155,7 @@ func compareUTF16(left string, right string) int {
 }
 
 func CanonicalKeyOrderForTest(keys []string) []string {
+	defer observability.TraceEnter(nil)()
 	ordered := append([]string(nil), keys...)
 	sort.Slice(ordered, func(i int, j int) bool { return compareUTF16(ordered[i], ordered[j]) < 0 })
 	return ordered
