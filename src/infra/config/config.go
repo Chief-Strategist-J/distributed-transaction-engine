@@ -75,6 +75,8 @@ type EndpointsConfig struct {
 	CrashRecovery string `yaml:"crash_recovery"`
 }
 
+const DefaultTokenLeewaySeconds = 60
+
 type AuthConfig struct {
 	Mode          string `yaml:"mode"`
 	JWKSFile      string `yaml:"jwks_file"`
@@ -170,6 +172,7 @@ func (c *AppConfig) PollInterval() time.Duration {
 
 func Load(path string) (*AppConfig, error) {
 	cfg := &AppConfig{
+		Auth: AuthConfig{LeewaySeconds: DefaultTokenLeewaySeconds},
 		Server: ServerConfig{
 			Name:                    "distributed-transaction-engine",
 			BindAddress:             ":8080",

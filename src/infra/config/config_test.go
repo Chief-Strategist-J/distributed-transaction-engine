@@ -476,3 +476,18 @@ func TestInboxConfig_InvalidOverridesKeepSafeDefaults(t *testing.T) {
 		t.Fatalf("a non-positive retention or batch must fall back to the safe default: %#v", cfg.Inbox)
 	}
 }
+
+func TestAuthConfig_DefaultClockSkewToleranceIsOneMinute(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Auth.Leeway() != time.Minute {
+		t.Fatalf("expected a 1 minute default clock skew tolerance, got %v", cfg.Auth.Leeway())
+	}
+	t.Setenv("AUTH_LEEWAY_SECONDS", "0")
+	strict, _ := Load("")
+	if strict.Auth.Leeway() != 0 {
+		t.Fatalf("an explicit zero must disable the tolerance, got %v", strict.Auth.Leeway())
+	}
+}

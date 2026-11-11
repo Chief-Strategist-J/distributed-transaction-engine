@@ -51,6 +51,6 @@ data:
       jwks_file: "/etc/dtx/auth/jwks.json"
       issuer: ""
       audience: ""
-      leeway_seconds: 5
+      leeway_seconds: 60
     endpoints:
       base_path: "/api/v1"
