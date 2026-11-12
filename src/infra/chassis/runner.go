@@ -17,6 +17,7 @@ import (
 
 	"distributed-transaction-engine/src/infra/config"
 	"distributed-transaction-engine/src/infra/database"
+	"distributed-transaction-engine/src/infra/metrics"
 	"distributed-transaction-engine/src/infra/observability"
 	"distributed-transaction-engine/src/shared/utils"
 )
@@ -202,6 +203,9 @@ func wireServe(app *App, lifecycle *Lifecycle) {
 		adminReadyPath = "/health/ready"
 	}
 
+	if app.DB != nil {
+		adminMux.Handle(metricsPath, metrics.NewCollector(app.DB, metricsFreshness).Handler())
+	}
 	adminMux.HandleFunc(adminLivePath, app.Health.LiveHandler())
 	adminMux.HandleFunc(adminReadyPath, app.Health.ReadyHandler())
 
@@ -294,6 +298,11 @@ func runLongLived(app *App, lifecycle *Lifecycle, rootCtx context.Context) int {
 
 	return exitCode
 }
+
+const (
+	metricsPath      = "/metrics"
+	metricsFreshness = 5 * time.Second
+)
 
 func openDatabase(cfg *config.AppConfig, command string) (*sql.DB, error) {
 	if cfg.Database.RLSEnforced && command != "migrate" {
