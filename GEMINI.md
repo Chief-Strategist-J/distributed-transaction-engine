@@ -16,6 +16,27 @@
     - `rules/database/migrations/01-schema-migrations-and-code-guidelines.md`
   * Use-Case policies: Look up your active task in **Section 6 (Use-Case-Driven Rule Retrieval Matrix)** and strictly adhere to all mapped rule files.
 
+### 1.1 Mandatory 'read rule' Trigger Protocol
+Whenever the user states `"read rule"`, `"read rules"`, or explicitly demands policy re-reading:
+1. **Immediate Execution Freeze**: Halt all planning, code generation, and file editing immediately. You are STRICTLY FORBIDDEN from relying on cached memory or prior conversation context.
+2. **Mandatory Disk Re-Reading Gate**: You MUST issue explicit `read_file` calls to reload:
+   - All 9 **Core Quality Baseline** rule files:
+     * `../llm-obs-policies/rules/code-quality/coding-standards/05-enforced-constraints.md`
+     * `../llm-obs-policies/rules/code-quality/coding-standards/06-writing-conditions.md`
+     * `../llm-obs-policies/rules/code-quality/coding-standards/07-writing-loops.md`
+     * `../llm-obs-policies/rules/code-quality/coding-standards/08-writing-types-data-model.md`
+     * `../llm-obs-policies/rules/code-quality/coding-standards/coupling-taxonomy.md`
+     * `../llm-obs-policies/rules/code-quality/coding-standards/performance-engineering.md`
+     * `../llm-obs-policies/rules/code-quality/coding-standards/runtime-adaptor-pattern.md`
+     * `../llm-obs-policies/rules/folder-structure/4-functions-and-classes-writing-rule.md`
+     * `../llm-obs-policies/rules/folder-structure/3.shared.code.writing.rule.md`
+   - All mapped rule files for the active engineering category from **Section 6 (Use-Case-Driven Rule Retrieval Matrix)**.
+3. **Pre-Execution Attestation & Audit Output**: Before resuming execution, output an attestation confirming:
+   - [ ] Native Library Mandate verified (no hand-rolled algorithms, parsers, or numerical routines).
+   - [ ] Zero mid-function comments constraint loaded.
+   - [ ] Strict typecasting & Result envelope returns loaded.
+   - [ ] Active use-case rules loaded and cited with exact file paths.
+
 ---
 
 ## 2. Strict Negative Invariants (What You Must NEVER Do)
