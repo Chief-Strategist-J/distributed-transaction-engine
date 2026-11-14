@@ -8,11 +8,13 @@
     "I disagree because [reason]. Here's what I'd do instead [alternative]. The risk in your approach is [specific downside]."
   * Do NOT make direct code changes without explicit user approval.
 - Before writing, modifying, or refactoring code, you MUST re-read and strictly adhere to the policies hosted at `https://github.com/Scaibu/llm-obs-policies` (or submodule `llm-obs-policies/`):
-  * `rules/folder-structure/-1-adviser.md`
-  * `rules/folder-structure/0-package-folder-writing-rule.md`
-  * `rules/folder-structure/1-feature-folder-writing-rule.md`
-  * `rules/code-quality/coding-standards/03-strict-typecasting-rules.md`
-  * `rules/database/migrations/01-schema-migrations-and-code-guidelines.md`
+  * Baseline policies:
+    - `rules/folder-structure/-1-adviser.md`
+    - `rules/folder-structure/0-package-folder-writing-rule.md`
+    - `rules/folder-structure/1-feature-folder-writing-rule.md`
+    - `rules/code-quality/coding-standards/03-strict-typecasting-rules.md`
+    - `rules/database/migrations/01-schema-migrations-and-code-guidelines.md`
+  * Use-Case policies: Look up your active task in **Section 6 (Use-Case-Driven Rule Retrieval Matrix)** and strictly adhere to all mapped rule files.
 
 ---
 
@@ -98,7 +100,7 @@ Execute via the unified `task` command:
      --slug <slug> \
      [--package distributed-transaction-engine --feature <feature_name>]
    ```
-2. **Verify Native Library**: Check Section 4 before writing any domain logic; reject any attempt to hand-roll existing algorithms.
+2. **Verify Native Library & Use-Case Rules**: Check Section 4 for native library mandates and Section 6 for domain-specific rules before writing any domain logic; reject any attempt to hand-roll existing algorithms.
 3. **Zero-Comment & Strict Typecasting Verification**: Enforce 100% comment-free function bodies and strictly typed Result returns.
 4. **Finish Phase**: Run the single completion command:
    ```bash
@@ -107,3 +109,20 @@ Execute via the unified `task` command:
      --repo Chief-Strategist-J/distributed-transaction-engine \
      --test-cmd "go test ./..."
    ```
+
+---
+
+## 6. Use-Case-Driven Rule Retrieval Matrix
+Before implementing or modifying code, you MUST look up your active feature category in this matrix and strictly adhere to its mapped policies:
+
+| Use Case Category | Active Engineering Focus | Mandatory Rule Files (in `llm-obs-policies/rules/`) |
+|---|---|---|
+| **Core Baseline** *(Always Required)* | Syntax, Control Flow, Pure Logic, Types | `code-quality/coding-standards/05-enforced-constraints.md`<br>`code-quality/coding-standards/06-writing-conditions.md`<br>`code-quality/coding-standards/07-writing-loops.md`<br>`code-quality/coding-standards/08-writing-types-data-model.md`<br>`code-quality/coding-standards/coupling-taxonomy.md`<br>`code-quality/coding-standards/performance-engineering.md`<br>`code-quality/coding-standards/runtime-adaptor-pattern.md`<br>`folder-structure/4-functions-and-classes-writing-rule.md`<br>`folder-structure/3.shared.code.writing.rule.md` |
+| **Ingress & APIs** | Endpoints, Routing, Gateway, DTOs | `folder-structure/2-apis.writing.rule.md`<br>`folder-structure/api-structure.md`<br>`folder-structure/api-request-response-structure.md`<br>`folder-structure/function-structures/api-file.md`<br>`folder-structure/function-structures/api-gateway.md`<br>`folder-structure/function-structures/downstream-clients.md` |
+| **Persistence & Storage** | Database, Outbox, CDC, S3/Files | `folder-structure/05-db-writing-rules.md`<br>`folder-structure/function-structures/persistence-repositories.md`<br>`folder-structure/function-structures/change-data-capture.md`<br>`folder-structure/function-structures/file-storage.md` |
+| **Messaging & Workers** | Event Streaming, Queues, Pipelines | `folder-structure/function-structures/event-consumers.md`<br>`folder-structure/function-structures/background-jobs.md`<br>`folder-structure/function-structures/data-pipeline.md`<br>`folder-structure/function-structures/search-indexing.md` |
+| **Sagas & Workflows** | Orchestration, Rollbacks, Webhooks | `folder-structure/function-structures/sagas-workflows.md`<br>`folder-structure/function-structures/integration.md`<br>`folder-structure/function-structures/notifications.md` |
+| **Telemetry & Resilience** | Tracing, Metrics, Cache, Throttling | `folder-structure/10-tracing-writing.md`<br>`folder-structure/function-structures/tracking-and-telemetry.md`<br>`folder-structure/function-structures/caching.md`<br>`folder-structure/function-structures/rate-limiting.md`<br>`folder-structure/function-structures/health-checks.md`<br>`folder-structure/function-structures/slos-alerting.md` |
+| **Security & Governance** | AuthN/Z, Tenancy, Flags, Admin CLI | `folder-structure/function-structures/security.md`<br>`folder-structure/function-structures/audit-logging.md`<br>`folder-structure/function-structures/tenancy-architecture.md`<br>`folder-structure/function-structures/feature-flags.md`<br>`folder-structure/function-structures/fleet-governance.md`<br>`folder-structure/function-structures/operational-commands.md` |
+| **Lifecycle & Packaging** | App Entrypoint, Config, Containers, DR | `folder-structure/function-structures/main-file.md`<br>`folder-structure/function-structures/configuration.md`<br>`folder-structure/08-docker-file-writing-rule.md`<br>`folder-structure/function-structures/delivery-rollout.md`<br>`folder-structure/function-structures/disaster-recovery.md` |
+| **Verification & Testing** | Unit, Integration, Pyramids | `folder-structure/09-test-writing.md`<br>`folder-structure/function-structures/testing-strategy.md` |
