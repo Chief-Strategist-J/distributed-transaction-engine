@@ -7,29 +7,64 @@
   * Disagree with structure: state reason, alternative, and specific downside:
     "I disagree because [reason]. Here's what I'd do instead [alternative]. The risk in your approach is [specific downside]."
   * Do NOT make direct code changes without explicit user approval.
-- Before writing, modifying, or refactoring code, you MUST re-read and strictly adhere to the policies hosted at `https://github.com/Scaibu/llm-obs-policies` (or submodule `llm-obs-policies/`):
+
+### 1.0 Dynamic Submodule & Policy Discovery Protocol (Name-Agnostic)
+Because this repository or any future repository may mount policies as a submodule with an arbitrary name (e.g., `policies/`, `obs-rules/`, `vendor/policy/`), NEVER assume a hardcoded folder name.
+
+Before reading any rules or executing lifecycle commands, you MUST resolve `$POLICY_ROOT` dynamically using **nested signature verification**:
+
+1. **Signature Verification**:
+   A directory is confirmed as `$POLICY_ROOT` if and only if BOTH signature files exist:
+   - `<candidate>/rules/folder-structure/-1-adviser.md`
+   - `<candidate>/policy-orchestrator/src/api/cli/main.py`
+
+2. **Multi-Level Nested Search Hierarchy**:
+   Search up to 3 levels deep across:
+   - Current repository & submodules (`./`, `./*`, `./*/*`)
+   - Parent project tree (`../`, `../*`, `../../../*`)
+   - User home directory (`~/.local/share/*`, `~/*`)
+   
+   *One-line discovery command:*
+   ```bash
+   POLICY_ROOT=$(find . .. ../.. ~/.local/share /home/btpl-lap-22/live/System-Architect -maxdepth 3 -type f -path "*/policy-orchestrator/src/api/cli/main.py" 2>/dev/null | head -n 1 | sed 's|/policy-orchestrator/src/api/cli/main.py||')
+   ```
+
+3. **Auto-Clone Fallback**:
+   If the signature files are not found in any local or parent tree:
+   ```bash
+   git clone https://github.com/Scaibu/llm-obs-policies.git ~/.local/share/llm-obs-policies
+   POLICY_ROOT="$HOME/.local/share/llm-obs-policies"
+   ```
+
+4. **Execution Enforcement**:
+   - All rule reads in Section 1.1 & Section 6 MUST resolve against:
+     `$POLICY_ROOT/rules/...`
+   - All lifecycle task executions in Section 3.1 & Section 5 MUST run:
+     `python3 $POLICY_ROOT/policy-orchestrator/src/api/cli/main.py task ...`
+
+- Before writing, modifying, or refactoring code, you MUST re-read and strictly adhere to the policies hosted at `$POLICY_ROOT`:
   * Baseline policies:
-    - `rules/folder-structure/-1-adviser.md`
-    - `rules/folder-structure/0-package-folder-writing-rule.md`
-    - `rules/folder-structure/1-feature-folder-writing-rule.md`
-    - `rules/code-quality/coding-standards/03-strict-typecasting-rules.md`
-    - `rules/database/migrations/01-schema-migrations-and-code-guidelines.md`
+    - `$POLICY_ROOT/rules/folder-structure/-1-adviser.md`
+    - `$POLICY_ROOT/rules/folder-structure/0-package-folder-writing-rule.md`
+    - `$POLICY_ROOT/rules/folder-structure/1-feature-folder-writing-rule.md`
+    - `$POLICY_ROOT/rules/code-quality/coding-standards/03-strict-typecasting-rules.md`
+    - `$POLICY_ROOT/rules/database/migrations/01-schema-migrations-and-code-guidelines.md`
   * Use-Case policies: Look up your active task in **Section 6 (Use-Case-Driven Rule Retrieval Matrix)** and strictly adhere to all mapped rule files.
 
 ### 1.1 Mandatory 'read rule' Trigger Protocol
 Whenever the user states `"read rule"`, `"read rules"`, or explicitly demands policy re-reading:
 1. **Immediate Execution Freeze**: Halt all planning, code generation, and file editing immediately. You are STRICTLY FORBIDDEN from relying on cached memory or prior conversation context.
-2. **Mandatory Disk Re-Reading Gate**: You MUST issue explicit `read_file` calls to reload:
+2. **Mandatory Disk Re-Reading Gate**: You MUST dynamically discover `$POLICY_ROOT` via Section 1.0 and issue explicit `read_file` calls to reload:
    - All 9 **Core Quality Baseline** rule files:
-     * `../llm-obs-policies/rules/code-quality/coding-standards/05-enforced-constraints.md`
-     * `../llm-obs-policies/rules/code-quality/coding-standards/06-writing-conditions.md`
-     * `../llm-obs-policies/rules/code-quality/coding-standards/07-writing-loops.md`
-     * `../llm-obs-policies/rules/code-quality/coding-standards/08-writing-types-data-model.md`
-     * `../llm-obs-policies/rules/code-quality/coding-standards/coupling-taxonomy.md`
-     * `../llm-obs-policies/rules/code-quality/coding-standards/performance-engineering.md`
-     * `../llm-obs-policies/rules/code-quality/coding-standards/runtime-adaptor-pattern.md`
-     * `../llm-obs-policies/rules/folder-structure/4-functions-and-classes-writing-rule.md`
-     * `../llm-obs-policies/rules/folder-structure/3.shared.code.writing.rule.md`
+     * `$POLICY_ROOT/rules/code-quality/coding-standards/05-enforced-constraints.md`
+     * `$POLICY_ROOT/rules/code-quality/coding-standards/06-writing-conditions.md`
+     * `$POLICY_ROOT/rules/code-quality/coding-standards/07-writing-loops.md`
+     * `$POLICY_ROOT/rules/code-quality/coding-standards/08-writing-types-data-model.md`
+     * `$POLICY_ROOT/rules/code-quality/coding-standards/coupling-taxonomy.md`
+     * `$POLICY_ROOT/rules/code-quality/coding-standards/performance-engineering.md`
+     * `$POLICY_ROOT/rules/code-quality/coding-standards/runtime-adaptor-pattern.md`
+     * `$POLICY_ROOT/rules/folder-structure/4-functions-and-classes-writing-rule.md`
+     * `$POLICY_ROOT/rules/folder-structure/3.shared.code.writing.rule.md`
    - All mapped rule files for the active engineering category from **Section 6 (Use-Case-Driven Rule Retrieval Matrix)**.
 3. **Pre-Execution Attestation & Audit Output**: Before resuming execution, output an attestation confirming:
    - [ ] Native Library Mandate verified (no hand-rolled algorithms, parsers, or numerical routines).
@@ -61,10 +96,10 @@ Whenever the user states `"read rule"`, `"read rules"`, or explicitly demands po
 Execute the corresponding CLI command for scaffolding, schemas, and queries:
 
 ### 3.1 Unified Task Lifecycle Command
-Manage the entire lifecycle with the single unified command:
+Manage the entire lifecycle with the single unified command (resolving `$POLICY_ROOT` via Section 1.0):
 ```bash
 # Phase 1: Start Task (Creates GitHub issue, cuts feat/ branch, and optionally scaffolds feature files)
-python3 ../llm-obs-policies/policy-orchestrator/src/api/cli/main.py task \
+python3 $POLICY_ROOT/policy-orchestrator/src/api/cli/main.py task \
   --phase start \
   --repo Chief-Strategist-J/distributed-transaction-engine \
   --title "<type>(<scope>): <summary>" \
@@ -72,7 +107,7 @@ python3 ../llm-obs-policies/policy-orchestrator/src/api/cli/main.py task \
   [--package distributed-transaction-engine --feature <feature_name>]
 
 # Phase 2: Finish Task (Executes verification test gate, PR creation, merge, and parent pointer sync)
-python3 ../llm-obs-policies/policy-orchestrator/src/api/cli/main.py task \
+python3 $POLICY_ROOT/policy-orchestrator/src/api/cli/main.py task \
   --phase finish \
   --repo Chief-Strategist-J/distributed-transaction-engine \
   --test-cmd "go test ./..." # (or cargo test)
@@ -111,10 +146,10 @@ When implementing features, you MUST import and use these verified, production-g
 ---
 
 ## 5. Mandatory Task Lifecycle
-Execute via the unified `task` command:
+Execute via the unified `task` command (resolving `$POLICY_ROOT` via Section 1.0):
 1. **Start Phase**: Run the single setup command:
    ```bash
-   python3 ../llm-obs-policies/policy-orchestrator/src/api/cli/main.py task \
+   python3 $POLICY_ROOT/policy-orchestrator/src/api/cli/main.py task \
      --phase start \
      --repo Chief-Strategist-J/distributed-transaction-engine \
      --title "<type>(<scope>): <summary>" \
@@ -125,7 +160,7 @@ Execute via the unified `task` command:
 3. **Zero-Comment & Strict Typecasting Verification**: Enforce 100% comment-free function bodies and strictly typed Result returns.
 4. **Finish Phase**: Run the single completion command:
    ```bash
-   python3 ../llm-obs-policies/policy-orchestrator/src/api/cli/main.py task \
+   python3 $POLICY_ROOT/policy-orchestrator/src/api/cli/main.py task \
      --phase finish \
      --repo Chief-Strategist-J/distributed-transaction-engine \
      --test-cmd "go test ./..."
