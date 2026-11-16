@@ -29,7 +29,7 @@ Legend: [ ] todo · every WP has an **AC** (acceptance criteria) — a WP is not
 - [ ] `docs/05-capacity-model.md` — back-of-envelope: rows/day x bytes = GB/day; write amplification (state + outbox + audit); IOPS; partition count; cost per million sagas
 - [ ] `docs/06-threat-model.md` — STRIDE; replay attacks on idempotency keys, cross-tenant key collisions, operator abuse of manual intervention, poisoned workflow definitions
 - [ ] `docs/07-runbooks/` — stuck saga, outbox lag, DLQ flood, reconciliation drift, failed deploy mid-saga
-- [ ] `docs/08-slo.md` — SLIs (step success ratio, saga completion within SLA, outbox lag), error budget policy, burn-rate alerts (1h/6h multi-window)
+- [x] `docs/08-slo.md` — SLIs (step success ratio, saga completion within SLA, outbox lag), error budget policy, burn-rate alerts (1h/6h multi-window)
 - [ ] ADRs (each: context, options, decision, consequences, revisit-when):
   - [ ] ADR-001 Orchestration vs choreography
   - [ ] ADR-002 Saga vs 2PC/XA vs TCC vs event sourcing
